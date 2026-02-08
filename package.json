@@ -1,0 +1,37 @@
+{
+  "name": "friday",
+  "version": "0.1.0",
+  "description": "F.R.I.D.A.Y. - Fully Responsive Integrated Digital Assistant Yeoman with SecureClaw",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev --workspace=@friday/core",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist",
+    "security:audit": "npm audit --audit-level=moderate"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/friday.git"
+  },
+  "license": "MIT",
+  "author": "F.R.I.D.A.Y. Project Contributors",
+  "keywords": [
+    "ai",
+    "agent",
+    "security",
+    "autonomous",
+    "claude",
+    "assistant"
+  ]
+}
