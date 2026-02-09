@@ -1,6 +1,6 @@
-# SecureClaw Development TODO
+# SecureYeoman Development TODO
 
-> Development roadmap, next steps, and considerations for the SecureClaw secure autonomous agent system.
+> Development roadmap, next steps, and considerations for the SecureYeoman secure autonomous agent system.
 
 [![Project Status: Planning](https://img.shields.io/badge/Status-Planning-yellow.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -609,7 +609,7 @@ src/
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  [Logo] SecureClaw Dashboard           [Search] [Bell] [User ▼]    │
+│  [Logo] F.R.I.D.A.Yeoman Dashboard           [Search] [Bell] [User ▼]    │
 ├────────┬────────────────────────────────────────────────────────────┤
 │        │                                                            │
 │ [Home] │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐       │
@@ -939,7 +939,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 
 ### v1.1 (Post-MVP)
 
-- [ ] **Multi-agent orchestration**: Coordinate multiple SecureClaw instances
+- [ ] **Multi-agent orchestration**: Coordinate multiple SecureYeoman instances
 - [ ] **MCP protocol support**: Model Context Protocol integration
 - [ ] **Skill marketplace**: Browse and install community skills
 - [ ] **Custom dashboards**: User-configurable dashboard layouts
