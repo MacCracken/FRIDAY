@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F.R.I.D.A.Y. - Fully Responsive Integrated Digital Assistant Yeoman</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <div class="background-animation">
+        <div class="floating-circuit"></div>
+        <div class="floating-circuit"></div>
+        <div class="floating-circuit"></div>
+      </div>
+
+      <header class="hero">
+        <div class="logo-section">
+          <div class="friday-logo">
+            <div class="logo-inner">
+              <span class="logo-letter">F</span>
+              <span class="logo-letter">R</span>
+              <span class="logo-letter">I</span>
+              <span class="logo-letter">D</span>
+              <span class="logo-letter">A</span>
+              <span class="logo-letter">Y</span>
+            </div>
+          </div>
+          <h1 class="main-title">F.R.I.D.A.Y.</h1>
+          <p class="subtitle">Fully Responsive Integrated Digital Assistant Yeoman</p>
+        </div>
+
+        <div class="hero-description">
+          <p class="tagline">
+            Your personal digital assistant built for security, privacy, and dependability.
+          </p>
+          <div class="badges">
+            <span class="badge security">Enterprise-Grade Security</span>
+            <span class="badge local">Local-First</span>
+            <span class="badge privacy">Privacy-Focused</span>
+          </div>
+        </div>
+
+        <div class="cta-section">
+          <button class="btn-primary" onclick="scrollToSection('features')">
+            Explore Features
+          </button>
+          <button class="btn-secondary" onclick="scrollToSection('getting-started')">
+            Get Started
+          </button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="features" id="features">
+          <h2 class="section-title">Core Features</h2>
+          <div class="features-grid">
+            <div class="feature-card">
+              <div class="feature-icon security-icon">🔒</div>
+              <h3>Enterprise Security</h3>
+              <p>RBAC, encryption at rest, sandboxed execution, and comprehensive rate limiting</p>
+              <ul class="feature-list">
+                <li>Role-Based Access Control</li>
+                <li>End-to-end encryption</li>
+                <li>Sandboxed agent execution</li>
+                <li>Advanced threat protection</li>
+              </ul>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon logging-icon">📊</div>
+              <h3>Self-Logging System</h3>
+              <p>
+                Every task logged with cryptographic integrity verification for complete
+                auditability
+              </p>
+              <ul class="feature-list">
+                <li>Cryptographic integrity checks</li>
+                <li>Immutable audit trails</li>
+                <li>Real-time logging</li>
+                <li>Compliance-ready reports</li>
+              </ul>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon metrics-icon">⚡</div>
+              <h3>Performance Metrics</h3>
+              <p>Real-time token usage, task duration, and resource consumption monitoring</p>
+              <ul class="feature-list">
+                <li>Real-time performance dashboard</li>
+                <li>Token usage optimization</li>
+                <li>Resource consumption tracking</li>
+                <li>Performance analytics</li>
+              </ul>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon dashboard-icon">🖥️</div>
+              <h3>GUI Dashboard</h3>
+              <p>Integrated React dashboard for metrics visualization and connection management</p>
+              <ul class="feature-list">
+                <li>React + TanStack + ReactFlow</li>
+                <li>Real-time WebSocket connections</li>
+                <li>Visual workflow management</li>
+                <li>Interactive monitoring</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="architecture">
+          <h2 class="section-title">Architecture Overview</h2>
+          <div class="architecture-diagram">
+            <div class="arch-layer dashboard-layer">
+              <span class="layer-title">SecureClaw Dashboard</span>
+              <span class="layer-tech">React + TanStack + ReactFlow</span>
+            </div>
+            <div class="connection"></div>
+            <div class="arch-layer gateway-layer">
+              <span class="layer-title">SecureClaw Gateway</span>
+              <div class="gateway-components">
+                <div class="component security-comp">Security Layer</div>
+                <div class="component metrics-comp">Metrics Collector</div>
+                <div class="component audit-comp">Audit Chain</div>
+              </div>
+            </div>
+            <div class="connection"></div>
+            <div class="arch-layer agent-layer">
+              <span class="layer-title">Sandboxed Agent Engine</span>
+              <span class="layer-tech">Claude API Integration</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="why-yeoman">
+          <h2 class="section-title">Why the "Yeoman" Designation?</h2>
+          <div class="yeoman-cards">
+            <div class="yeoman-card">
+              <div class="yeoman-icon">🛡️</div>
+              <h3>Dependability</h3>
+              <p>Performing essential work with precision and reliability</p>
+            </div>
+            <div class="yeoman-card">
+              <div class="yeoman-icon">🔐</div>
+              <h3>Security</h3>
+              <p>Acting as a trusted protector of your digital domain</p>
+            </div>
+            <div class="yeoman-card">
+              <div class="yeoman-icon">🤝</div>
+              <h3>Loyalty</h3>
+              <p>A system that works exclusively for your best interest</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="getting-started" id="getting-started">
+          <h2 class="section-title">Getting Started</h2>
+          <div class="install-steps">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h3>Prerequisites</h3>
+                <div class="code-block">
+                  <code>Node.js 20 LTS or later</code>
+                  <code>pnpm (recommended) or npm</code>
+                  <code>Anthropic API key</code>
+                </div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h3>Installation</h3>
+                <div class="code-block">
+                  <code>git clone https://github.com/your-org/friday.git</code>
+                  <code>cd friday</code>
+                  <code>pnpm install</code>
+                </div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h3>Configuration</h3>
+                <div class="code-block">
+                  <code>cp .env.example .env</code>
+                  <code># Edit .env with your API keys</code>
+                  <code>pnpm dev</code>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="project-status">
+          <h2 class="section-title">Project Status</h2>
+          <div class="status-badges">
+            <div class="status-card">
+              <span class="status-badge in-dev">In Development</span>
+              <p>Active development with regular updates</p>
+            </div>
+            <div class="status-card">
+              <span class="status-badge mit">MIT License</span>
+              <p>Open source for community contribution</p>
+            </div>
+            <div class="status-card">
+              <span class="status-badge secure">Enterprise-Grade</span>
+              <p>Built with security as the top priority</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-content">
+          <div class="footer-info">
+            <p>&copy; 2024 F.R.I.D.A.Y. - Your trusted digital Yeoman</p>
+            <p>Made with ❤️ for privacy and security</p>
+          </div>
+          <div class="footer-links">
+            <a href="#features">Features</a>
+            <a href="#getting-started">Documentation</a>
+            <a href="https://github.com/your-org/friday">GitHub</a>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <script src="js/script.js"></script>
+  </body>
+</html>
