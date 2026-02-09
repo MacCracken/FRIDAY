@@ -41,7 +41,7 @@
 
 ## Overview
 
-SecureClaw is an OpenClaw-inspired autonomous agent system designed with **security-first principles** and **comprehensive self-logging** capabilities. Unlike traditional AI agents that prioritize functionality over security, SecureClaw treats security and observability as first-class citizens.
+SecureYeoman is an OpenClaw-inspired autonomous agent system designed with **security-first principles** and **comprehensive self-logging** capabilities. Unlike traditional AI agents that prioritize functionality over security, SecureYeoman treats security and observability as first-class citizens.
 
 ### Key Features
 
@@ -66,7 +66,7 @@ SecureClaw is an OpenClaw-inspired autonomous agent system designed with **secur
 
 ## Core Philosophy
 
-SecureClaw embodies the **Yeoman Philosophy** from F.R.I.D.A.Y.:
+SecureYeoman embodies the **Yeoman Philosophy** from F.R.I.D.A.Y.:
 
 ### The Three Pillars
 
@@ -93,14 +93,14 @@ SecureClaw embodies the **Yeoman Philosophy** from F.R.I.D.A.Y.:
 ### Agent Persona
 
 ```yaml
-name: SecureClaw
+name: SecureYeoman
 version: 1.0.0
 parent_system: F.R.I.D.A.Y.
 role: Secure Autonomous Agent
 classification: Enterprise Security Module
 
 identity_statement: |
-  I am SecureClaw, the security-hardened autonomous agent module of F.R.I.D.A.Y.
+  I am SecureYeoman, the security-hardened autonomous agent module of F.R.I.D.A.Y.
   My primary directive is to execute tasks securely while maintaining complete
   transparency through comprehensive logging. I prioritize security over speed,
   audit trails over convenience, and user privacy above all else.
@@ -263,9 +263,9 @@ sandbox:
       landlock:
         enabled: true
         filesystem_rules:
-          - path: /home/user/.secureclaw/workspace
+          - path: /home/user/.secureyeoman/workspace
             permissions: [read, write]
-          - path: /tmp/secureclaw
+          - path: /tmp/secureyeoman
             permissions: [read, write, execute]
           - path: /
             permissions: []  # deny all else
@@ -277,7 +277,7 @@ sandbox:
     
     macos:
       sandbox_exec: true
-      profile: secureclaw.sb
+      profile: secureyeoman.sb
     
     windows:
       appcontainer: true
@@ -708,7 +708,7 @@ metrics_export:
     
   json_file:
     enabled: true
-    path: ~/.secureclaw/metrics/
+    path: ~/.secureyeoman/metrics/
     rotation: hourly
     retention: 7d
     
@@ -727,32 +727,32 @@ metrics_export:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     SecureClaw Dashboard                         │
+│                  F.R.I.D.A.Yeoman Dashboard                     │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐             │
 │  │ Metrics View │ │ Task History │ │ Connections  │             │
 │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘             │
-│         │                │                │                      │
+│         │                │                │                     │
 │  ┌──────┴────────────────┴────────────────┴───────┐             │
-│  │              TanStack Query Store               │             │
-│  └──────────────────────┬──────────────────────────┘             │
-│                         │                                        │
-│  ┌──────────────────────┴──────────────────────────┐             │
-│  │           WebSocket + REST API Client           │             │
-│  └──────────────────────┬──────────────────────────┘             │
+│  │              TanStack Query Store               │            │
+│  └──────────────────────┬──────────────────────────┘            │
+│                         │                                       │
+│  ┌──────────────────────┴──────────────────────────┐            │
+│  │           WebSocket + REST API Client           │            │
+│  └──────────────────────┬──────────────────────────┘            │
 └─────────────────────────┼───────────────────────────────────────┘
                           │
                           │ WSS/HTTPS
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SecureClaw Gateway                            │
+│                    SecureYeoman Gateway                         │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                │
 │  │  WebSocket  │ │  REST API   │ │   Metrics   │                │
 │  │   Server    │ │   Server    │ │   Exporter  │                │
 │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘                │
-│         │               │               │                        │
+│         │               │               │                       │
 │  ┌──────┴───────────────┴───────────────┴──────┐                │
-│  │              Core Agent Engine               │                │
-│  └──────────────────────────────────────────────┘                │
+│  │              Core Agent Engine               │               │
+│  └──────────────────────────────────────────────┘               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1075,14 +1075,14 @@ async function executeTask(task: Task, context: ExecutionContext): Promise<TaskR
 allowed_operations:
   filesystem:
     read:
-      - ~/.secureclaw/workspace/**
-      - ~/.secureclaw/config/**  # read-only
-      - /tmp/secureclaw/**
+      - ~/.secureyeoman/workspace/**
+      - ~/.secureyeoman/config/**  # read-only
+      - /tmp/secureyeoman/**
     write:
-      - ~/.secureclaw/workspace/**
-      - /tmp/secureclaw/**
+      - ~/.secureyeoman/workspace/**
+      - /tmp/secureyeoman/**
     execute:
-      - /tmp/secureclaw/sandbox/**
+      - /tmp/secureyeoman/sandbox/**
     
   network:
     outbound:
@@ -1115,7 +1115,7 @@ allowed_operations:
 ### Claude-Optimized Tool Schema
 
 ```typescript
-const SECURECLAW_TOOLS = {
+const SECUREYEOMAN_TOOLS = {
   // Secure file operations
   secure_read_file: {
     name: "secure_read_file",
@@ -1408,16 +1408,16 @@ const RECOVERY_PROCEDURES = {
 ### Configuration File Structure
 
 ```yaml
-# ~/.secureclaw/config.yaml
+# ~/.secureyeoman/config.yaml
 
 version: "1.0"
 
 # Core settings
 core:
-  name: "SecureClaw"
+  name: "SecureYeoman"
   environment: production  # development | staging | production
   log_level: info
-  workspace: ~/.secureclaw/workspace
+  workspace: ~/.secureyeoman/workspace
 
 # Security settings
 security:
@@ -1439,7 +1439,7 @@ logging:
   format: json
   output:
     - type: file
-      path: ~/.secureclaw/logs/
+      path: ~/.secureyeoman/logs/
       rotation: daily
       retention: 30d
     - type: stdout
@@ -1474,8 +1474,8 @@ gateway:
   host: 127.0.0.1
   tls:
     enabled: false  # Enable for production
-    cert: ~/.secureclaw/certs/server.crt
-    key: ~/.secureclaw/certs/server.key
+    cert: ~/.secureyeoman/certs/server.crt
+    key: ~/.secureyeoman/certs/server.key
     
 # Model settings
 model:
@@ -1503,8 +1503,8 @@ integrations:
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional - Security
-SECURECLAW_ENCRYPTION_KEY=...
-SECURECLAW_SIGNING_KEY=...
+FRIDAYEOMAN_ENCRYPTION_KEY=...
+FRIDAYEOMAN_SIGNING_KEY=...
 
 # Optional - Integrations
 TELEGRAM_BOT_TOKEN=...
@@ -1525,7 +1525,7 @@ OTLP_ENDPOINT=...
 ```yaml
 openapi: 3.0.0
 info:
-  title: SecureClaw API
+  title: SecureYeoman API
   version: 1.0.0
 
 paths:
