@@ -1,4 +1,4 @@
-# SecureClaw
+# SecureYeoman
 
 > **S**ecure
 > **E**xecution
@@ -6,10 +6,12 @@
 > **U**nified
 > **R**esilient
 > **E**nterprise
-> **C**ontrolled
-> **L**ogging
+> **Y**oking
+> **E**nforcement
+> **O**perationally
+> **M**onitored
 > **A**utonomous
-> **W**orkflow
+> **N**etwork
 
 **A Highly Secured Autonomous Agent System for F.R.I.D.A.Y.**
 
