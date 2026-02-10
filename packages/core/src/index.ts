@@ -54,14 +54,20 @@ export {
   type RateLimitRule 
 } from './security/rate-limiter.js';
 
-export { 
-  RBAC, 
-  getRBAC, 
-  initializeRBAC, 
+export {
+  RBAC,
+  getRBAC,
+  initializeRBAC,
   PermissionDeniedError,
-  type PermissionCheck, 
-  type PermissionResult 
+  type PermissionCheck,
+  type PermissionResult
 } from './security/rbac.js';
+
+export {
+  RBACStorage,
+  type RoleDefinitionRow,
+  type UserRoleAssignmentRow,
+} from './security/rbac-storage.js';
 
 export {
   SecretStore,

@@ -1892,7 +1892,7 @@ export SECUREYEOMAN_ADMIN_PASSWORD="your-admin-password-at-least-32-chars"
 # Run the server
 npx tsx packages/core/src/cli.ts --port 3000
 
-# Run tests (538 tests across 30 files)
+# Run tests (565 tests across 31 files)
 cd packages/core && npx vitest run
 
 # Build dashboard

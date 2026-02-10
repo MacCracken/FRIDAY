@@ -257,14 +257,99 @@ export class GatewayServer {
     });
 
     // Security events
-    this.app.get('/api/v1/security/events', async (_request: FastifyRequest<{
-      Querystring: { severity?: string; limit?: string }
+    //
+    // Returns security-relevant audit log entries filtered by event type.
+    // Security events are a curated subset of the full audit trail, limited
+    // to events that indicate authentication, authorisation, rate limiting,
+    // or injection activity. This powers the SecurityEvents panel in the
+    // React dashboard.
+    //
+    // Query parameters:
+    //   severity – Comma-separated list of severity levels to include.
+    //              Maps to audit entry "level" field. When omitted, all
+    //              security-relevant levels are returned (warn, error,
+    //              security).
+    //   type     – Comma-separated list of security event type names
+    //              (e.g. "auth_failure,rate_limit"). When omitted, all
+    //              known security event types are included.
+    //   from     – Unix timestamp (ms) lower bound (inclusive).
+    //   to       – Unix timestamp (ms) upper bound (inclusive).
+    //   limit    – Maximum number of events to return (default 50, max 1000).
+    //   offset   – Pagination offset (default 0).
+    //
+    // The response shape matches the audit query result but with the key
+    // renamed to "events" for semantic clarity on the client side.
+    this.app.get('/api/v1/security/events', async (request: FastifyRequest<{
+      Querystring: {
+        severity?: string;
+        type?: string;
+        from?: string;
+        to?: string;
+        limit?: string;
+        offset?: string;
+      }
     }>) => {
-      // TODO: Implement security event retrieval
-      return {
-        events: [],
-        total: 0,
-      };
+      try {
+        const q = request.query;
+
+        // These are the audit event names that qualify as "security events".
+        // They align with the SecurityEventType enum in @friday/shared and
+        // cover authentication, authorisation, rate limiting, injection
+        // detection, sandbox violations, and configuration changes.
+        const SECURITY_EVENT_TYPES = [
+          'auth_success',
+          'auth_failure',
+          'rate_limit',
+          'injection_attempt',
+          'permission_denied',
+          'anomaly',
+          'sandbox_violation',
+          'config_change',
+          'secret_access',
+        ];
+
+        // Allow the caller to narrow by specific event types; fall back to
+        // all known security types when the parameter is omitted.
+        const eventFilter = q.type
+          ? q.type.split(',').filter((t) => SECURITY_EVENT_TYPES.includes(t))
+          : SECURITY_EVENT_TYPES;
+
+        // Map the optional severity query param to audit "level" values.
+        // The audit chain uses levels (warn, error, security) rather than
+        // the SecurityEvent severity enum, so this provides a useful filter
+        // without requiring a schema change.
+        const levelFilter = q.severity
+          ? q.severity.split(',')
+          : undefined;
+
+        const result = await this.secureYeoman.queryAuditLog({
+          event: eventFilter,
+          level: levelFilter,
+          from: q.from ? Number(q.from) : undefined,
+          to: q.to ? Number(q.to) : undefined,
+          limit: q.limit ? Number(q.limit) : 50,
+          offset: q.offset ? Number(q.offset) : 0,
+        });
+
+        // Return with "events" key for semantic clarity — the dashboard
+        // SecurityEvents component expects this shape.
+        return {
+          events: result.entries,
+          total: result.total,
+          limit: result.limit,
+          offset: result.offset,
+        };
+      } catch {
+        // If audit storage doesn't support querying (e.g. InMemoryAuditStorage
+        // not wired up), return an empty result rather than a 500 so the
+        // dashboard degrades gracefully.
+        return {
+          events: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+        };
+      }
     });
     
     // Audit log query

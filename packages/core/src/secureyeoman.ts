@@ -20,6 +20,7 @@ import { SQLiteAuditStorage } from './logging/sqlite-storage.js';
 import { createValidator, type InputValidator } from './security/input-validator.js';
 import { createRateLimiter, type RateLimiter } from './security/rate-limiter.js';
 import { initializeRBAC, type RBAC } from './security/rbac.js';
+import { RBACStorage } from './security/rbac-storage.js';
 import { createTaskExecutor, type TaskExecutor, type TaskHandler, type ExecutionContext } from './task/executor.js';
 import { SandboxManager, type SandboxManagerConfig } from './sandbox/manager.js';
 import type { SandboxOptions } from './sandbox/types.js';
@@ -67,6 +68,7 @@ export class SecureYeoman {
   private keyringManager: KeyringManager | null = null;
   private rotationManager: SecretRotationManager | null = null;
   private rotationStorage: RotationStorage | null = null;
+  private rbacStorage: RBACStorage | null = null;
   private soulStorage: SoulStorage | null = null;
   private soulManager: SoulManager | null = null;
   private sandboxManager: SandboxManager | null = null;
@@ -118,8 +120,17 @@ export class SecureYeoman {
       this.logger.debug('Secrets validated');
       
       // Step 4: Initialize security components
-      this.rbac = initializeRBAC();
-      this.logger.debug('RBAC initialized');
+      //
+      // RBAC is now backed by SQLite persistent storage.  Custom role
+      // definitions and user-role assignments are automatically loaded
+      // from the database on construction, so roles created via the API
+      // survive process restarts.  The storage file lives alongside the
+      // other per-component databases in the configured data directory.
+      this.rbacStorage = new RBACStorage({
+        dbPath: `${this.config.core.dataDir}/rbac.db`,
+      });
+      this.rbac = initializeRBAC(undefined, this.rbacStorage);
+      this.logger.debug('RBAC initialized with persistent storage');
       
       this.validator = createValidator(this.config.security);
       this.logger.debug('Input validator initialized');
@@ -435,8 +446,13 @@ export class SecureYeoman {
   async getMetrics(): Promise<Partial<MetricsSnapshot>> {
     this.ensureInitialized();
     
+    // Gather statistics from each subsystem to build a comprehensive
+    // metrics snapshot. Each subsystem exposes its own getStats() method
+    // that returns monotonically increasing counters and point-in-time
+    // gauges. We merge them into the unified MetricsSnapshot shape that
+    // the dashboard consumes via REST and WebSocket.
     const auditStats = await this.auditChain!.getStats();
-    const _rateLimitStats = this.rateLimiter!.getStats(); // TODO: Use in metrics
+    const rateLimitStats = this.rateLimiter!.getStats();
     const aiStats = this.aiClient?.getUsageStats();
     const taskStats = this.taskStorage?.getStats();
 
@@ -480,8 +496,13 @@ export class SecureYeoman {
         activeSessions: 0,
         permissionChecksTotal: 0,
         permissionDenialsTotal: 0,
-        blockedRequestsTotal: 0,
-        rateLimitHitsTotal: 0,
+        // blockedRequestsTotal now reflects actual rate-limiter rejections
+        // rather than a hardcoded zero. The totalHits counter in the rate
+        // limiter is monotonically increasing and survives cleanup cycles.
+        blockedRequestsTotal: rateLimitStats.totalHits,
+        // rateLimitHitsTotal mirrors blockedRequestsTotal for backwards
+        // compatibility — both draw from the same underlying counter.
+        rateLimitHitsTotal: rateLimitStats.totalHits,
         injectionAttemptsTotal: 0,
         eventsBySeverity: {},
         eventsByType: {},
@@ -725,9 +746,13 @@ export class SecureYeoman {
       this.rateLimiter.stop();
     }
     
-    // Clear RBAC cache
+    // Clear RBAC cache and close persistent storage
     if (this.rbac) {
       this.rbac.clearCache();
+    }
+    if (this.rbacStorage) {
+      this.rbacStorage.close();
+      this.rbacStorage = null;
     }
 
     // Stop rotation manager

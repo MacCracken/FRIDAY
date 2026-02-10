@@ -7,6 +7,7 @@
 > **A**ssistant
 > **Y**eoman
 
+[![CI](https://github.com/your-org/friday/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/friday/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Security: Enterprise-Grade](https://img.shields.io/badge/Security-Enterprise--Grade-green.svg)]()
 [![Status: In Development](https://img.shields.io/badge/Status-In%20Development-blue.svg)]()
@@ -116,11 +117,38 @@ npx tsx packages/core/src/cli.ts
 npx tsx packages/core/src/cli.ts --port 3001 --log-level debug
 ```
 
+### Docker
+
+```bash
+# Build and run with Docker Compose
+docker compose up
+
+# Or build the image directly
+docker build -t friday .
+docker run -p 18789:18789 \
+  -e SECUREYEOMAN_SIGNING_KEY="your-signing-key-at-least-32-chars" \
+  -e SECUREYEOMAN_TOKEN_SECRET="your-token-secret-at-least-32-chars" \
+  -e SECUREYEOMAN_ENCRYPTION_KEY="your-encryption-key-at-least-32-chars" \
+  -e SECUREYEOMAN_ADMIN_PASSWORD="your-admin-password-at-least-32-chars" \
+  friday
+```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration. On every push and PR:
+
+- **Lint & Format** — ESLint + Prettier checks
+- **Type Check** — TypeScript `--noEmit`
+- **Test** — Vitest across Node 20 and 22
+- **Build** — Full workspace build (shared → core → dashboard)
+- **Security Audit** — `npm audit`
+- **Docker Build** — Image build verification (on push to main/tags)
+
 ### Running Tests
 
 ```bash
 cd packages/core
-npx vitest run    # 538 tests across 30 files
+npx vitest run    # 565 tests across 31 files
 ```
 
 ### Documentation

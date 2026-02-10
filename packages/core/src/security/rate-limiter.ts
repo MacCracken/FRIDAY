@@ -40,6 +40,21 @@ export class RateLimiter {
   private readonly defaultRule: RateLimitRule;
   private logger: SecureLogger | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Monotonically increasing counter of requests that were rejected (rate
+   * limit exceeded). Exposed via getStats() and surfaced in the security
+   * section of the MetricsSnapshot so the dashboard can display threat
+   * indicators in real time.
+   */
+  private totalHits = 0;
+
+  /**
+   * Monotonically increasing counter of ALL rate-limit checks performed,
+   * regardless of outcome. Together with totalHits this lets consumers
+   * compute a "blocked request ratio" for monitoring and alerting.
+   */
+  private totalChecks = 0;
   
   constructor(config: SecurityConfig['rateLimiting']) {
     this.defaultRule = {
@@ -91,10 +106,14 @@ export class RateLimiter {
     const rule = this.rules.get(ruleName) ?? this.defaultRule;
     const windowKey = this.buildWindowKey(rule.name, rule.keyType, key);
     const now = Date.now();
-    
+
+    // Track every check for metrics — this counter never resets and is
+    // exposed via getStats() → MetricsSnapshot.security.
+    this.totalChecks++;
+
     // Get or create window
     let window = this.windows.get(windowKey);
-    
+
     if (!window || now - window.windowStart >= rule.windowMs) {
       // Start new window
       window = {
@@ -103,24 +122,26 @@ export class RateLimiter {
       };
       this.windows.set(windowKey, window);
     }
-    
+
     // Calculate remaining
     const remaining = Math.max(0, rule.maxRequests - window.count);
     const resetAt = window.windowStart + rule.windowMs;
-    
+
     // Check if under limit
     if (window.count < rule.maxRequests) {
       // Increment counter
       window.count++;
-      
+
       return {
         allowed: true,
         remaining: remaining - 1,
         resetAt,
       };
     }
-    
-    // Rate limit exceeded
+
+    // Rate limit exceeded — increment the hit counter so the metrics
+    // snapshot accurately reflects how many requests have been blocked.
+    this.totalHits++;
     const retryAfter = Math.ceil((resetAt - now) / 1000);
     
     // Log violation
@@ -268,15 +289,35 @@ export class RateLimiter {
   }
   
   /**
-   * Get statistics about current rate limiting state
+   * Get comprehensive statistics about the current rate limiting state.
+   *
+   * Returns a snapshot of all rate limiter counters and metrics that can be
+   * surfaced through the metrics endpoint and WebSocket broadcasts. This
+   * enables the dashboard to display real-time rate limiting health and
+   * threat indicators.
+   *
+   * The returned object contains:
+   *  - activeWindows: Number of sliding-window buckets currently tracked
+   *  - rules:         Number of registered rate limit rules
+   *  - totalHits:     Cumulative count of requests that were rejected because
+   *                   they exceeded a rate limit (i.e. the "blocked" count).
+   *                   This counter is monotonically increasing and is never
+   *                   reset — useful for computing rates over time windows.
+   *  - totalChecks:   Cumulative count of ALL rate limit checks performed
+   *                   (both allowed and rejected). Useful for calculating
+   *                   the ratio of blocked-to-total requests.
    */
   getStats(): {
     activeWindows: number;
     rules: number;
+    totalHits: number;
+    totalChecks: number;
   } {
     return {
       activeWindows: this.windows.size,
       rules: this.rules.size,
+      totalHits: this.totalHits,
+      totalChecks: this.totalChecks,
     };
   }
 }

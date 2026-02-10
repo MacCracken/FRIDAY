@@ -140,7 +140,7 @@ Timeline: ~12-16 weeks for MVP
 - [x] Working agent that can execute tasks via Claude API (+ OpenAI, Gemini, Ollama)
 - [x] Comprehensive logging with audit trail (audit chain + SQLite storage + query layer)
 - [x] Configuration system
-- [x] Test coverage > 80% (538 tests passing across 30 test files — all core modules covered)
+- [x] Test coverage > 80% (565 tests passing across 31 test files — all core modules covered)
 
 ---
 
@@ -150,7 +150,7 @@ Timeline: ~12-16 weeks for MVP
 
 **Duration**: 3-4 weeks
 
-**Status**: Sprints 1-3 complete. 538 tests passing across 30 files. Sandbox V1 (soft sandbox with path validation + resource tracking) done. Remaining: kernel-level enforcement (seccomp, Landlock via child process), macOS sandbox.
+**Status**: Sprints 1-3 complete. 565 tests passing across 31 files. Sandbox V1 (soft sandbox with path validation + resource tracking) done. Remaining: kernel-level enforcement (seccomp, Landlock via child process), macOS sandbox.
 
 ### Completed (built during P1)
 
@@ -160,8 +160,13 @@ Timeline: ~12-16 weeks for MVP
   - [x] Permission caching with LRU eviction
   - [x] `requirePermission()` enforcement (throws `PermissionDeniedError`)
   - [x] Role inheritance support
-  - [x] 31 unit tests
-  - [ ] Role assignment persistent storage (currently in-memory only)
+  - [x] 31 unit tests (RBAC core) + 27 unit tests (RBAC storage)
+  - [x] Role assignment persistent storage — `security/rbac-storage.ts` (SQLite-backed)
+    - User-role assignments persisted to `rbac.db` and survive process restarts
+    - Custom role definitions persisted alongside assignments
+    - Soft-delete revocations preserve full audit trail
+    - Partial unique index enforces one active role per user
+    - 27 unit tests covering CRUD, reassignment, revocation, and RBAC integration
   - [x] Gateway middleware for per-route RBAC enforcement — see P2-001b
 
 - [x] **P2-005**: Encryption at rest *(completed in P1)*
@@ -360,10 +365,20 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
   - [x] `getMetrics()` populates `tasks.total`, `byStatus`, `byType`, `successRate` from storage
 
 #### Security Events
-- [ ] **P2.5-004**: Security events query API
-  - Query audit chain entries by security-related event types
-  - `GET /api/v1/security/events` returns filtered results (auth_failure, rate_limit, injection, permission_denied, sandbox_violation)
-  - Severity mapping from audit event level
+- [x] **P2.5-004**: Security events query API
+  - [x] Query audit chain entries filtered to security-relevant event types
+  - [x] `GET /api/v1/security/events` returns filtered results with support for:
+    - `type` param: filter by event type (auth_failure, rate_limit, injection_attempt, permission_denied, sandbox_violation, etc.)
+    - `severity` param: filter by audit level
+    - `from`/`to` params: time-range filtering
+    - `limit`/`offset` params: pagination
+  - [x] Graceful degradation when audit storage doesn't support querying
+
+#### Rate Limit Metrics Integration
+- [x] **P2.5-005**: Wire rate limiter statistics into MetricsSnapshot
+  - [x] Rate limiter now tracks `totalHits` (blocked requests) and `totalChecks` (all checks)
+  - [x] `getMetrics()` populates `security.blockedRequestsTotal` and `security.rateLimitHitsTotal` from live rate limiter counters
+  - [x] Counters are monotonically increasing and survive cleanup cycles
 
 ---
 
@@ -434,7 +449,7 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
   - [ ] Event acknowledgment
   - [ ] Investigation workflow
   - [ ] Export and search
-  - *Note: Uses mock data — needs security events API (P2.5-004) for live data*
+  - *Note: Backend API (P2.5-004) now implemented — dashboard can be wired to live data*
 
 - [ ] **P3-009**: ConnectionManager component
   - Platform cards with status
@@ -497,7 +512,7 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 - [ ] Fully functional dashboard
 - [~] Real-time metrics visualization *(V1 done, needs polish)*
 - [ ] Task history browser *(component done, needs live data)*
-- [ ] Security event monitor *(component done, needs live data)*
+- [~] Security event monitor *(component done, backend API complete — needs frontend wiring)*
 - [ ] Connection management UI
 - [ ] Soul/personality management pages
 - [ ] Responsive design (mobile support)
@@ -618,19 +633,21 @@ P4-007 (GitHub) → P4-006/P4-008 (optional/deferred)
   - Concurrent access stress test
 
 #### Deployment
-- [ ] **P5-004**: Docker packaging
-  - Multi-stage Dockerfile (build stage: Node.js + pnpm, runtime: slim + better-sqlite3)
-  - Docker Compose with core + dashboard services
-  - Health check endpoint integration
-  - Non-root user, read-only filesystem where possible
-  - Volume mounts for SQLite databases and config
-  - Environment variable configuration
+- [x] **P5-004**: Docker packaging
+  - [x] Multi-stage Dockerfile (build: node:20-alpine + npm, runtime: alpine + production deps)
+  - [x] Docker Compose with core + dashboard services
+  - [x] Health check endpoint integration (wget to /health)
+  - [x] Non-root user (friday:friday)
+  - [x] Volume mounts for SQLite databases (`friday-data`)
+  - [x] Environment variable configuration with placeholder defaults
+  - [x] `.dockerignore` for minimal build context
 
-- [ ] **P5-005**: CI/CD pipeline
-  - GitHub Actions: lint → test → build → security scan
-  - Automated test runs on PR
-  - Docker image build and push on tag
-  - Release notes generation from conventional commits
+- [x] **P5-005**: CI/CD pipeline
+  - [x] GitHub Actions: lint → typecheck → test → build → security audit → docker build
+  - [x] Automated test runs on PR (Node 20 + 22 matrix)
+  - [x] Docker image build on push to main/tags (no registry push)
+  - [x] Coverage artifact upload
+  - [ ] Release notes generation from conventional commits (deferred)
 
 - [ ] **P5-006**: Documentation
   - Installation guide (from source, Docker, npm)
@@ -652,9 +669,9 @@ P4-007 (GitHub) → P4-006/P4-008 (optional/deferred)
   - Example Loki/Elasticsearch config for log aggregation
 
 ### Deliverables
-- [ ] Production-ready Docker images
+- [x] Production-ready Docker images
 - [ ] Complete documentation
-- [ ] CI/CD pipeline
+- [x] CI/CD pipeline
 - [ ] Monitoring and alerting setup
 - [ ] Security audit report
 
