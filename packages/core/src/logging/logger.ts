@@ -1,5 +1,5 @@
 /**
- * Secure Logger for SecureClaw
+ * Secure Logger for SecureYeoman
  * 
  * Security considerations:
  * - Automatic secret redaction in log output
@@ -57,7 +57,7 @@ function createPinoOptions(config: LoggingConfig): LoggerOptions {
       bindings: (bindings) => ({
         pid: bindings.pid,
         hostname: bindings.hostname,
-        name: 'secureclaw',
+        name: 'secureyeoman',
       }),
     },
     
@@ -234,4 +234,22 @@ export function getLogger(): SecureLogger {
  */
 export function isLoggerInitialized(): boolean {
   return globalLogger !== null;
+}
+
+/**
+ * Create a no-op logger that silently discards all messages.
+ * Useful as a fallback when the global logger is not yet initialized.
+ */
+export function createNoopLogger(): SecureLogger {
+  const noop: SecureLogger = {
+    trace: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    fatal: () => {},
+    child: () => noop,
+    level: 'info' as LogLevel,
+  };
+  return noop;
 }

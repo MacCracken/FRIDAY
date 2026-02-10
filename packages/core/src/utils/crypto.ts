@@ -1,5 +1,5 @@
 /**
- * Cryptographic Utilities for SecureClaw
+ * Cryptographic Utilities for SecureYeoman
  * 
  * Security considerations:
  * - Uses Node.js built-in crypto module (FIPS-compliant)

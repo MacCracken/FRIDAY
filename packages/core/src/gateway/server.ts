@@ -1,5 +1,5 @@
 /**
- * Gateway Server for SecureClaw
+ * Gateway Server for SecureYeoman
  * 
  * Provides REST API and WebSocket endpoints for the dashboard.
  * 
@@ -10,12 +10,33 @@
  * - Input validation on all parameters
  */
 
-import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
+import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { WebSocket } from 'ws';
-import { getLogger, type SecureLogger } from '../logging/logger.js';
-import { type SecureClaw } from '../secureclaw.js';
+import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
+import { type SecureYeoman } from '../secureyeoman.js';
 import type { GatewayConfig } from '@friday/shared';
+import type { AuthService } from '../security/auth.js';
+import { createAuthHook, createRbacHook } from './auth-middleware.js';
+import { registerAuthRoutes } from './auth-routes.js';
+import { registerSoulRoutes } from '../soul/soul-routes.js';
+
+/**
+ * Check if an IP address belongs to a private/loopback range.
+ * Covers 127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+ */
+function isPrivateIP(ip: string): boolean {
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
+  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
+
+  // 172.16.0.0/12 → second octet 16–31
+  if (ip.startsWith('172.')) {
+    const secondOctet = Number(ip.split('.')[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) return true;
+  }
+
+  return false;
+}
 
 interface WebSocketClient {
   ws: WebSocket;
@@ -25,12 +46,14 @@ interface WebSocketClient {
 
 export interface GatewayServerOptions {
   config: GatewayConfig;
-  secureClaw: SecureClaw;
+  secureYeoman: SecureYeoman;
+  authService?: AuthService;
 }
 
 export class GatewayServer {
   private readonly config: GatewayConfig;
-  private readonly secureClaw: SecureClaw;
+  private readonly secureYeoman: SecureYeoman;
+  private readonly authService: AuthService | undefined;
   private readonly app: FastifyInstance;
   private readonly clients = new Map<string, WebSocketClient>();
   private logger: SecureLogger | null = null;
@@ -39,12 +62,14 @@ export class GatewayServer {
   
   constructor(options: GatewayServerOptions) {
     this.config = options.config;
-    this.secureClaw = options.secureClaw;
+    this.secureYeoman = options.secureYeoman;
+    this.authService = options.authService;
     
     // Create Fastify instance
     this.app = Fastify({
       logger: false, // We use our own logger
       trustProxy: false, // Security: don't trust proxy headers
+      bodyLimit: 1_048_576, // 1 MB max request body
     });
     
     // Middleware and routes are set up in start()
@@ -63,16 +88,7 @@ export class GatewayServer {
       try {
         this.logger = getLogger().child({ component: 'Gateway' });
       } catch {
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;
@@ -89,30 +105,9 @@ export class GatewayServer {
     // Local network check middleware
     this.app.addHook('onRequest', async (request, reply) => {
       const ip = request.ip;
-      
-      // Allow localhost and private network ranges
-      const isLocalNetwork = 
-        ip === '127.0.0.1' ||
-        ip === '::1' ||
-        ip === 'localhost' ||
-        ip.startsWith('192.168.') ||
-        ip.startsWith('10.') ||
-        ip.startsWith('172.16.') ||
-        ip.startsWith('172.17.') ||
-        ip.startsWith('172.18.') ||
-        ip.startsWith('172.19.') ||
-        ip.startsWith('172.20.') ||
-        ip.startsWith('172.21.') ||
-        ip.startsWith('172.22.') ||
-        ip.startsWith('172.23.') ||
-        ip.startsWith('172.24.') ||
-        ip.startsWith('172.25.') ||
-        ip.startsWith('172.26.') ||
-        ip.startsWith('172.27.') ||
-        ip.startsWith('172.28.') ||
-        ip.startsWith('172.29.') ||
-        ip.startsWith('172.30.') ||
-        ip.startsWith('172.31.');
+
+      // Allow localhost and private network ranges (RFC 1918 + loopback)
+      const isLocalNetwork = isPrivateIP(ip);
       
       if (!isLocalNetwork) {
         this.getLogger().warn('Access denied from non-local IP', { ip });
@@ -133,7 +128,7 @@ export class GatewayServer {
         if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
           reply.header('Access-Control-Allow-Origin', origin);
           reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
           reply.header('Access-Control-Allow-Credentials', 'true');
         }
       }
@@ -143,6 +138,23 @@ export class GatewayServer {
       }
     });
     
+    // Auth + RBAC hooks (after CORS, before routes)
+    if (this.authService) {
+      const logger = this.getLogger();
+      this.app.addHook(
+        'onRequest',
+        createAuthHook({ authService: this.authService, logger }),
+      );
+      this.app.addHook(
+        'onRequest',
+        createRbacHook({
+          rbac: this.secureYeoman.getRBAC(),
+          auditChain: this.secureYeoman.getAuditChain(),
+          logger,
+        }),
+      );
+    }
+
     // Request logging
     this.app.addHook('onResponse', async (request, reply) => {
       this.getLogger().debug('Request completed', {
@@ -155,9 +167,25 @@ export class GatewayServer {
   }
   
   private setupRoutes(): void {
+    // Auth routes
+    if (this.authService) {
+      registerAuthRoutes(this.app, {
+        authService: this.authService,
+        rateLimiter: this.secureYeoman.getRateLimiter(),
+      });
+    }
+
+    // Soul routes
+    try {
+      const soulManager = this.secureYeoman.getSoulManager();
+      registerSoulRoutes(this.app, { soulManager });
+    } catch {
+      // Soul manager may not be available — skip routes
+    }
+
     // Health check
     this.app.get('/health', async () => {
-      const state = this.secureClaw.getState();
+      const state = this.secureYeoman.getState();
       return {
         status: state.healthy ? 'ok' : 'error',
         version: '0.1.0',
@@ -171,27 +199,63 @@ export class GatewayServer {
     
     // Metrics endpoint
     this.app.get('/api/v1/metrics', async () => {
-      return this.secureClaw.getMetrics();
+      return this.secureYeoman.getMetrics();
     });
     
     // Tasks endpoints
-    this.app.get('/api/v1/tasks', async (_request: FastifyRequest<{
-      Querystring: { status?: string; limit?: string; offset?: string }
+    this.app.get('/api/v1/tasks', async (request: FastifyRequest<{
+      Querystring: { status?: string; type?: string; limit?: string; offset?: string }
     }>) => {
-      // TODO: Implement task storage and retrieval
-      return {
-        tasks: [],
-        total: 0,
-      };
+      try {
+        const taskStorage = this.secureYeoman.getTaskStorage();
+        const q = request.query;
+        return taskStorage.listTasks({
+          status: q.status,
+          type: q.type,
+          limit: q.limit ? Number(q.limit) : 50,
+          offset: q.offset ? Number(q.offset) : 0,
+        });
+      } catch {
+        return { tasks: [], total: 0 };
+      }
     });
-    
-    this.app.get('/api/v1/tasks/:id', async (_request: FastifyRequest<{
+
+    this.app.get('/api/v1/tasks/:id', async (request: FastifyRequest<{
       Params: { id: string }
-    }>) => {
-      // TODO: Implement task retrieval by ID
-      return { error: 'Not implemented' };
+    }>, reply: FastifyReply) => {
+      try {
+        const taskStorage = this.secureYeoman.getTaskStorage();
+        const task = taskStorage.getTask(request.params.id);
+        if (!task) {
+          return reply.code(404).send({ error: 'Task not found' });
+        }
+        return task;
+      } catch {
+        return reply.code(500).send({ error: 'Task storage not available' });
+      }
     });
     
+    // Sandbox status
+    this.app.get('/api/v1/sandbox/status', async () => {
+      try {
+        const sandboxManager = this.secureYeoman.getSandboxManager();
+        return sandboxManager.getStatus();
+      } catch {
+        return {
+          enabled: false,
+          technology: 'none',
+          capabilities: {
+            landlock: false,
+            seccomp: false,
+            namespaces: false,
+            rlimits: false,
+            platform: process.platform,
+          },
+          sandboxType: 'NoopSandbox',
+        };
+      }
+    });
+
     // Security events
     this.app.get('/api/v1/security/events', async (_request: FastifyRequest<{
       Querystring: { severity?: string; limit?: string }
@@ -203,9 +267,35 @@ export class GatewayServer {
       };
     });
     
+    // Audit log query
+    this.app.get('/api/v1/audit', async (request: FastifyRequest<{
+      Querystring: {
+        from?: string;
+        to?: string;
+        level?: string;
+        event?: string;
+        userId?: string;
+        taskId?: string;
+        limit?: string;
+        offset?: string;
+      }
+    }>) => {
+      const q = request.query;
+      return this.secureYeoman.queryAuditLog({
+        from: q.from ? Number(q.from) : undefined,
+        to: q.to ? Number(q.to) : undefined,
+        level: q.level ? q.level.split(',') : undefined,
+        event: q.event ? q.event.split(',') : undefined,
+        userId: q.userId,
+        taskId: q.taskId,
+        limit: q.limit ? Number(q.limit) : undefined,
+        offset: q.offset ? Number(q.offset) : undefined,
+      });
+    });
+
     // Audit chain verification
     this.app.post('/api/v1/audit/verify', async () => {
-      return this.secureClaw.verifyAuditChain();
+      return this.secureYeoman.verifyAuditChain();
     });
     
     // WebSocket endpoint
@@ -304,7 +394,7 @@ export class GatewayServer {
     this.metricsInterval = setInterval(() => {
       void (async () => {
         try {
-          const metrics = await this.secureClaw.getMetrics();
+          const metrics = await this.secureYeoman.getMetrics();
           this.broadcast('metrics', metrics);
         } catch (error) {
           this.getLogger().error('Failed to broadcast metrics', {

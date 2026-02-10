@@ -1,5 +1,5 @@
 /**
- * Task Executor for SecureClaw
+ * Task Executor for SecureYeoman
  * 
  * Security considerations:
  * - All tasks run with timeout enforcement
@@ -9,7 +9,7 @@
  */
 
 import { uuidv7, sha256 } from '../utils/crypto.js';
-import { getLogger, type SecureLogger, type LogContext } from '../logging/logger.js';
+import { getLogger, createNoopLogger, type SecureLogger, type LogContext } from '../logging/logger.js';
 import { type AuditChain } from '../logging/audit-chain.js';
 import { type InputValidator } from '../security/input-validator.js';
 import { type RateLimiter } from '../security/rate-limiter.js';
@@ -21,6 +21,8 @@ import {
   type TaskCreate,
   type ResourceUsage,
 } from '@friday/shared';
+import type { Sandbox, SandboxOptions } from '../sandbox/types.js';
+import type { TaskStorage } from './task-storage.js';
 
 export interface TaskExecutorConfig {
   /** Maximum concurrent tasks */
@@ -64,19 +66,28 @@ export class TaskExecutor {
   private readonly validator: InputValidator;
   private readonly rateLimiter: RateLimiter;
   private readonly auditChain: AuditChain;
+  private readonly sandbox: Sandbox | null;
+  private readonly sandboxOptions: SandboxOptions | undefined;
+  private readonly taskStorage: TaskStorage | null;
   private logger: SecureLogger | null = null;
   private processing = false;
-  
+
   constructor(
     config: TaskExecutorConfig,
     validator: InputValidator,
     rateLimiter: RateLimiter,
-    auditChain: AuditChain
+    auditChain: AuditChain,
+    sandbox?: Sandbox,
+    sandboxOptions?: SandboxOptions,
+    taskStorage?: TaskStorage,
   ) {
     this.config = config;
     this.validator = validator;
     this.rateLimiter = rateLimiter;
     this.auditChain = auditChain;
+    this.sandbox = sandbox ?? null;
+    this.sandboxOptions = sandboxOptions;
+    this.taskStorage = taskStorage ?? null;
   }
   
   private getLogger(): SecureLogger {
@@ -84,16 +95,7 @@ export class TaskExecutor {
       try {
         this.logger = getLogger().child({ component: 'TaskExecutor' });
       } catch {
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;
@@ -218,6 +220,9 @@ export class TaskExecutor {
       },
     });
     
+    // Persist task
+    this.taskStorage?.storeTask(task);
+
     // Queue for execution
     return new Promise((resolve, reject) => {
       this.taskQueue.push({ task, context, resolve, reject });
@@ -232,16 +237,18 @@ export class TaskExecutor {
     if (this.processing) {
       return;
     }
-    
+
     this.processing = true;
-    
+
     try {
+      // Loop until queue is drained or at capacity — re-check after each
+      // iteration so items enqueued while we were processing are not missed.
       while (this.taskQueue.length > 0 && this.activeTasks.size < this.config.maxConcurrent) {
         const item = this.taskQueue.shift();
         if (!item) break;
-        
+
         const { task, context, resolve, reject } = item;
-        
+
         // Execute task
         this.executeTask(task, context)
           .then(resolve)
@@ -249,6 +256,11 @@ export class TaskExecutor {
       }
     } finally {
       this.processing = false;
+
+      // Re-check: items may have been enqueued while we were processing
+      if (this.taskQueue.length > 0 && this.activeTasks.size < this.config.maxConcurrent) {
+        void this.processQueue();
+      }
     }
   }
   
@@ -270,7 +282,8 @@ export class TaskExecutor {
     // Update status to running
     task.status = TaskStatus.RUNNING;
     task.startedAt = startTime;
-    
+    this.taskStorage?.updateTask(task.id, { status: task.status, startedAt: startTime });
+
     const logContext: LogContext = {
       userId: context.userId,
       taskId: task.id,
@@ -291,9 +304,38 @@ export class TaskExecutor {
         throw new Error(`No handler for task type: ${task.type}`);
       }
       
-      // Execute with abort signal
+      // Execute with abort signal, optionally sandboxed
+      const executeFn = () => handler.execute(task, context);
+      const executionPromise = this.sandbox
+        ? this.sandbox.run(executeFn, this.sandboxOptions).then(async (sandboxResult) => {
+            // Log sandbox violations
+            if (sandboxResult.violations.length > 0) {
+              this.getLogger().warn('Sandbox violations during task execution', {
+                ...logContext,
+                violations: sandboxResult.violations.map(v => v.description),
+              });
+              await this.auditChain.record({
+                event: 'sandbox_violation',
+                level: 'warn',
+                message: `Sandbox violations in task: ${task.name}`,
+                userId: context.userId,
+                taskId: task.id,
+                correlationId: task.correlationId,
+                metadata: {
+                  violations: sandboxResult.violations,
+                  resourceUsage: sandboxResult.resourceUsage,
+                },
+              });
+            }
+            if (!sandboxResult.success) {
+              throw sandboxResult.error ?? new Error('Sandbox execution failed');
+            }
+            return sandboxResult.result;
+          })
+        : executeFn();
+
       const result = await Promise.race([
-        handler.execute(task, context),
+        executionPromise,
         new Promise((_, reject) => {
           abortController.signal.addEventListener('abort', () => {
             reject(new Error('Task timeout'));
@@ -313,7 +355,16 @@ export class TaskExecutor {
       
       // Estimate resource usage (simplified)
       task.resources = this.estimateResources(startTime, endTime);
-      
+
+      // Persist completion
+      this.taskStorage?.updateTask(task.id, {
+        status: task.status,
+        completedAt: task.completedAt,
+        durationMs: task.durationMs,
+        result: task.result,
+        resources: task.resources,
+      });
+
       this.getLogger().info('Task completed', {
         ...logContext,
         durationMs: task.durationMs,
@@ -351,7 +402,16 @@ export class TaskExecutor {
       };
       
       task.resources = this.estimateResources(startTime, endTime);
-      
+
+      // Persist failure
+      this.taskStorage?.updateTask(task.id, {
+        status: task.status,
+        completedAt: task.completedAt,
+        durationMs: task.durationMs,
+        result: task.result,
+        resources: task.resources,
+      });
+
       this.getLogger().error('Task failed', {
         ...logContext,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -461,7 +521,10 @@ export function createTaskExecutor(
   validator: InputValidator,
   rateLimiter: RateLimiter,
   auditChain: AuditChain,
-  config?: Partial<TaskExecutorConfig>
+  config?: Partial<TaskExecutorConfig>,
+  sandbox?: Sandbox,
+  sandboxOptions?: SandboxOptions,
+  taskStorage?: TaskStorage,
 ): TaskExecutor {
   const defaultConfig: TaskExecutorConfig = {
     maxConcurrent: 10,
@@ -469,6 +532,6 @@ export function createTaskExecutor(
     maxTimeoutMs: 3600000, // 1 hour
     ...config,
   };
-  
-  return new TaskExecutor(defaultConfig, validator, rateLimiter, auditChain);
+
+  return new TaskExecutor(defaultConfig, validator, rateLimiter, auditChain, sandbox, sandboxOptions, taskStorage);
 }

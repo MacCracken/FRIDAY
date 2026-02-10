@@ -1,5 +1,5 @@
 /**
- * Security Types for SecureClaw
+ * Security Types for SecureYeoman
  * 
  * Security considerations:
  * - All security events are immutable once created

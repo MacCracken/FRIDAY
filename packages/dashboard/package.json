@@ -1,7 +1,7 @@
 {
   "name": "@friday/dashboard",
   "version": "0.1.0",
-  "description": "SecureClaw Performance Metrics Dashboard",
+  "description": "SecureYeoman Performance Metrics Dashboard",
   "type": "module",
   "private": true,
   "scripts": {

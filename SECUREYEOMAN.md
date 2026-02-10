@@ -45,12 +45,16 @@ SecureYeoman is an OpenClaw-inspired autonomous agent system designed with **sec
 
 ### Key Features
 
-- **Enterprise-Grade Security**: RBAC, encryption at rest, sandboxed execution, rate limiting
+- **Enterprise-Grade Security**: RBAC, JWT/API key auth, encryption at rest, sandboxed execution, rate limiting, input validation
+- **Task Persistence**: SQLite-backed task history with filtering, pagination, and real-time metrics
 - **Comprehensive Task Logging**: Every action logged with cryptographic integrity verification
 - **Real-Time Performance Metrics**: Token consumption, task duration, resource usage, success rates
-- **Integrated Dashboard**: Primary GUI for metrics visualization and connection management
-- **Audit Trail**: Immutable, cryptographically signed logs for compliance
-- **Claude-Optimized**: Leverages Claude's extended thinking and tool use capabilities
+- **Integrated Dashboard**: Metrics graph, task history, security events, personality editor, skills manager, onboarding wizard
+- **Audit Trail**: Immutable, cryptographically signed logs with SQLite storage and query API
+- **Secret Management**: System keyring integration (macOS Keychain, Linux Secret Service), automatic rotation, expiry tracking
+- **Multi-Provider AI**: Anthropic, OpenAI, Google Gemini, Ollama with unified client, retry, cost tracking
+- **Soul System**: Editable personality (name, traits, sex, voice, preferred language) and learnable skills that compose into AI system prompts
+- **CLI**: `secureyeoman` command with arg parsing, startup banner, graceful shutdown
 
 ### Design Goals
 
@@ -1485,6 +1489,13 @@ model:
   max_tokens: 16384
   temperature: 0.7
   
+# Soul system (personality + skills)
+soul:
+  enabled: true
+  learningMode: [user_authored]  # user_authored | ai_proposed | autonomous
+  maxSkills: 50
+  maxPromptTokens: 4096
+
 # Integrations (optional)
 integrations:
   telegram:
@@ -1669,6 +1680,153 @@ paths:
       responses:
         200:
           description: Connection test result
+
+  # Security Events
+  /api/v1/security/events:
+    get:
+      summary: Get security events
+      parameters:
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Security events list
+
+  # Sandbox
+  /api/v1/sandbox/status:
+    get:
+      summary: Get sandbox capabilities and status
+      responses:
+        200:
+          description: Sandbox status with platform capabilities
+
+  # Auth
+  /api/v1/auth/login:
+    post:
+      summary: Login with admin password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string }
+      responses:
+        200:
+          description: Login successful, returns JWT tokens
+
+  /api/v1/auth/refresh:
+    post:
+      summary: Refresh JWT token
+      responses:
+        200:
+          description: New access token
+
+  /api/v1/auth/logout:
+    post:
+      summary: Logout and revoke refresh token
+      responses:
+        200:
+          description: Logged out
+
+  /api/v1/auth/api-keys:
+    post:
+      summary: Create API key
+      responses:
+        201:
+          description: API key created
+
+  /api/v1/auth/api-keys/{keyId}/revoke:
+    post:
+      summary: Revoke API key
+      responses:
+        200:
+          description: API key revoked
+
+  # Soul — Agent Name
+  /api/v1/soul/agent-name:
+    get:
+      summary: Get current agent name
+    put:
+      summary: Update agent name
+
+  # Soul — Personality
+  /api/v1/soul/personality:
+    get:
+      summary: Get active personality
+      responses:
+        200:
+          description: Active personality or null
+
+  /api/v1/soul/personalities:
+    get:
+      summary: List all personalities
+    post:
+      summary: Create a personality
+
+  /api/v1/soul/personalities/{id}:
+    put:
+      summary: Update a personality
+    delete:
+      summary: Delete a personality
+
+  /api/v1/soul/personalities/{id}/activate:
+    post:
+      summary: Set personality as active
+
+  # Soul — Skills
+  /api/v1/soul/skills:
+    get:
+      summary: List skills (filter by status, source)
+    post:
+      summary: Create a skill
+
+  /api/v1/soul/skills/{id}:
+    put:
+      summary: Update a skill
+    delete:
+      summary: Delete a skill
+
+  /api/v1/soul/skills/{id}/enable:
+    post:
+      summary: Enable a skill
+
+  /api/v1/soul/skills/{id}/disable:
+    post:
+      summary: Disable a skill
+
+  /api/v1/soul/skills/{id}/approve:
+    post:
+      summary: Approve a proposed skill
+
+  /api/v1/soul/skills/{id}/reject:
+    post:
+      summary: Reject a proposed skill
+
+  # Soul — Prompt & Config
+  /api/v1/soul/prompt/preview:
+    get:
+      summary: Preview composed system prompt
+
+  /api/v1/soul/config:
+    get:
+      summary: Get soul learning mode configuration
+
+  # Soul — Onboarding
+  /api/v1/soul/onboarding/status:
+    get:
+      summary: Check if onboarding is needed
+
+  /api/v1/soul/onboarding/complete:
+    post:
+      summary: Complete onboarding with custom personality
 ```
 
 ### WebSocket Events
@@ -1725,14 +1883,20 @@ cd friday
 # Install dependencies
 pnpm install
 
-# Run in development mode
-pnpm dev
+# Set required environment variables
+export SECUREYEOMAN_SIGNING_KEY="your-signing-key-at-least-32-chars"
+export SECUREYEOMAN_TOKEN_SECRET="your-token-secret-at-least-32-chars"
+export SECUREYEOMAN_ENCRYPTION_KEY="your-encryption-key-at-least-32-chars"
+export SECUREYEOMAN_ADMIN_PASSWORD="your-admin-password-at-least-32-chars"
 
-# Run tests
-pnpm test
+# Run the server
+npx tsx packages/core/src/cli.ts --port 3000
 
-# Run security audit
-pnpm audit
+# Run tests (538 tests across 30 files)
+cd packages/core && npx vitest run
+
+# Build dashboard
+cd packages/dashboard && npx vite build
 ```
 
 ### Code of Conduct
@@ -1749,4 +1913,4 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 
 ---
 
-*SecureClaw - Because security shouldn't be an afterthought.*
+*SecureYeoman - Because security shouldn't be an afterthought.*

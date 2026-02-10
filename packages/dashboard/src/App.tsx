@@ -1,28 +1,34 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { 
-  Shield, 
-  Activity, 
-  Clock, 
-  AlertTriangle, 
-  CheckCircle, 
+import {
+  Shield,
+  Activity,
+  Clock,
+  AlertTriangle,
+  CheckCircle,
   XCircle,
   Cpu,
   HardDrive,
   Zap,
   Lock,
-  RefreshCw
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { MetricsGraph } from './components/MetricsGraph';
 import { TaskHistory } from './components/TaskHistory';
 import { SecurityEvents } from './components/SecurityEvents';
 import { ResourceMonitor } from './components/ResourceMonitor';
+import { OnboardingWizard } from './components/OnboardingWizard';
+import { PersonalityEditor } from './components/PersonalityEditor';
+import { SkillsManager } from './components/SkillsManager';
 import { useWebSocket } from './hooks/useWebSocket';
-import { fetchMetrics, fetchHealth } from './api/client';
+import { fetchMetrics, fetchHealth, fetchOnboardingStatus } from './api/client';
 import type { MetricsSnapshot } from './types';
 
+type Tab = 'overview' | 'tasks' | 'security' | 'personality' | 'skills';
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'security'>('overview');
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
   
   // Check if we're on local network
   const [isLocalNetwork, setIsLocalNetwork] = useState(true);
@@ -54,7 +60,19 @@ function App() {
   
   // WebSocket for real-time updates
   const { connected, lastMessage } = useWebSocket('/ws/metrics');
-  
+
+  // Check onboarding status
+  const { data: onboarding, refetch: refetchOnboarding } = useQuery({
+    queryKey: ['onboarding'],
+    queryFn: fetchOnboardingStatus,
+    retry: false,
+  });
+
+  // Show onboarding wizard if needed
+  if (onboarding?.needed) {
+    return <OnboardingWizard onComplete={() => { void refetchOnboarding(); }} />;
+  }
+
   // Block access if not on local network
   if (!isLocalNetwork) {
     return (
@@ -63,7 +81,7 @@ function App() {
           <Lock className="w-16 h-16 mx-auto text-destructive mb-4" />
           <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
           <p className="text-muted-foreground">
-            The SecureClaw Dashboard is only accessible from the local network.
+            The SecureYeoman Dashboard is only accessible from the local network.
           </p>
         </div>
       </div>
@@ -81,7 +99,7 @@ function App() {
             <div className="flex items-center gap-3">
               <Shield className="w-8 h-8 text-primary" />
               <div>
-                <h1 className="text-xl font-bold">SecureClaw</h1>
+                <h1 className="text-xl font-bold">SecureYeoman</h1>
                 <p className="text-xs text-muted-foreground">Performance Dashboard</p>
               </div>
             </div>
@@ -143,12 +161,32 @@ function App() {
             <button
               onClick={() => { setActiveTab('security'); }}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'security' 
-                  ? 'border-primary text-primary' 
+                activeTab === 'security'
+                  ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
               Security
+            </button>
+            <button
+              onClick={() => { setActiveTab('personality'); }}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'personality'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Personality
+            </button>
+            <button
+              onClick={() => { setActiveTab('skills'); }}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'skills'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Skills
             </button>
           </div>
         </div>
@@ -217,13 +255,21 @@ function App() {
         {activeTab === 'security' && (
           <SecurityEvents metrics={metrics} />
         )}
+
+        {activeTab === 'personality' && (
+          <PersonalityEditor />
+        )}
+
+        {activeTab === 'skills' && (
+          <SkillsManager />
+        )}
       </main>
       
       {/* Footer */}
       <footer className="border-t bg-card mt-auto">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>SecureClaw v0.1.0</span>
+            <span>SecureYeoman v0.1.0</span>
             <span>Local Network Only</span>
           </div>
         </div>

@@ -3,28 +3,28 @@ import { OpenAIProvider } from './openai.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 import { RateLimitError, AuthenticationError } from '../errors.js';
 
+const mockCreate = vi.fn();
+
 vi.mock('openai', () => {
-  const mockCreate = vi.fn();
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      chat: {
-        completions: {
-          create: mockCreate,
-        },
-      },
-    })),
-    APIError: class extends Error {
-      status: number;
-      constructor(status: number, message: string) {
-        super(message);
-        this.status = status;
-        this.name = 'APIError';
-      }
-    },
-  };
+  class APIError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+      this.name = 'APIError';
+    }
+  }
+
+  class MockOpenAI {
+    chat = { completions: { create: mockCreate } };
+    static APIError = APIError;
+    constructor(_opts?: any) {}
+  }
+
+  return { default: MockOpenAI, APIError };
 });
 
-function makeConfig(): { model: ModelConfig; apiKey: string } {
+function makeConfig(): { model: ModelConfig; apiKey: string; retryConfig: { maxRetries: number } } {
   return {
     model: {
       provider: 'openai',
@@ -38,6 +38,7 @@ function makeConfig(): { model: ModelConfig; apiKey: string } {
       retryDelayMs: 100,
     },
     apiKey: 'test-key',
+    retryConfig: { maxRetries: 0 },
   };
 }
 
@@ -53,7 +54,7 @@ describe('OpenAIProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     provider = new OpenAIProvider(makeConfig());
-    mockClient = (provider as any).client;
+    mockClient = { chat: { completions: { create: mockCreate } } };
   });
 
   describe('chat', () => {

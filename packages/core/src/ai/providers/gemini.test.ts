@@ -2,21 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GeminiProvider } from './gemini.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 
-vi.mock('@google/generative-ai', () => {
-  const mockGenerateContent = vi.fn();
-  const mockGenerateContentStream = vi.fn();
+const mockGenerateContent = vi.fn();
+const mockGenerateContentStream = vi.fn();
 
-  return {
-    GoogleGenerativeAI: vi.fn().mockImplementation(() => ({
-      getGenerativeModel: vi.fn().mockReturnValue({
-        generateContent: mockGenerateContent,
-        generateContentStream: mockGenerateContentStream,
-      }),
-    })),
-  };
+vi.mock('@google/generative-ai', () => {
+  class MockGoogleGenerativeAI {
+    constructor(_apiKey?: string) {}
+    getGenerativeModel = vi.fn().mockReturnValue({
+      generateContent: mockGenerateContent,
+      generateContentStream: mockGenerateContentStream,
+    });
+  }
+
+  return { GoogleGenerativeAI: MockGoogleGenerativeAI };
 });
 
-function makeConfig(): { model: ModelConfig; apiKey: string } {
+function makeConfig(): { model: ModelConfig; apiKey: string; retryConfig: { maxRetries: number } } {
   return {
     model: {
       provider: 'gemini' as any,
@@ -30,6 +31,7 @@ function makeConfig(): { model: ModelConfig; apiKey: string } {
       retryDelayMs: 100,
     },
     apiKey: 'test-key',
+    retryConfig: { maxRetries: 0 },
   };
 }
 
@@ -40,18 +42,15 @@ const simpleRequest: AIRequest = {
 
 describe('GeminiProvider', () => {
   let provider: GeminiProvider;
-  let mockGenAI: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     provider = new GeminiProvider(makeConfig());
-    mockGenAI = (provider as any).genAI;
   });
 
   describe('chat', () => {
     it('should map request and response', async () => {
-      const mockModel = mockGenAI.getGenerativeModel();
-      mockModel.generateContent.mockResolvedValue({
+      mockGenerateContent.mockResolvedValue({
         response: {
           candidates: [{
             content: {
@@ -76,8 +75,7 @@ describe('GeminiProvider', () => {
     });
 
     it('should handle function call responses', async () => {
-      const mockModel = mockGenAI.getGenerativeModel();
-      mockModel.generateContent.mockResolvedValue({
+      mockGenerateContent.mockResolvedValue({
         response: {
           candidates: [{
             content: {
@@ -105,8 +103,7 @@ describe('GeminiProvider', () => {
     });
 
     it('should extract system messages', async () => {
-      const mockModel = mockGenAI.getGenerativeModel();
-      mockModel.generateContent.mockResolvedValue({
+      mockGenerateContent.mockResolvedValue({
         response: {
           candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
           usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
@@ -122,7 +119,7 @@ describe('GeminiProvider', () => {
       };
 
       await provider.chat(request);
-      const callArgs = mockModel.generateContent.mock.calls[0][0];
+      const callArgs = mockGenerateContent.mock.calls[0][0];
       expect(callArgs.systemInstruction).toBeDefined();
       expect(callArgs.contents).toHaveLength(1); // Only user message, system extracted
     });

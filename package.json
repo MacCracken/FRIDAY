@@ -1,7 +1,7 @@
 {
   "name": "friday",
   "version": "0.1.0",
-  "description": "F.R.I.D.A.Y. - Fully Responsive Integrated Digital Assistant Yeoman with SecureClaw",
+  "description": "F.R.I.D.A.Y. - Fully Responsive Integrated Digital Assistant Yeoman with SecureYeoman",
   "private": true,
   "type": "module",
   "workspaces": [

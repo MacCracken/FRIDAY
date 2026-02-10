@@ -92,6 +92,30 @@ export {
   type AIProviderName,
 } from './ai.js';
 
+// Soul types
+export {
+  PersonalitySchema,
+  PersonalityCreateSchema,
+  PersonalityUpdateSchema,
+  SkillSchema,
+  SkillCreateSchema,
+  SkillUpdateSchema,
+  SkillSourceSchema,
+  SkillStatusSchema,
+  LearningModeSchema,
+  SoulConfigSchema,
+  type Personality,
+  type PersonalityCreate,
+  type PersonalityUpdate,
+  type Skill,
+  type SkillCreate,
+  type SkillUpdate,
+  type SkillSource,
+  type SkillStatus,
+  type LearningMode,
+  type SoulConfig,
+} from './soul.js';
+
 // Config types
 export {
   CoreConfigSchema,

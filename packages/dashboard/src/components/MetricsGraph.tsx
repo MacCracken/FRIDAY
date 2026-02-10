@@ -54,7 +54,7 @@ export function MetricsGraph({ metrics }: MetricsGraphProps) {
         type: 'system',
         position: { x: 250, y: 150 },
         data: {
-          label: 'SecureClaw Agent',
+          label: 'SecureYeoman Agent',
           value: metrics?.tasks?.inProgress ?? 0,
           icon: <Shield className="w-4 h-4" />,
           status: 'ok',

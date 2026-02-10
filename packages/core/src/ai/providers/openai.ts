@@ -171,10 +171,16 @@ export class OpenAIProvider extends BaseProvider {
 
     if (choice?.message.tool_calls) {
       for (const tc of choice.message.tool_calls) {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+        } catch {
+          args = { _raw: tc.function.arguments };
+        }
         toolCalls.push({
           id: tc.id,
           name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          arguments: args,
         });
       }
     }

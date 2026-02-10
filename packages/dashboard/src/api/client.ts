@@ -1,10 +1,10 @@
 /**
- * API Client for SecureClaw Dashboard
+ * API Client for SecureYeoman Dashboard
  * 
  * All requests go to the local gateway
  */
 
-import type { MetricsSnapshot, Task, SecurityEvent, HealthStatus } from '../types';
+import type { MetricsSnapshot, Task, SecurityEvent, HealthStatus, Personality, PersonalityCreate, Skill, SkillCreate, OnboardingStatus, PromptPreview } from '../types';
 
 const API_BASE = '/api/v1';
 
@@ -189,4 +189,122 @@ export async function verifyAuditChain(): Promise<{
   } catch {
     return { valid: false, entriesChecked: 0, error: 'Failed to verify' };
   }
+}
+
+// ─── Soul API ──────────────────────────────────────────────────
+
+/**
+ * Onboarding
+ */
+export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
+  return request<OnboardingStatus>('/soul/onboarding/status');
+}
+
+export async function completeOnboarding(data: PersonalityCreate & { agentName?: string }): Promise<{
+  agentName: string;
+  personality: Personality;
+}> {
+  return request('/soul/onboarding/complete', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Agent name
+ */
+export async function fetchAgentName(): Promise<{ agentName: string }> {
+  return request('/soul/agent-name');
+}
+
+export async function updateAgentName(agentName: string): Promise<{ agentName: string }> {
+  return request('/soul/agent-name', {
+    method: 'PUT',
+    body: JSON.stringify({ agentName }),
+  });
+}
+
+/**
+ * Personalities
+ */
+export async function fetchPersonalities(): Promise<{ personalities: Personality[] }> {
+  return request('/soul/personalities');
+}
+
+export async function fetchActivePersonality(): Promise<{ personality: Personality | null }> {
+  return request('/soul/personality');
+}
+
+export async function createPersonality(data: PersonalityCreate): Promise<{ personality: Personality }> {
+  return request('/soul/personalities', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePersonality(id: string, data: Partial<PersonalityCreate>): Promise<{ personality: Personality }> {
+  return request(`/soul/personalities/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePersonality(id: string): Promise<void> {
+  await request(`/soul/personalities/${id}`, { method: 'DELETE' });
+}
+
+export async function activatePersonality(id: string): Promise<{ personality: Personality }> {
+  return request(`/soul/personalities/${id}/activate`, { method: 'POST' });
+}
+
+/**
+ * Skills
+ */
+export async function fetchSkills(params?: { status?: string; source?: string }): Promise<{ skills: Skill[] }> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.source) query.set('source', params.source);
+  const qs = query.toString();
+  return request(`/soul/skills${qs ? `?${qs}` : ''}`);
+}
+
+export async function createSkill(data: SkillCreate): Promise<{ skill: Skill }> {
+  return request('/soul/skills', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSkill(id: string, data: Partial<SkillCreate>): Promise<{ skill: Skill }> {
+  return request(`/soul/skills/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  await request(`/soul/skills/${id}`, { method: 'DELETE' });
+}
+
+export async function enableSkill(id: string): Promise<void> {
+  await request(`/soul/skills/${id}/enable`, { method: 'POST' });
+}
+
+export async function disableSkill(id: string): Promise<void> {
+  await request(`/soul/skills/${id}/disable`, { method: 'POST' });
+}
+
+export async function approveSkill(id: string): Promise<{ skill: Skill }> {
+  return request(`/soul/skills/${id}/approve`, { method: 'POST' });
+}
+
+export async function rejectSkill(id: string): Promise<void> {
+  await request(`/soul/skills/${id}/reject`, { method: 'POST' });
+}
+
+/**
+ * Prompt preview
+ */
+export async function fetchPromptPreview(): Promise<PromptPreview> {
+  return request('/soul/prompt/preview');
 }

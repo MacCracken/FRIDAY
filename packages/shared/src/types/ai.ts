@@ -1,5 +1,5 @@
 /**
- * AI Types for SecureClaw
+ * AI Types for SecureYeoman
  *
  * Shared type definitions and Zod schemas for the multi-provider AI client layer.
  *

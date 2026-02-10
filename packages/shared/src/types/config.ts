@@ -1,5 +1,5 @@
 /**
- * Configuration Types for SecureClaw
+ * Configuration Types for SecureYeoman
  * 
  * Security considerations:
  * - Secret values are never stored in config, only references (env vars)
@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { SoulConfigSchema } from './soul.js';
 
 // Safe path validation (no path traversal)
 const SafePathSchema = z.string()
@@ -24,11 +25,11 @@ const EnvVarRefSchema = z.string()
 
 // Core configuration
 export const CoreConfigSchema = z.object({
-  name: z.string().default('SecureClaw'),
+  name: z.string().default('SecureYeoman'),
   environment: z.enum(['development', 'staging', 'production']).default('development'),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
-  workspace: SafePathSchema.default('~/.secureclaw/workspace'),
-  dataDir: SafePathSchema.default('~/.secureclaw/data'),
+  workspace: SafePathSchema.default('~/.secureyeoman/workspace'),
+  dataDir: SafePathSchema.default('~/.secureyeoman/data'),
 });
 
 export type CoreConfig = z.infer<typeof CoreConfigSchema>;
@@ -42,12 +43,18 @@ const RbacConfigSchema = z.object({
 const EncryptionConfigSchema = z.object({
   enabled: z.boolean().default(true),
   algorithm: z.enum(['aes-256-gcm']).default('aes-256-gcm'),
-  keyEnv: EnvVarRefSchema.default('SECURECLAW_ENCRYPTION_KEY'),
+  keyEnv: EnvVarRefSchema.default('SECUREYEOMAN_ENCRYPTION_KEY'),
 }).default({});
 
 const SandboxConfigSchema = z.object({
   enabled: z.boolean().default(true),
   technology: z.enum(['auto', 'seccomp', 'landlock', 'none']).default('auto'),
+  allowedReadPaths: z.array(z.string()).default([]),
+  allowedWritePaths: z.array(z.string()).default([]),
+  maxMemoryMb: z.number().int().positive().max(4096).default(1024),
+  maxCpuPercent: z.number().int().positive().max(100).default(50),
+  maxFileSizeMb: z.number().int().positive().max(10240).default(100),
+  networkAllowed: z.boolean().default(true),
 }).default({});
 
 const RateLimitingConfigSchema = z.object({
@@ -69,6 +76,14 @@ export const SecurityConfigSchema = z.object({
   sandbox: SandboxConfigSchema,
   rateLimiting: RateLimitingConfigSchema,
   inputValidation: InputValidationConfigSchema,
+  secretBackend: z.enum(['auto', 'keyring', 'env', 'file']).default('auto'),
+  rotation: z.object({
+    enabled: z.boolean().default(false),
+    checkIntervalMs: z.number().int().positive().max(86400000).default(3600000),
+    warningDaysBeforeExpiry: z.number().int().positive().max(90).default(7),
+    tokenRotationIntervalDays: z.number().int().positive().max(365).default(30),
+    signingKeyRotationIntervalDays: z.number().int().positive().max(365).default(90),
+  }).default({}),
 });
 
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
@@ -77,7 +92,7 @@ export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 const AuditConfigSchema = z.object({
   enabled: z.boolean().default(true),
   chainVerification: z.enum(['hourly', 'daily', 'never']).default('hourly'),
-  signingKeyEnv: EnvVarRefSchema.default('SECURECLAW_SIGNING_KEY'),
+  signingKeyEnv: EnvVarRefSchema.default('SECUREYEOMAN_SIGNING_KEY'),
 }).default({});
 
 // Logging configuration
@@ -150,9 +165,10 @@ const CorsConfigSchema = z.object({
 }).default({});
 
 const AuthConfigSchema = z.object({
-  tokenSecret: EnvVarRefSchema.default('SECURECLAW_TOKEN_SECRET'),
+  tokenSecret: EnvVarRefSchema.default('SECUREYEOMAN_TOKEN_SECRET'),
   tokenExpirySeconds: z.number().int().positive().max(86400).default(3600),
   refreshTokenExpirySeconds: z.number().int().positive().max(604800).default(86400),
+  adminPasswordEnv: EnvVarRefSchema.default('SECUREYEOMAN_ADMIN_PASSWORD'),
 }).default({});
 
 // Gateway/API configuration  
@@ -200,6 +216,7 @@ export const ConfigSchema = z.object({
   metrics: MetricsConfigSchema.default({}),
   gateway: GatewayConfigSchema.default({}),
   model: ModelConfigSchema.default({}),
+  soul: SoulConfigSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

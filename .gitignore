@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+*.tsbuildinfo
+
+# Vite / Vitest cache
+.vite/
+**/.vite/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Lock files (pnpm only — use pnpm-lock.yaml)
+package-lock.json
+
+# Test coverage
+coverage/
+
+# Logs
+*.log
+pino-*.log

@@ -1,7 +1,7 @@
 /**
  * WebSocket Hook for Real-time Updates
  * 
- * Connects to the SecureClaw gateway for live metrics
+ * Connects to the SecureYeoman gateway for live metrics
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';

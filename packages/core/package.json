@@ -1,12 +1,12 @@
 {
   "name": "@friday/core",
   "version": "0.1.0",
-  "description": "SecureClaw Core Agent Engine",
+  "description": "SecureYeoman Core Agent Engine",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "secureclaw": "./dist/cli.js"
+    "secureyeoman": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -29,6 +29,7 @@
     "@google/generative-ai": "^0.24.1",
     "better-sqlite3": "^11.1.2",
     "fastify": "^5.7.4",
+    "jose": "^6.0.0",
     "openai": "^6.19.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",

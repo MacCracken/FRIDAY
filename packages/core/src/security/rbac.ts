@@ -1,5 +1,5 @@
 /**
- * Role-Based Access Control (RBAC) for SecureClaw
+ * Role-Based Access Control (RBAC) for SecureYeoman
  * 
  * Security considerations:
  * - Deny by default - all permissions must be explicitly granted
@@ -8,7 +8,7 @@
  * - Audit logging of all permission checks
  */
 
-import { getLogger, type SecureLogger } from '../logging/logger.js';
+import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 import {
   RoleSchema,
   type Permission,
@@ -34,6 +34,7 @@ const DEFAULT_ROLES: RoleDefinition[] = [
       { resource: 'connections', actions: ['read', 'write', 'delete', 'test'] },
       { resource: 'metrics', actions: ['read'] },
       { resource: 'logs', actions: ['read'] },
+      { resource: 'soul', actions: ['read', 'write'] },
     ],
   },
   {
@@ -56,6 +57,7 @@ const DEFAULT_ROLES: RoleDefinition[] = [
       { resource: 'metrics', actions: ['read'] },
       { resource: 'tasks', actions: ['read'] },
       { resource: 'connections', actions: ['read'] },
+      { resource: 'soul', actions: ['read'] },
     ],
   },
 ];
@@ -90,16 +92,7 @@ export class RBAC {
       try {
         this.logger = getLogger().child({ component: 'RBAC' });
       } catch {
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;

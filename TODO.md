@@ -2,7 +2,7 @@
 
 > Development roadmap, next steps, and considerations for the SecureYeoman secure autonomous agent system.
 
-[![Project Status: Planning](https://img.shields.io/badge/Status-Planning-yellow.svg)]()
+[![Project Status: Active Development](https://img.shields.io/badge/Status-Active%20Development-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -12,18 +12,19 @@
 1. [Development Phases](#development-phases)
 2. [Phase 1: Foundation](#phase-1-foundation)
 3. [Phase 2: Security Layer](#phase-2-security-layer)
-4. [Phase 3: Dashboard](#phase-3-dashboard)
-5. [Phase 4: Integrations](#phase-4-integrations)
-6. [Phase 5: Production Hardening](#phase-5-production-hardening)
-7. [Dashboard Component Specifications](#dashboard-component-specifications)
-8. [API Endpoint Specifications](#api-endpoint-specifications)
-9. [Data Models](#data-models)
-10. [Technical Considerations](#technical-considerations)
-11. [Security Considerations](#security-considerations)
-12. [Performance Considerations](#performance-considerations)
-13. [Future Enhancements](#future-enhancements)
-14. [Research Required](#research-required)
-15. [Dependencies](#dependencies)
+4. [Phase 2.5: Core Infrastructure Gaps](#phase-25-core-infrastructure-gaps)
+5. [Phase 3: Dashboard](#phase-3-dashboard)
+6. [Phase 4: Integrations](#phase-4-integrations)
+7. [Phase 5: Production Hardening](#phase-5-production-hardening)
+8. [Dashboard Component Specifications](#dashboard-component-specifications)
+9. [API Endpoint Specifications](#api-endpoint-specifications)
+10. [Data Models](#data-models)
+11. [Technical Considerations](#technical-considerations)
+12. [Security Considerations](#security-considerations)
+13. [Performance Considerations](#performance-considerations)
+14. [Future Enhancements](#future-enhancements)
+15. [Research Required](#research-required)
+16. [Dependencies](#dependencies)
 
 ---
 
@@ -55,73 +56,91 @@ Timeline: ~12-16 weeks for MVP
 ### Tasks
 
 #### Core Agent Engine
-- [ ] **P1-001**: Set up TypeScript project structure
+- [x] **P1-001**: Set up TypeScript project structure
   - Initialize with `pnpm init`
   - Configure `tsconfig.json` with strict mode
   - Set up ESLint + Prettier
   - Configure Vitest for testing
-  
-- [ ] **P1-002**: Implement configuration management
+
+- [x] **P1-002**: Implement configuration management
   - YAML config file parser
   - Environment variable loading
   - Config validation with Zod
-  - Hot-reload support for development
-  
-- [ ] **P1-003**: Create base agent loop
-  - Task queue implementation (priority queue)
+  - ~~Hot-reload support for development~~ (deferred)
+
+- [x] **P1-003**: Create base agent loop
+  - Task queue implementation (FIFO with max concurrent limit)
   - Event-driven architecture
   - Graceful shutdown handling
   - Health check endpoint
 
-- [ ] **P1-004**: Implement Claude API integration
-  - Anthropic SDK wrapper
-  - Tool calling infrastructure
-  - Streaming response handling
-  - Token counting and tracking
-  - Error handling with retries
+- [x] **P1-004**: Implement multi-provider AI integration
+  - Anthropic SDK wrapper with tool calling and streaming
+  - OpenAI GPT provider (gpt-4o, o1, o3-mini)
+  - Google Gemini provider (gemini-2.0-flash, 1.5-pro)
+  - Ollama local provider (fetch-based, no SDK dependency)
+  - Unified AIClient orchestrator with provider factory
+  - Token counting, cost calculation, and usage tracking
+  - Exponential backoff retry with jitter (RetryManager)
+  - Structured error hierarchy (RateLimitError, AuthenticationError, etc.)
+  - Audit chain integration for request/response logging
 
 #### Logging Infrastructure
-- [ ] **P1-005**: Design log entry schema
+- [x] **P1-005**: Design log entry schema
   - UUID v7 generation for time-sortable IDs
   - Structured JSON format
   - Correlation ID propagation
   - Input/output hashing (not storing raw data)
 
-- [ ] **P1-006**: Implement log storage backend
-  - SQLite for local storage (default)
-  - Append-only log file format
-  - Log rotation and compression
-  - Retention policy enforcement
+- [x] **P1-006**: Implement log storage backend
+  - [x] SQLite for local storage (default) — `SQLiteAuditStorage` with WAL mode, query/filter/pagination
+  - [x] SQLite storage tests (27 tests — persistence, WAL, schema, query filtering)
+  - [ ] Append-only log file format (deferred)
+  - [ ] Log rotation and compression (deferred)
+  - [ ] Retention policy enforcement (deferred)
 
-- [ ] **P1-007**: Create audit chain
+- [x] **P1-007**: Create audit chain
   - HMAC-SHA256 signing
   - Chain integrity verification
   - Genesis block creation
-  - Fork handling for recovery
+  - Fork handling (snapshot-based recovery)
 
-- [ ] **P1-008**: Build log query API
-  - Time-range queries
-  - Status filtering
-  - Full-text search (optional)
-  - Pagination support
+- [x] **P1-008**: Build log query API
+  - [x] Storage-layer query support (`SQLiteAuditStorage.query()` with time-range, level, event, userId, taskId, pagination)
+  - [x] `getByTaskId()` and `getByCorrelationId()` convenience methods
+  - [x] Wire up REST endpoint (`GET /api/v1/audit`) in gateway with query params (from, to, level, event, userId, taskId, limit, offset)
+  - [x] `queryAuditLog()` method on `SecureYeoman` class
+  - [x] `query()` method on `InMemoryAuditStorage` for parity with `SQLiteAuditStorage`
+  - [ ] Full-text search (optional, deferred)
 
 #### Testing
-- [ ] **P1-009**: Unit tests for core components
-  - Config loading tests
-  - Task queue tests
-  - Logging tests
-  - API integration mocks
+- [x] **P1-009**: Unit tests for core components
+  - [x] Config loading tests (24 tests)
+  - [x] Crypto utilities tests (40 tests)
+  - [x] RBAC tests (31 tests)
+  - [x] AI Client tests (10 tests)
+  - [x] AI Provider tests — Anthropic, OpenAI, Gemini, Ollama (23 tests)
+  - [x] Cost Calculator tests (8 tests)
+  - [x] Usage Tracker tests (6 tests)
+  - [x] Retry Manager tests (15 tests)
+  - [x] SQLite audit storage tests (27 tests)
+  - [x] Task executor tests (12 tests)
+  - [x] Audit chain tests (19 tests)
+  - [x] Input validator tests (31 tests)
+  - [x] Rate limiter tests (13 tests)
+  - [x] Logger tests (16 tests)
 
-- [ ] **P1-010**: Integration tests
-  - End-to-end task execution
-  - Log chain verification
-  - API response validation
+- [x] **P1-010**: Integration tests
+  - [x] End-to-end auth flow (login → validate → refresh → logout → verify revoked)
+  - [x] Gateway API tests (public routes, protected routes, RBAC enforcement, API key auth)
+  - [x] Audit trail tests (chain integrity, tamper detection, query filtering, SQLite persistence)
+  - [x] 32 integration tests across 3 test files
 
 ### Deliverables
-- [ ] Working agent that can execute tasks via Claude API
-- [ ] Comprehensive logging with audit trail
-- [ ] Configuration system
-- [ ] Test coverage > 80%
+- [x] Working agent that can execute tasks via Claude API (+ OpenAI, Gemini, Ollama)
+- [x] Comprehensive logging with audit trail (audit chain + SQLite storage + query layer)
+- [x] Configuration system
+- [x] Test coverage > 80% (538 tests passing across 30 test files — all core modules covered)
 
 ---
 
@@ -131,99 +150,220 @@ Timeline: ~12-16 weeks for MVP
 
 **Duration**: 3-4 weeks
 
-### Tasks
+**Status**: Sprints 1-3 complete. 538 tests passing across 30 files. Sandbox V1 (soft sandbox with path validation + resource tracking) done. Remaining: kernel-level enforcement (seccomp, Landlock via child process), macOS sandbox.
 
-#### Authentication & Authorization
-- [ ] **P2-001**: Implement RBAC system
-  - Role definitions (Admin, Operator, Auditor, Viewer)
-  - Permission matrix
-  - Role assignment storage
-  - Permission checking middleware
+### Completed (built during P1)
 
-- [ ] **P2-002**: JWT authentication
-  - Token generation and validation
-  - Refresh token rotation
-  - Token blacklisting
-  - Session management
+- [x] **P2-001**: RBAC system *(completed in P1)*
+  - [x] Role definitions (Admin, Operator, Auditor, Viewer) — `security/rbac.ts`
+  - [x] Permission matrix with wildcard and condition support
+  - [x] Permission caching with LRU eviction
+  - [x] `requirePermission()` enforcement (throws `PermissionDeniedError`)
+  - [x] Role inheritance support
+  - [x] 31 unit tests
+  - [ ] Role assignment persistent storage (currently in-memory only)
+  - [x] Gateway middleware for per-route RBAC enforcement — see P2-001b
 
-- [ ] **P2-003**: API key authentication
-  - Key generation
-  - Key rotation support
-  - Rate limiting per key
-  - Key revocation
+- [x] **P2-005**: Encryption at rest *(completed in P1)*
+  - [x] AES-256-GCM implementation — `security/secrets.ts`
+  - [x] Key derivation with scrypt (N=16384, r=8, p=1)
+  - [x] `SecretStore` class with encrypted file persistence
+  - [x] Serialize/deserialize with magic bytes and versioning
+  - [x] Memory clearing of decrypted buffers
+  - [x] `encryptValue()`/`decryptValue()` convenience helpers
+  - [ ] Encrypted config file support (config loader doesn't consume SecretStore yet)
 
-- [ ] **P2-004**: mTLS support (optional for v1)
-  - Certificate generation scripts
-  - Certificate validation
-  - Client certificate authentication
+- [x] **P2-007**: Secret management *(completed)*
+  - [x] Secret access logging via `SecretStore.get()` debug logs
+  - [x] Log redaction of sensitive fields (password, token, apiKey, etc.) — `logging/logger.ts`
+  - [x] `sanitizeForLogging()` utility — `utils/crypto.ts`
+  - [x] Secret rotation scheduling (via `SecretRotationManager`) — see P2-007b
+  - [x] Rotation alerting / expiry tracking — see P2-007b
 
-#### Encryption
-- [ ] **P2-005**: Implement encryption at rest
-  - AES-256-GCM implementation
-  - Key derivation with Argon2id
-  - Encrypted config file support
-  - Secret storage abstraction
+- [x] **P2-011**: Validation pipeline *(completed in P1)*
+  - [x] Size limits — `InputValidator`
+  - [x] Encoding normalization (NFC, dangerous unicode removal)
+  - [x] Injection pattern detection (SQL, XSS, command, path traversal, template)
+  - [x] Content policy enforcement (file validation, null byte detection)
+  - [x] 31 unit tests
 
-- [ ] **P2-006**: Integrate with system keyring
-  - macOS Keychain
-  - Linux Secret Service (libsecret)
-  - Windows Credential Manager
-  - Fallback to encrypted file
+- [x] **P2-012**: Prompt injection defense *(completed in P1)*
+  - [x] 6 prompt injection pattern families (system tags, ignore/forget instructions, pretend, jailbreak, roleplay)
+  - [x] Blocking mode for high-severity patterns
+  - [x] Warning mode for medium-severity patterns
+  - [x] Audit logging of detected injection attempts
 
-- [ ] **P2-007**: Secret management
-  - Secret rotation scheduling
-  - Access logging
-  - Handle redaction for secrets
+- [x] **P2-013**: Rate limiter *(completed in P1)*
+  - [x] Sliding window counters — `security/rate-limiter.ts`
+  - [x] Per-user, per-IP, per-API-key, and global limits
+  - [x] Configurable rules with `addRule()`/`removeRule()`
+  - [x] `log_only` mode for monitoring without blocking
+  - [x] `checkMultiple()` for multi-rule enforcement
+  - [x] Auto-cleanup of expired windows
+  - [x] 13 unit tests
 
-#### Sandboxing
-- [ ] **P2-008**: Linux sandbox implementation
-  - seccomp-bpf filter creation
-  - Landlock filesystem restrictions
-  - Namespace isolation
-  - Resource cgroups
+- [x] **P2-014**: Rate limit storage *(partially completed in P1)*
+  - [x] In-memory storage (single node)
+  - [x] Metrics via `getStats()`
+  - [ ] Redis adapter (distributed)
+
+### Remaining P2 Tasks
+
+*Proposed priority order — highest impact items first.*
+
+#### Priority A: Gateway Authentication (unprotected endpoints are the biggest gap)
+
+- [x] **P2-002**: JWT authentication *(completed in Sprint 1)*
+  - [x] Token generation and validation (jose library)
+  - [x] Refresh token rotation
+  - [x] Token blacklisting (in-memory)
+  - [x] Session management
+  - [x] Fastify `onRequest` hook for protected routes
+  - [x] 44 unit tests (`auth.test.ts`)
+
+- [x] **P2-003**: API key authentication *(completed in Sprint 1)*
+  - [x] Key generation with `generateSecureToken()`
+  - [x] Key storage in SQLite (`AuthStorage`)
+  - [x] Rate limiting per key
+  - [x] Key revocation
+  - [x] API key auth via `X-API-Key` header in gateway
+
+- [x] **P2-001b**: RBAC gateway middleware *(completed in Sprint 1)*
+  - [x] Per-route permission enforcement in Fastify hooks (`auth-middleware.ts`)
+  - [x] Extract role from JWT claims or API key lookup
+  - [x] 15 unit tests (`auth-middleware.test.ts`)
+
+#### Priority B: Secret Lifecycle
+
+- [x] **P2-006**: System keyring integration *(completed in Sprint 2)*
+  - [x] macOS Keychain (via `security` CLI)
+  - [x] Linux Secret Service (via `secret-tool` CLI)
+  - [x] Environment variable fallback provider
+  - [x] `KeyringManager` with auto-detection and pre-loading into `process.env`
+  - [x] Zero native dependencies (CLI-based, `execFileSync` with array args)
+  - [x] 21 unit tests (`keyring.test.ts`)
+
+- [x] **P2-007b**: Secret rotation *(completed in Sprint 2)*
+  - [x] SQLite metadata storage for secret tracking
+  - [x] Auto-rotation for internal secrets (JWT token secret, audit signing key)
+  - [x] Expiry tracking and warnings for external secrets
+  - [x] Dual-key JWT verification with grace period
+  - [x] Multi-key audit chain verification with key schedule
+  - [x] `onRotate` callbacks for AuthService and AuditChain
+  - [x] 23 unit tests (`rotation.test.ts`)
+
+#### Soul System (Personality + Skills)
+
+- [x] **P2-015**: Soul system — personality and learnable skills for FRIDAY
+  - [x] Zod schemas for Personality (name, description, systemPrompt, traits, sex, voice, preferredLanguage) and Skill
+  - [x] SoulConfig in config schema (enabled, learningMode, maxSkills, maxPromptTokens)
+  - [x] SQLite storage (`SoulStorage`) with WAL mode, CRUD for personalities + skills
+  - [x] `SoulManager` — composition, onboarding, skill lifecycle, learning modes (user_authored, ai_proposed, autonomous)
+  - [x] Prompt composition: personality + enabled skills → system message, token cap with skill priority by usage
+  - [x] Tool collection from enabled skills
+  - [x] Skill approval workflow (propose → approve/reject)
+  - [x] 18 REST API endpoints for personality/skill CRUD, prompt preview, config, onboarding
+  - [x] RBAC: operator can read+write, viewer can read only
+  - [x] Wired into `SecureYeoman.initialize()` with auto-onboarding (default FRIDAY personality)
+  - [x] 60 unit tests (`soul.test.ts`), 11 integration tests (`soul.integration.test.ts`)
+
+#### Priority C: Sandboxing (largest effort, most platform-specific)
+
+- [x] **P2-010**: Cross-platform sandbox abstraction *(completed — V1 soft sandbox)*
+  - [x] `Sandbox` interface definition (`run()`, `getCapabilities()`, `isAvailable()`)
+  - [x] `SandboxCapabilities` type (landlock, seccomp, namespaces, rlimits, platform)
+  - [x] `SandboxManager` factory with platform detection and caching
+  - [x] `NoopSandbox` fallback with warning on first use
+  - [x] Config expansion: `allowedReadPaths`, `allowedWritePaths`, `maxMemoryMb`, `maxCpuPercent`, `maxFileSizeMb`, `networkAllowed`
+  - [x] Integrated into `TaskExecutor.executeTask()` and `SecureYeoman.initialize()`
+  - [x] `GET /api/v1/sandbox/status` endpoint
+  - [x] 37 unit tests + 7 integration tests
+
+- [x] **P2-008**: Linux sandbox implementation *(V1 — soft sandbox with path validation)*
+  - [x] `LinuxSandbox` with filesystem path validation against allowlists
+  - [x] Landlock capability detection (`/proc/sys/kernel/landlock_restrict_self`, kernel >= 5.13)
+  - [x] Memory and CPU resource tracking with violation detection
+  - [x] Path traversal detection in configuration
+  - [ ] seccomp-bpf filter creation (deferred to V2 — requires native bindings)
+  - [ ] Kernel-level Landlock enforcement via child process (deferred to V2)
+  - [ ] Namespace isolation (PID, network, mount) (deferred to V2)
 
 - [ ] **P2-009**: macOS sandbox implementation
   - sandbox-exec profile
   - App Sandbox entitlements
   - File access restrictions
+  - **Depends on**: P2-010 ✅
 
-- [ ] **P2-010**: Cross-platform abstraction
-  - Sandbox interface definition
-  - Platform detection
-  - Graceful degradation
+#### Priority D: Optional / Deferred
 
-#### Input Validation
-- [ ] **P2-011**: Validation pipeline
-  - Size limits
-  - Encoding normalization
-  - Injection pattern detection
-  - Content policy enforcement
+- [ ] **P2-004**: mTLS support (optional for v1)
+  - Certificate generation scripts
+  - Certificate validation
+  - Client certificate authentication
+  - **Defer** unless deploying in zero-trust environments
 
-- [ ] **P2-012**: Prompt injection defense
-  - System prompt isolation
-  - Instruction hierarchy
-  - Suspicious pattern detection
-  - Alert on detection
+- [ ] **P2-014b**: Redis rate limit adapter
+  - Redis-backed sliding window
+  - Distributed rate limiting across instances
+  - **Defer** until multi-instance deployment is needed
 
-#### Rate Limiting
-- [ ] **P2-013**: Rate limiter implementation
-  - Token bucket algorithm
-  - Sliding window counters
-  - Per-user and per-IP limits
-  - Configurable rules
+### Proposed Execution Order
 
-- [ ] **P2-014**: Rate limit storage
-  - In-memory (single node)
-  - Redis adapter (distributed)
-  - Metrics export
+```
+Sprint 1 (Week 1-2):  P2-002 (JWT) → P2-003 (API keys) → P2-001b (RBAC middleware)
+Sprint 2 (Week 2-3):  P2-006 (keyring) → P2-007b (rotation)
+Sprint 2.5:           P2-015 (Soul system — personality + skills)
+Sprint 3 (Week 3-4):  P2-010 (sandbox interface) → P2-008 (Linux sandbox)
+Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
+```
 
 ### Deliverables
-- [ ] Complete RBAC system
-- [ ] Encrypted secret storage
-- [ ] Sandboxed execution environment
-- [ ] Input validation pipeline
-- [ ] Rate limiting infrastructure
+- [x] Complete RBAC system *(done)*
+- [x] Encrypted secret storage *(done)*
+- [x] Input validation pipeline *(done)*
+- [x] Rate limiting infrastructure *(done)*
+- [x] JWT + API key authentication for gateway
+- [x] RBAC middleware on all gateway routes
+- [x] System keyring integration
+- [x] Sandboxed execution environment *(V1 soft sandbox — path validation + resource tracking)*
 - [ ] Security audit documentation
+- [x] Code audit and refactoring pass (noop logger extraction, JSON.parse guards, queue race fix, bodyLimit, IP check, error handling)
+
+---
+
+## Phase 2.5: Core Infrastructure Gaps
+
+**Goal**: Fill critical gaps that block dashboard and production readiness.
+
+### Tasks
+
+#### CLI & Startup
+- [x] **P2.5-001**: CLI entry point (`packages/core/src/cli.ts`)
+  - [x] Parse CLI args: `--port`, `--host`, `--config`, `--log-level`, `--help`, `--version`
+  - [x] Boot SecureYeoman + gateway server
+  - [x] Graceful shutdown on SIGINT/SIGTERM
+  - [x] Print startup banner with version, port, capabilities
+  - [x] `bin` entry in `package.json` pointing to `./dist/cli.js`
+
+#### Task Persistence
+- [x] **P2.5-002**: SQLite task storage (`packages/core/src/task/task-storage.ts`)
+  - [x] `tasks` table with indexes on status, type, created_at, correlation_id
+  - [x] `TaskStorage` class following AuthStorage/SoulStorage patterns (WAL, prepared statements)
+  - [x] `storeTask()`, `updateTask()`, `getTask()`, `listTasks()` with filtering + pagination
+  - [x] `getStats()` for metrics (total, by_status, by_type, success_rate, avg_duration)
+  - [x] 15 unit tests (`task-storage.test.ts`)
+
+- [x] **P2.5-003**: Wire task storage into executor and gateway
+  - [x] `TaskExecutor` persists tasks on create, updates on start/complete/fail
+  - [x] `GET /api/v1/tasks` returns persisted tasks with filters (status, type, limit, offset)
+  - [x] `GET /api/v1/tasks/:id` returns single task (404 if not found)
+  - [x] `getMetrics()` populates `tasks.total`, `byStatus`, `byType`, `successRate` from storage
+
+#### Security Events
+- [ ] **P2.5-004**: Security events query API
+  - Query audit chain entries by security-related event types
+  - `GET /api/v1/security/events` returns filtered results (auth_failure, rate_limit, injection, permission_denied, sandbox_violation)
+  - Severity mapping from audit event level
 
 ---
 
@@ -235,62 +375,66 @@ Timeline: ~12-16 weeks for MVP
 
 ### Tasks
 
-#### Project Setup
-- [ ] **P3-001**: Initialize React project
-  - Vite + React + TypeScript
-  - TanStack Router
-  - TanStack Query
-  - Tailwind CSS
-  - shadcn/ui components
+**Status**: ~40% complete. Project scaffolding done, core components built (MetricsGraph, TaskHistory, SecurityEvents, ResourceMonitor), WebSocket + API client working. Missing: routing, Soul/Personality pages, login page, settings, connection manager, live data (currently mock/placeholder).
 
-- [ ] **P3-002**: Set up development environment
-  - Hot module replacement
-  - API proxy for development
-  - Mock data generators
-  - Storybook for components
+#### Project Setup
+- [x] **P3-001**: Initialize React project
+  - [x] Vite + React + TypeScript
+  - [ ] TanStack Router (no URL routing yet — single-page App.tsx)
+  - [ ] TanStack Query (using raw fetch via api/client.ts)
+  - [x] Tailwind CSS
+  - [ ] shadcn/ui components (using custom Tailwind components)
+
+- [~] **P3-002**: Set up development environment
+  - [x] Hot module replacement (Vite)
+  - [x] API proxy for development (vite.config.ts proxy)
+  - [ ] Mock data generators (hardcoded mock data in components)
+  - [ ] Storybook for components
 
 #### Core Infrastructure
-- [ ] **P3-003**: WebSocket client
-  - Connection management
-  - Auto-reconnection
-  - Message queue for offline
-  - Subscription management
+- [x] **P3-003**: WebSocket client
+  - [x] Connection management (`useWebSocket` hook)
+  - [x] Auto-reconnection with backoff
+  - [ ] Message queue for offline
+  - [x] Subscription management (channel subscribe/unsubscribe)
 
-- [ ] **P3-004**: REST API client
-  - TanStack Query integration
-  - Request/response interceptors
-  - Error handling
-  - Caching strategy
+- [~] **P3-004**: REST API client
+  - [ ] TanStack Query integration
+  - [x] Base API client (`api/client.ts` with fetch wrapper)
+  - [x] Error handling (basic)
+  - [ ] Caching strategy
 
 - [ ] **P3-005**: State management
-  - Global metrics store
-  - Task history cache
-  - Connection state
-  - User preferences
+  - [ ] Global metrics store
+  - [ ] Task history cache
+  - [ ] Connection state
+  - [ ] User preferences
 
 #### Components
-- [ ] **P3-006**: MetricsGraph component
-  - ReactFlow integration
-  - Real-time node updates
-  - Custom node types (Task, Connection, Resource, Alert)
-  - Edge animations for data flow
-  - Zoom and pan controls
-  - Node detail expansion
+- [x] **P3-006**: MetricsGraph component *(V1 — basic visualization)*
+  - [x] ReactFlow integration
+  - [x] Real-time node updates (via WebSocket)
+  - [x] Custom node types (Task, Connection, Resource, Alert)
+  - [x] Edge animations for data flow
+  - [x] Zoom and pan controls
+  - [ ] Node detail expansion
 
-- [ ] **P3-007**: TaskHistory component
-  - Data table with sorting
-  - Advanced filtering
-  - Date range picker
-  - Status badges
-  - Duration visualization
-  - Export functionality
+- [~] **P3-007**: TaskHistory component *(V1 — mock data)*
+  - [x] Data table with sorting
+  - [ ] Advanced filtering
+  - [ ] Date range picker
+  - [x] Status badges
+  - [x] Duration visualization
+  - [ ] Export functionality
+  - *Note: Uses mock data — needs task persistence (P2.5-003) for live data*
 
-- [ ] **P3-008**: SecurityEvents component
-  - Real-time event feed
-  - Severity-based styling
-  - Event acknowledgment
-  - Investigation workflow
-  - Export and search
+- [~] **P3-008**: SecurityEvents component *(V1 — mock data)*
+  - [x] Event feed
+  - [x] Severity-based styling
+  - [ ] Event acknowledgment
+  - [ ] Investigation workflow
+  - [ ] Export and search
+  - *Note: Uses mock data — needs security events API (P2.5-004) for live data*
 
 - [ ] **P3-009**: ConnectionManager component
   - Platform cards with status
@@ -300,20 +444,20 @@ Timeline: ~12-16 weeks for MVP
   - Activity indicators
   - Error display
 
-- [ ] **P3-010**: ResourceMonitor component
-  - CPU/Memory gauges (circular)
-  - Token usage charts
-  - Cost tracking
-  - Historical graphs
-  - Alert thresholds
-  - Trend indicators
+- [x] **P3-010**: ResourceMonitor component *(V1 — basic gauges)*
+  - [x] CPU/Memory gauges
+  - [x] Token usage display
+  - [x] Cost tracking display
+  - [ ] Historical graphs (mock data for memory history)
+  - [ ] Alert thresholds
+  - [ ] Trend indicators
 
 - [ ] **P3-011**: Header and navigation
-  - Navigation menu
-  - User profile dropdown
-  - Notification bell
-  - Search bar
-  - Theme toggle
+  - [ ] Navigation menu (sidebar/tabs)
+  - [ ] User profile dropdown
+  - [ ] Notification bell
+  - [ ] Search bar
+  - [ ] Theme toggle
 
 - [ ] **P3-012**: Settings pages
   - General settings
@@ -321,6 +465,21 @@ Timeline: ~12-16 weeks for MVP
   - Notification settings
   - API key management
   - Log retention settings
+
+#### Soul/Personality UI *(NEW — not in original plan)*
+- [ ] **P3-015**: Onboarding wizard
+  - Agent name entry
+  - Personality creation (name, description, traits, system prompt)
+  - First-run detection via `/api/v1/soul/onboarding/status`
+- [ ] **P3-016**: Personality editor page
+  - List/create/edit/delete personalities
+  - Activate personality
+  - Prompt preview with token count
+- [ ] **P3-017**: Skills management page
+  - List skills with status/source filters
+  - Create/edit/delete skills
+  - Enable/disable toggle
+  - Approve/reject workflow for AI-proposed skills
 
 #### Authentication UI
 - [ ] **P3-013**: Login page
@@ -336,10 +495,11 @@ Timeline: ~12-16 weeks for MVP
 
 ### Deliverables
 - [ ] Fully functional dashboard
-- [ ] Real-time metrics visualization
-- [ ] Task history browser
-- [ ] Security event monitor
+- [~] Real-time metrics visualization *(V1 done, needs polish)*
+- [ ] Task history browser *(component done, needs live data)*
+- [ ] Security event monitor *(component done, needs live data)*
 - [ ] Connection management UI
+- [ ] Soul/personality management pages
 - [ ] Responsive design (mobile support)
 
 ---
@@ -350,63 +510,78 @@ Timeline: ~12-16 weeks for MVP
 
 **Duration**: 3-4 weeks
 
+**Status**: Not started. Depends on CLI (P2.5-001) and task persistence (P2.5-002/003) being complete.
+
 ### Tasks
 
 #### Integration Framework
 - [ ] **P4-001**: Plugin architecture
-  - Plugin interface definition
-  - Plugin loader
-  - Lifecycle management
-  - Configuration schema
+  - `Integration` interface: `init()`, `start()`, `stop()`, `handleMessage()`, `getStatus()`
+  - Plugin loader with dynamic import
+  - Lifecycle management (start/stop/restart per integration)
+  - Zod-validated configuration schema per plugin
+  - Integration registry in `SecureYeoman` with health tracking
+  - `packages/core/src/integrations/` directory structure
 
 - [ ] **P4-002**: Message abstraction
-  - Unified message format
-  - Platform-specific adapters
-  - Media handling
-  - Reply threading
+  - `UnifiedMessage` type: text, sender, platform, channel, timestamp, attachments, replyTo
+  - Platform-specific adapters (normalize inbound → unified, unified → platform outbound)
+  - Media handling (images, files, voice) with size limits
+  - Reply threading and context preservation
+  - Message routing to task executor (message → task → AI → response → platform)
 
 #### Messaging Platforms
 - [ ] **P4-003**: Telegram integration
-  - Bot API client
-  - Webhook handler
-  - Message formatting
-  - Inline keyboards
+  - Telegram Bot API client (grammy or node-telegram-bot-api)
+  - Webhook handler (Fastify route) + polling fallback
+  - Markdown message formatting
+  - Inline keyboards for skill/personality selection
+  - `/start`, `/help`, `/status` commands
 
 - [ ] **P4-004**: Discord integration
-  - Discord.js wrapper
-  - Guild management
-  - Channel permissions
-  - Slash commands
+  - Discord.js v14 wrapper
+  - Guild management and channel permissions
+  - Slash command registration
+  - Embed-based rich responses
+  - Thread support for multi-turn conversations
 
 - [ ] **P4-005**: Slack integration
   - Slack Bolt framework
-  - Event subscriptions
-  - Interactive messages
-  - Workflow steps
+  - Event subscriptions (message, app_mention)
+  - Interactive messages (blocks, modals)
+  - Slash commands (`/friday`, `/ask`)
 
-- [ ] **P4-006**: WhatsApp integration (optional)
-  - WhatsApp Business API
-  - Or WhatsApp Web automation
-  - Template messages
+- [ ] **P4-006**: WhatsApp integration (optional, deferred)
+  - WhatsApp Business API or Baileys (web automation)
+  - Template messages for notifications
   - Media handling
 
 #### External Services
 - [ ] **P4-007**: GitHub integration
-  - GitHub App setup
-  - Webhook handling
-  - API operations
-  - PR automation
+  - GitHub App or personal access token
+  - Webhook handler (push, PR, issue events)
+  - API operations (create issue, comment on PR, merge)
+  - PR review automation via AI
+  - Code search and file browsing
 
-- [ ] **P4-008**: Calendar integration
+- [ ] **P4-008**: Calendar integration (deferred)
   - Google Calendar API
   - Event creation/modification
   - Reminder scheduling
 
+### Proposed Execution Order
+
+```
+P4-001 (Plugin framework) → P4-002 (Message abstraction) →
+P4-003 (Telegram — simplest API) → P4-004 (Discord) → P4-005 (Slack) →
+P4-007 (GitHub) → P4-006/P4-008 (optional/deferred)
+```
+
 ### Deliverables
-- [ ] Plugin framework
-- [ ] At least 3 messaging platform integrations
+- [ ] Plugin framework with lifecycle management
+- [ ] At least 2 messaging platform integrations (Telegram + Discord)
 - [ ] GitHub integration
-- [ ] Integration documentation
+- [ ] Integration documentation and setup guides
 
 ---
 
@@ -416,56 +591,65 @@ Timeline: ~12-16 weeks for MVP
 
 **Duration**: 2-3 weeks
 
+**Status**: Not started. Some groundwork done (structured logging, audit chain, rate limiting already in place).
+
 ### Tasks
 
 #### Testing
 - [ ] **P5-001**: Load testing
-  - k6 or Artillery scripts
-  - Sustained load tests
-  - Spike tests
+  - k6 scripts for API endpoints (health, metrics, tasks, audit, soul)
+  - Sustained load tests (100 req/s for 5 min)
+  - Spike tests (0 → 1000 req/s)
+  - WebSocket connection scaling (100+ concurrent clients)
   - Resource monitoring during tests
 
 - [ ] **P5-002**: Security testing
-  - Dependency audit
-  - SAST scanning
-  - Penetration testing (manual or automated)
-  - Injection testing
+  - `pnpm audit` — dependency vulnerability scan
+  - SAST scanning (ESLint security plugin or Semgrep)
+  - Injection testing (SQL, XSS, command, path traversal — validate InputValidator coverage)
+  - JWT token manipulation testing
+  - Rate limiter bypass testing
+  - Sandbox escape testing (once V2 kernel enforcement lands)
 
 - [ ] **P5-003**: Chaos testing
-  - Network partition simulation
-  - Resource exhaustion tests
-  - Recovery validation
+  - Database corruption recovery (SQLite WAL journal)
+  - Process crash and restart (verify graceful shutdown + data integrity)
+  - Resource exhaustion (memory limits, disk full)
+  - Concurrent access stress test
 
 #### Deployment
 - [ ] **P5-004**: Docker packaging
-  - Multi-stage Dockerfile
-  - Docker Compose for local
-  - Health checks
-  - Security hardening
+  - Multi-stage Dockerfile (build stage: Node.js + pnpm, runtime: slim + better-sqlite3)
+  - Docker Compose with core + dashboard services
+  - Health check endpoint integration
+  - Non-root user, read-only filesystem where possible
+  - Volume mounts for SQLite databases and config
+  - Environment variable configuration
 
 - [ ] **P5-005**: CI/CD pipeline
-  - GitHub Actions workflows
-  - Automated testing
-  - Security scanning
-  - Release automation
+  - GitHub Actions: lint → test → build → security scan
+  - Automated test runs on PR
+  - Docker image build and push on tag
+  - Release notes generation from conventional commits
 
 - [ ] **P5-006**: Documentation
-  - Installation guide
-  - Configuration reference
-  - API documentation
+  - Installation guide (from source, Docker, npm)
+  - Configuration reference (all YAML fields, env vars, CLI flags)
+  - API documentation (OpenAPI/Swagger spec generation)
   - Troubleshooting guide
-  - Security best practices
+  - Security best practices guide
 
 #### Monitoring
 - [ ] **P5-007**: Prometheus metrics
-  - Metric definitions
-  - Grafana dashboards
-  - Alert rules
+  - `/metrics` endpoint with Prometheus text format
+  - Metric definitions: request_count, request_duration, task_count, token_usage, error_rate
+  - Grafana dashboard JSON templates
+  - Alert rules (error rate > 5%, memory > 80%, task queue depth > 50)
 
 - [ ] **P5-008**: Logging aggregation
-  - Structured log output
-  - Log shipping configuration
-  - Log analysis dashboards
+  - Pino structured JSON output (already done)
+  - Log shipping configuration (stdout for Docker, file rotation for bare metal)
+  - Example Loki/Elasticsearch config for log aggregation
 
 ### Deliverables
 - [ ] Production-ready Docker images
@@ -724,6 +908,24 @@ src/
 | POST | `/api/v1/auth/refresh` | Refresh token | Yes |
 | POST | `/api/v1/auth/logout` | Logout | Yes |
 | GET | `/api/v1/users/me` | Get current user | Yes |
+| GET | `/api/v1/soul/personality` | Get active personality | Yes |
+| GET | `/api/v1/soul/personalities` | List all personalities | Yes |
+| POST | `/api/v1/soul/personalities` | Create personality | Yes (Operator+) |
+| PUT | `/api/v1/soul/personalities/:id` | Update personality | Yes (Operator+) |
+| DELETE | `/api/v1/soul/personalities/:id` | Delete personality | Yes (Operator+) |
+| POST | `/api/v1/soul/personalities/:id/activate` | Set active personality | Yes (Operator+) |
+| GET | `/api/v1/soul/skills` | List skills | Yes |
+| POST | `/api/v1/soul/skills` | Create skill | Yes (Operator+) |
+| PUT | `/api/v1/soul/skills/:id` | Update skill | Yes (Operator+) |
+| DELETE | `/api/v1/soul/skills/:id` | Delete skill | Yes (Operator+) |
+| POST | `/api/v1/soul/skills/:id/enable` | Enable skill | Yes (Operator+) |
+| POST | `/api/v1/soul/skills/:id/disable` | Disable skill | Yes (Operator+) |
+| POST | `/api/v1/soul/skills/:id/approve` | Approve proposed skill | Yes (Operator+) |
+| POST | `/api/v1/soul/skills/:id/reject` | Reject proposed skill | Yes (Operator+) |
+| GET | `/api/v1/soul/prompt/preview` | Preview composed prompt | Yes |
+| GET | `/api/v1/soul/config` | Get soul config | Yes |
+| GET | `/api/v1/soul/onboarding/status` | Check onboarding status | Yes |
+| POST | `/api/v1/soul/onboarding/complete` | Complete onboarding | Yes (Operator+) |
 
 ### WebSocket Channels
 
@@ -944,7 +1146,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 - [ ] **Skill marketplace**: Browse and install community skills
 - [ ] **Custom dashboards**: User-configurable dashboard layouts
 - [ ] **Webhooks**: Outbound webhooks for events
-- [ ] **CLI tool**: Command-line interface for operations
+- [ ] **CLI tool**: Command-line interface for operations *(moved to P2.5-001)*
 
 ### v1.2
 
@@ -992,24 +1194,28 @@ type Severity = "info" | "warn" | "error" | "critical";
 
 ## Dependencies
 
-### Core Dependencies
+### Core Dependencies (Installed)
 
 ```json
 {
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.27.0",
-    "fastify": "^4.26.0",
-    "@fastify/websocket": "^8.3.0",
-    "zod": "^3.22.0",
-    "better-sqlite3": "^9.4.0",
-    "pino": "^8.19.0",
-    "argon2": "^0.31.0"
+    "@anthropic-ai/sdk": "^0.27.3",
+    "@google/generative-ai": "^0.24.1",
+    "openai": "^6.19.0",
+    "fastify": "^5.7.4",
+    "@fastify/websocket": "^10.0.1",
+    "zod": "^3.23.8",
+    "better-sqlite3": "^11.1.2",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2",
+    "uuid": "^10.0.0",
+    "yaml": "^2.5.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "vitest": "^1.3.0",
-    "eslint": "^8.57.0",
-    "prettier": "^3.2.0"
+    "typescript": "^5.4.5",
+    "vitest": "^4.0.18",
+    "eslint": "^9.39.2",
+    "prettier": "^3.8.1"
   }
 }
 ```

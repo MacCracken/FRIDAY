@@ -4,31 +4,31 @@ import type { AIRequest, ModelConfig } from '@friday/shared';
 import { RateLimitError, AuthenticationError, ProviderUnavailableError } from '../errors.js';
 
 // Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
-  const mockCreate = vi.fn();
-  const mockStream = vi.fn();
+const mockCreate = vi.fn();
+const mockStream = vi.fn();
 
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      messages: {
-        create: mockCreate,
-        stream: mockStream,
-      },
-    })),
-    APIError: class extends Error {
-      status: number;
-      headers: Record<string, string>;
-      constructor(status: number, message: string, headers: Record<string, string> = {}) {
-        super(message);
-        this.status = status;
-        this.headers = headers;
-        this.name = 'APIError';
-      }
-    },
-  };
+vi.mock('@anthropic-ai/sdk', () => {
+  class APIError extends Error {
+    status: number;
+    headers: Record<string, string>;
+    constructor(status: number, message: string, headers: Record<string, string> = {}) {
+      super(message);
+      this.status = status;
+      this.headers = headers;
+      this.name = 'APIError';
+    }
+  }
+
+  class MockAnthropic {
+    messages = { create: mockCreate, stream: mockStream };
+    static APIError = APIError;
+    constructor(_opts?: any) {}
+  }
+
+  return { default: MockAnthropic, APIError };
 });
 
-function makeConfig(): { model: ModelConfig; apiKey: string } {
+function makeConfig(): { model: ModelConfig; apiKey: string; retryConfig: { maxRetries: number } } {
   return {
     model: {
       provider: 'anthropic',
@@ -38,10 +38,11 @@ function makeConfig(): { model: ModelConfig; apiKey: string } {
       temperature: 0.7,
       maxRequestsPerMinute: 60,
       requestTimeoutMs: 30000,
-      maxRetries: 0, // Disable retries for unit tests
+      maxRetries: 0,
       retryDelayMs: 100,
     },
     apiKey: 'test-key',
+    retryConfig: { maxRetries: 0 },
   };
 }
 
@@ -54,11 +55,11 @@ describe('AnthropicProvider', () => {
   let provider: AnthropicProvider;
   let mockClient: any;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     provider = new AnthropicProvider(makeConfig());
-    // Access mocked client
-    mockClient = (provider as any).client;
+    // Use module-level mock fns directly
+    mockClient = { messages: { create: mockCreate, stream: mockStream } };
   });
 
   describe('chat', () => {

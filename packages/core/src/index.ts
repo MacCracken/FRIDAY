@@ -1,17 +1,17 @@
 /**
  * @friday/core
  * 
- * SecureClaw Core Agent Engine
+ * SecureYeoman Core Agent Engine
  * 
  * A security-first autonomous agent system with comprehensive logging,
  * audit trail, and performance metrics.
  */
 
 // Main entry point
-export { SecureClaw, createSecureClaw, type SecureClawOptions, type SecureClawState } from './secureclaw.js';
+export { SecureYeoman, createSecureYeoman, type SecureYeomanOptions, type SecureYeomanState } from './secureyeoman.js';
 
 // Configuration
-export { loadConfig, getSecret, requireSecret, validateSecrets, type LoadConfigOptions } from './config/loader.js';
+export { loadConfig, getSecret, requireSecret, validateSecrets, initializeKeyring, type LoadConfigOptions } from './config/loader.js';
 
 // Logging
 export { 
@@ -24,13 +24,19 @@ export {
   type LogLevel 
 } from './logging/logger.js';
 
-export { 
-  AuditChain, 
+export {
+  AuditChain,
   InMemoryAuditStorage,
-  type AuditChainStorage, 
-  type AuditChainConfig, 
-  type VerificationResult 
+  type AuditChainStorage,
+  type AuditChainConfig,
+  type VerificationResult,
+  type AuditQueryOptions,
+  type AuditQueryResult,
 } from './logging/audit-chain.js';
+
+export {
+  SQLiteAuditStorage,
+} from './logging/sqlite-storage.js';
 
 // Security
 export { 
@@ -68,14 +74,55 @@ export {
   type EncryptedData,
 } from './security/secrets.js';
 
+// Keyring
+export {
+  KeyringManager,
+  EnvironmentProvider,
+  LinuxSecretServiceProvider,
+  MacOSKeychainProvider,
+  SERVICE_NAME,
+  type KeyringProvider,
+  type SecretBackend,
+} from './security/keyring/index.js';
+
+// Rotation
+export {
+  SecretRotationManager,
+  RotationStorage,
+  type RotationManagerConfig,
+  type RotationCallbacks,
+  type SecretMetadata,
+  type RotationStatus,
+} from './security/rotation/index.js';
+
+// Sandbox
+export {
+  NoopSandbox,
+  LinuxSandbox,
+  SandboxManager,
+  type Sandbox,
+  type SandboxCapabilities,
+  type SandboxOptions,
+  type SandboxResult,
+  type SandboxViolation,
+  type SandboxManagerConfig,
+  type SandboxManagerDeps,
+} from './sandbox/index.js';
+
 // Task Execution
-export { 
-  TaskExecutor, 
-  createTaskExecutor, 
-  type TaskExecutorConfig, 
-  type ExecutionContext, 
-  type TaskHandler 
+export {
+  TaskExecutor,
+  createTaskExecutor,
+  type TaskExecutorConfig,
+  type ExecutionContext,
+  type TaskHandler
 } from './task/executor.js';
+
+export {
+  TaskStorage,
+  type TaskFilter,
+  type TaskStats,
+} from './task/task-storage.js';
 
 // Utilities
 export { 
@@ -113,6 +160,47 @@ export {
   ProviderUnavailableError,
   AuthenticationError,
 } from './ai/index.js';
+
+// Soul
+export {
+  SoulStorage,
+  SoulManager,
+  type SoulManagerDeps,
+  type SkillFilter,
+} from './soul/index.js';
+
+export {
+  registerSoulRoutes,
+  type SoulRoutesOptions,
+} from './soul/soul-routes.js';
+
+// Auth
+export {
+  AuthStorage,
+  type ApiKeyRow,
+} from './security/auth-storage.js';
+
+export {
+  AuthService,
+  AuthError,
+  type AuthUser,
+  type LoginResult,
+  type ApiKeyCreateResult,
+  type AuthServiceConfig,
+  type AuthServiceDeps,
+} from './security/auth.js';
+
+export {
+  createAuthHook,
+  createRbacHook,
+  type AuthHookOptions,
+  type RbacHookOptions,
+} from './gateway/auth-middleware.js';
+
+export {
+  registerAuthRoutes,
+  type AuthRoutesOptions,
+} from './gateway/auth-routes.js';
 
 // Gateway
 export {

@@ -17,10 +17,10 @@ describe('loadConfig', () => {
 
   it('should load default configuration when no file or env vars are set', () => {
     // Clear relevant env vars
-    delete process.env.SECURECLAW_ENV;
-    delete process.env.SECURECLAW_LOG_LEVEL;
-    delete process.env.SECURECLAW_HOST;
-    delete process.env.SECURECLAW_PORT;
+    delete process.env.SECUREYEOMAN_ENV;
+    delete process.env.SECUREYEOMAN_LOG_LEVEL;
+    delete process.env.SECUREYEOMAN_HOST;
+    delete process.env.SECUREYEOMAN_PORT;
 
     const config = loadConfig({ skipEnv: true });
 
@@ -60,8 +60,8 @@ describe('loadConfig', () => {
   });
 
   it('should load environment variables when not skipped', () => {
-    process.env.SECURECLAW_ENV = 'staging';
-    process.env.SECURECLAW_PORT = '4000';
+    process.env.SECUREYEOMAN_ENV = 'staging';
+    process.env.SECUREYEOMAN_PORT = '4000';
 
     const config = loadConfig();
 
@@ -70,7 +70,7 @@ describe('loadConfig', () => {
   });
 
   it('should ignore invalid port environment variable', () => {
-    process.env.SECURECLAW_PORT = 'not-a-number';
+    process.env.SECUREYEOMAN_PORT = 'not-a-number';
 
     const config = loadConfig({ skipEnv: true });
 
@@ -87,16 +87,16 @@ describe('loadConfig', () => {
     ).toThrow('Config file not found');
   });
 
-  it('should handle SECURECLAW_MODEL environment variable', () => {
-    process.env.SECURECLAW_MODEL = 'claude-3-opus-20240229';
+  it('should handle SECUREYEOMAN_MODEL environment variable', () => {
+    process.env.SECUREYEOMAN_MODEL = 'claude-3-opus-20240229';
 
     const config = loadConfig();
 
     expect(config.model.model).toBe('claude-3-opus-20240229');
   });
 
-  it('should handle SECURECLAW_PROVIDER environment variable', () => {
-    process.env.SECURECLAW_PROVIDER = 'anthropic';
+  it('should handle SECUREYEOMAN_PROVIDER environment variable', () => {
+    process.env.SECUREYEOMAN_PROVIDER = 'anthropic';
 
     const config = loadConfig();
 
@@ -215,6 +215,7 @@ describe('validateSecrets', () => {
     process.env[config.logging.audit.signingKeyEnv] = 'signing-key';
     process.env[config.model.apiKeyEnv] = 'api-key';
     process.env[config.gateway.auth.tokenSecret] = 'token-secret';
+    process.env[config.gateway.auth.adminPasswordEnv] = 'admin-password';
     process.env[config.security.encryption.keyEnv] = 'encryption-key';
 
     expect(() => validateSecrets(config)).not.toThrow();
@@ -257,6 +258,7 @@ describe('validateSecrets', () => {
     // Set all secrets except API key
     process.env[config.logging.audit.signingKeyEnv] = 'signing-key';
     process.env[config.gateway.auth.tokenSecret] = 'token-secret';
+    process.env[config.gateway.auth.adminPasswordEnv] = 'admin-password';
     process.env[config.security.encryption.keyEnv] = 'encryption-key';
     delete process.env[config.model.apiKeyEnv];
 

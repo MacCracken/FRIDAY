@@ -1,5 +1,5 @@
 /**
- * Metrics Types for SecureClaw
+ * Metrics Types for SecureYeoman
  * 
  * Security considerations:
  * - Metrics should never contain sensitive data

@@ -7,37 +7,41 @@ vi.mock('../config/loader.js', () => ({
   getSecret: vi.fn().mockReturnValue('test-api-key'),
 }));
 
-// Mock all providers
+// Mock all providers with proper class constructors
 vi.mock('./providers/anthropic.js', () => ({
-  AnthropicProvider: vi.fn().mockImplementation(() => ({
-    name: 'anthropic',
-    chat: vi.fn(),
-    chatStream: vi.fn(),
-  })),
+  AnthropicProvider: class {
+    name = 'anthropic';
+    chat = vi.fn();
+    chatStream = vi.fn();
+    constructor() {}
+  },
 }));
 
 vi.mock('./providers/openai.js', () => ({
-  OpenAIProvider: vi.fn().mockImplementation(() => ({
-    name: 'openai',
-    chat: vi.fn(),
-    chatStream: vi.fn(),
-  })),
+  OpenAIProvider: class {
+    name = 'openai';
+    chat = vi.fn();
+    chatStream = vi.fn();
+    constructor() {}
+  },
 }));
 
 vi.mock('./providers/gemini.js', () => ({
-  GeminiProvider: vi.fn().mockImplementation(() => ({
-    name: 'gemini',
-    chat: vi.fn(),
-    chatStream: vi.fn(),
-  })),
+  GeminiProvider: class {
+    name = 'gemini';
+    chat = vi.fn();
+    chatStream = vi.fn();
+    constructor() {}
+  },
 }));
 
 vi.mock('./providers/ollama.js', () => ({
-  OllamaProvider: vi.fn().mockImplementation(() => ({
-    name: 'ollama',
-    chat: vi.fn(),
-    chatStream: vi.fn(),
-  })),
+  OllamaProvider: class {
+    name = 'ollama';
+    chat = vi.fn();
+    chatStream = vi.fn();
+    constructor() {}
+  },
 }));
 
 function makeModelConfig(provider: string): ModelConfig {

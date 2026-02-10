@@ -109,3 +109,69 @@ export interface WebSocketMessage {
   timestamp: number;
   sequence: number;
 }
+
+// ─── Soul Types ──────────────────────────────────────────────
+
+export interface Personality {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  traits: Record<string, string>;
+  sex: 'male' | 'female' | 'non-binary' | 'unspecified';
+  voice: string;
+  preferredLanguage: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PersonalityCreate {
+  name: string;
+  description?: string;
+  systemPrompt?: string;
+  traits?: Record<string, string>;
+  sex?: 'male' | 'female' | 'non-binary' | 'unspecified';
+  voice?: string;
+  preferredLanguage?: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  triggerPatterns: string[];
+  enabled: boolean;
+  source: 'user' | 'ai_proposed' | 'ai_learned';
+  status: 'active' | 'pending_approval' | 'disabled';
+  usageCount: number;
+  lastUsedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SkillCreate {
+  name: string;
+  description?: string;
+  instructions?: string;
+  tools?: Skill['tools'];
+  triggerPatterns?: string[];
+  enabled?: boolean;
+  source?: Skill['source'];
+  status?: Skill['status'];
+}
+
+export interface OnboardingStatus {
+  needed: boolean;
+  agentName: string | null;
+  personality: Personality | null;
+}
+
+export interface PromptPreview {
+  prompt: string;
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  charCount: number;
+  estimatedTokens: number;
+}

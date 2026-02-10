@@ -1,5 +1,5 @@
 /**
- * Task Types for SecureClaw
+ * Task Types for SecureYeoman
  * 
  * Security considerations:
  * - All task types are strictly typed to prevent type confusion attacks

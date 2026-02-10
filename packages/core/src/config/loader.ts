@@ -1,5 +1,5 @@
 /**
- * Configuration Loader for SecureClaw
+ * Configuration Loader for SecureYeoman
  * 
  * Security considerations:
  * - Config files are validated against strict schemas
@@ -19,14 +19,15 @@ import {
   type Config,
   type PartialConfig,
 } from '@friday/shared';
+import { KeyringManager } from '../security/keyring/manager.js';
 
 // Default config file locations (checked in order)
 const DEFAULT_CONFIG_PATHS = [
-  './secureclaw.yaml',
-  './secureclaw.yml',
-  './config/secureclaw.yaml',
-  '~/.secureclaw/config.yaml',
-  '/etc/secureclaw/config.yaml',
+  './secureyeoman.yaml',
+  './secureyeoman.yml',
+  './config/secureyeoman.yaml',
+  '~/.secureyeoman/config.yaml',
+  '/etc/secureyeoman/config.yaml',
 ];
 
 /**
@@ -78,14 +79,14 @@ function loadEnvConfig(): PartialConfig {
   
   // Build core settings
   const core: Record<string, unknown> = {};
-  if (process.env.SECURECLAW_ENV) {
-    core.environment = process.env.SECURECLAW_ENV;
+  if (process.env.SECUREYEOMAN_ENV) {
+    core.environment = process.env.SECUREYEOMAN_ENV;
   }
-  if (process.env.SECURECLAW_LOG_LEVEL) {
-    core.logLevel = process.env.SECURECLAW_LOG_LEVEL;
+  if (process.env.SECUREYEOMAN_LOG_LEVEL) {
+    core.logLevel = process.env.SECUREYEOMAN_LOG_LEVEL;
   }
-  if (process.env.SECURECLAW_WORKSPACE) {
-    core.workspace = process.env.SECURECLAW_WORKSPACE;
+  if (process.env.SECUREYEOMAN_WORKSPACE) {
+    core.workspace = process.env.SECUREYEOMAN_WORKSPACE;
   }
   if (Object.keys(core).length > 0) {
     config.core = core as PartialConfig['core'];
@@ -93,11 +94,11 @@ function loadEnvConfig(): PartialConfig {
   
   // Build gateway settings
   const gateway: Record<string, unknown> = {};
-  if (process.env.SECURECLAW_HOST) {
-    gateway.host = process.env.SECURECLAW_HOST;
+  if (process.env.SECUREYEOMAN_HOST) {
+    gateway.host = process.env.SECUREYEOMAN_HOST;
   }
-  if (process.env.SECURECLAW_PORT) {
-    const port = parseInt(process.env.SECURECLAW_PORT, 10);
+  if (process.env.SECUREYEOMAN_PORT) {
+    const port = parseInt(process.env.SECUREYEOMAN_PORT, 10);
     if (!isNaN(port)) {
       gateway.port = port;
     }
@@ -108,14 +109,14 @@ function loadEnvConfig(): PartialConfig {
   
   // Build model settings
   const model: Record<string, unknown> = {};
-  if (process.env.SECURECLAW_MODEL) {
-    model.model = process.env.SECURECLAW_MODEL;
+  if (process.env.SECUREYEOMAN_MODEL) {
+    model.model = process.env.SECUREYEOMAN_MODEL;
   }
-  if (process.env.SECURECLAW_PROVIDER) {
-    model.provider = process.env.SECURECLAW_PROVIDER;
+  if (process.env.SECUREYEOMAN_PROVIDER) {
+    model.provider = process.env.SECUREYEOMAN_PROVIDER;
   }
-  if (process.env.SECURECLAW_BASE_URL) {
-    model.baseUrl = process.env.SECURECLAW_BASE_URL;
+  if (process.env.SECUREYEOMAN_BASE_URL) {
+    model.baseUrl = process.env.SECUREYEOMAN_BASE_URL;
   }
   if (Object.keys(model).length > 0) {
     config.model = model as PartialConfig['model'];
@@ -213,6 +214,20 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
 }
 
 /**
+ * Initialize the keyring manager, pre-loading secrets from the system keyring
+ * into process.env so that getSecret() continues to work synchronously.
+ * Must be called before validateSecrets().
+ */
+export function initializeKeyring(
+  backend: 'auto' | 'keyring' | 'env' | 'file',
+  knownKeys: string[],
+): KeyringManager {
+  const manager = new KeyringManager();
+  manager.initialize(backend, knownKeys);
+  return manager;
+}
+
+/**
  * Get a secret value from environment variable
  * This is the only way to access secrets - they are never stored in config objects
  */
@@ -264,6 +279,9 @@ export function validateSecrets(config: Config): void {
   
   // Token secret for JWT
   requiredSecrets.push(config.gateway.auth.tokenSecret);
+
+  // Admin password for bootstrap auth
+  requiredSecrets.push(config.gateway.auth.adminPasswordEnv);
   
   // Check encryption key if enabled
   if (config.security.encryption.enabled) {

@@ -3,7 +3,7 @@ import { OllamaProvider } from './ollama.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 import { ProviderUnavailableError, InvalidResponseError } from '../errors.js';
 
-function makeConfig(): { model: ModelConfig; apiKey?: string } {
+function makeConfig(): { model: ModelConfig; retryConfig: { maxRetries: number } } {
   return {
     model: {
       provider: 'ollama',
@@ -17,6 +17,7 @@ function makeConfig(): { model: ModelConfig; apiKey?: string } {
       maxRetries: 0,
       retryDelayMs: 100,
     },
+    retryConfig: { maxRetries: 0 },
   };
 }
 

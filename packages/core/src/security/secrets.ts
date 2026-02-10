@@ -1,5 +1,5 @@
 /**
- * Secret Management for SecureClaw
+ * Secret Management for SecureYeoman
  * 
  * Security considerations:
  * - AES-256-GCM encryption for secrets at rest
@@ -18,7 +18,7 @@ import {
 } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { getLogger, type SecureLogger } from '../logging/logger.js';
+import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 
 // Encryption constants
 const ALGORITHM = 'aes-256-gcm';
@@ -31,7 +31,7 @@ const SCRYPT_R = 8; // Block size
 const SCRYPT_P = 1; // Parallelization
 
 // Magic bytes to identify encrypted files
-const MAGIC_BYTES = Buffer.from('SCLW'); // SecureCLaW
+const MAGIC_BYTES = Buffer.from('SCLW'); // SecureYeoman (legacy acronym)
 
 export interface EncryptedData {
   /** Version for future format changes */
@@ -248,16 +248,7 @@ export class SecretStore {
       try {
         this.logger = getLogger().child({ component: 'SecretStore' });
       } catch {
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;

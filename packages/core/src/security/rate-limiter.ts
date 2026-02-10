@@ -1,5 +1,5 @@
 /**
- * Rate Limiter for SecureClaw
+ * Rate Limiter for SecureYeoman
  * 
  * Security considerations:
  * - Sliding window algorithm for accurate rate limiting
@@ -8,7 +8,7 @@
  * - Audit logging of rate limit violations
  */
 
-import { getLogger, type SecureLogger } from '../logging/logger.js';
+import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 import type { SecurityConfig } from '@friday/shared';
 
 export interface RateLimitResult {
@@ -59,17 +59,7 @@ export class RateLimiter {
       try {
         this.logger = getLogger().child({ component: 'RateLimiter' });
       } catch {
-        // Return a no-op logger if not initialized
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;

@@ -1,5 +1,5 @@
 /**
- * Input Validation and Sanitization Pipeline for SecureClaw
+ * Input Validation and Sanitization Pipeline for SecureYeoman
  * 
  * Security considerations:
  * - Multi-stage validation pipeline
@@ -9,7 +9,7 @@
  * - All validation results are logged for audit
  */
 
-import { getLogger, type SecureLogger } from '../logging/logger.js';
+import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 import type { SecurityConfig } from '@friday/shared';
 
 export interface ValidationResult {
@@ -165,17 +165,7 @@ export class InputValidator {
       try {
         this.logger = getLogger().child({ component: 'InputValidator' });
       } catch {
-        // Return a no-op logger if not initialized
-        return {
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-          child: () => this.getLogger(),
-          level: 'info',
-        };
+        return createNoopLogger();
       }
     }
     return this.logger;
