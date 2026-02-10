@@ -208,6 +208,21 @@ export {
   type AuthRoutesOptions,
 } from './gateway/auth-routes.js';
 
+// Integrations
+export {
+  IntegrationStorage,
+  IntegrationManager,
+  MessageRouter,
+  registerIntegrationRoutes,
+  type IntegrationManagerDeps,
+  type MessageRouterDeps,
+  type IntegrationRoutesOptions,
+  type Integration,
+  type PlatformAdapter,
+  type IntegrationDeps,
+  type IntegrationRegistryEntry,
+} from './integrations/index.js';
+
 // Gateway
 export {
   GatewayServer,

@@ -31,6 +31,9 @@ import { AuthService } from './security/auth.js';
 import { SoulStorage } from './soul/storage.js';
 import { SoulManager } from './soul/manager.js';
 import { TaskStorage } from './task/task-storage.js';
+import { IntegrationStorage } from './integrations/storage.js';
+import { IntegrationManager } from './integrations/manager.js';
+import { MessageRouter } from './integrations/message-router.js';
 import type { Config, TaskCreate, Task, MetricsSnapshot } from '@friday/shared';
 
 export interface SecureYeomanOptions {
@@ -71,6 +74,9 @@ export class SecureYeoman {
   private rbacStorage: RBACStorage | null = null;
   private soulStorage: SoulStorage | null = null;
   private soulManager: SoulManager | null = null;
+  private integrationStorage: IntegrationStorage | null = null;
+  private integrationManager: IntegrationManager | null = null;
+  private messageRouter: MessageRouter | null = null;
   private sandboxManager: SandboxManager | null = null;
   private taskStorage: TaskStorage | null = null;
   private initialized = false;
@@ -291,6 +297,14 @@ export class SecureYeoman {
       }
       this.logger.debug('Soul manager initialized');
 
+      // Step 5.75: Initialize integration system
+      this.integrationStorage = new IntegrationStorage({
+        dbPath: `${this.config.core.dataDir}/integrations.db`,
+      });
+      // IntegrationManager + MessageRouter are fully wired after task executor
+      // is available (see post-step-6 below). For now just store the storage.
+      this.logger.debug('Integration storage initialized');
+
       // Step 5.8: Initialize sandbox manager
       const sandboxConfig: SandboxManagerConfig = {
         enabled: this.config.security.sandbox.enabled,
@@ -345,7 +359,22 @@ export class SecureYeoman {
         this.taskStorage,
       );
       this.logger.debug('Task executor initialized');
-      
+
+      // Step 6.5: Wire up IntegrationManager + MessageRouter (needs taskExecutor)
+      this.integrationManager = new IntegrationManager(this.integrationStorage!, {
+        logger: this.logger.child({ component: 'IntegrationManager' }),
+        onMessage: async (msg) => {
+          await this.messageRouter!.handleInbound(msg);
+        },
+      });
+      this.messageRouter = new MessageRouter({
+        logger: this.logger.child({ component: 'MessageRouter' }),
+        taskExecutor: this.taskExecutor!,
+        integrationManager: this.integrationManager,
+        integrationStorage: this.integrationStorage!,
+      });
+      this.logger.debug('Integration manager and message router initialized');
+
       // Step 7: Record initialization in audit log
       await this.auditChain.record({
         event: 'system_initialized',
@@ -620,6 +649,28 @@ export class SecureYeoman {
   }
 
   /**
+   * Get the integration manager instance
+   */
+  getIntegrationManager(): IntegrationManager {
+    this.ensureInitialized();
+    if (!this.integrationManager) {
+      throw new Error('Integration manager is not available');
+    }
+    return this.integrationManager;
+  }
+
+  /**
+   * Get the integration storage instance
+   */
+  getIntegrationStorage(): IntegrationStorage {
+    this.ensureInitialized();
+    if (!this.integrationStorage) {
+      throw new Error('Integration storage is not available');
+    }
+    return this.integrationStorage;
+  }
+
+  /**
    * Get configuration
    */
   getConfig(): Config {
@@ -770,6 +821,16 @@ export class SecureYeoman {
       this.taskStorage.close();
       this.taskStorage = null;
     }
+
+    // Close integration manager + storage
+    if (this.integrationManager) {
+      await this.integrationManager.close();
+      this.integrationManager = null;
+      this.messageRouter = null;
+    } else if (this.integrationStorage) {
+      this.integrationStorage.close();
+    }
+    this.integrationStorage = null;
 
     // Close soul storage
     if (this.soulStorage) {

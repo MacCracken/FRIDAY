@@ -13,7 +13,7 @@
   "dependencies": {
     "@friday/shared": "^0.1.0",
     "@tanstack/react-query": "^5.56.2",
-    "@tanstack/react-router": "^1.58.3",
+    "react-router-dom": "^7.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "reactflow": "^11.11.4",

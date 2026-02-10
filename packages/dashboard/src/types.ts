@@ -175,3 +175,51 @@ export interface PromptPreview {
   charCount: number;
   estimatedTokens: number;
 }
+
+// ─── API Key Types ──────────────────────────────────────────
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  role: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface ApiKeyCreateRequest {
+  name: string;
+  role: string;
+  expiresInDays?: number;
+}
+
+export interface ApiKeyCreateResponse extends ApiKey {
+  rawKey: string;
+}
+
+// ─── Integration / Connection Types ─────────────────────────
+
+export type IntegrationStatus = 'connected' | 'disconnected' | 'error' | 'configuring';
+
+export interface IntegrationInfo {
+  id: string;
+  platform: string;
+  displayName: string;
+  status: IntegrationStatus;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  connectedAt?: string;
+  lastMessageAt?: string;
+  messageCount: number;
+  errorMessage?: string;
+}
+
+// ─── Soul Config Types ──────────────────────────────────────
+
+export interface SoulConfig {
+  enabled: boolean;
+  learningMode: string[];
+  maxSkills: number;
+  maxPromptTokens: number;
+}

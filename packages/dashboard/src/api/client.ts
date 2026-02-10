@@ -1,10 +1,10 @@
 /**
  * API Client for SecureYeoman Dashboard
- * 
+ *
  * All requests go to the local gateway
  */
 
-import type { MetricsSnapshot, Task, SecurityEvent, HealthStatus, Personality, PersonalityCreate, Skill, SkillCreate, OnboardingStatus, PromptPreview } from '../types';
+import type { MetricsSnapshot, Task, SecurityEvent, HealthStatus, Personality, PersonalityCreate, Skill, SkillCreate, OnboardingStatus, PromptPreview, ApiKey, ApiKeyCreateRequest, ApiKeyCreateResponse, SoulConfig, IntegrationInfo } from '../types';
 
 const API_BASE = '/api/v1';
 
@@ -19,35 +19,160 @@ class APIError extends Error {
   }
 }
 
+// ── Auth token management ─────────────────────────────────────────────
+
+let _accessToken: string | null = null;
+let _refreshToken: string | null = null;
+let _onAuthFailure: (() => void) | null = null;
+let _isRefreshing = false;
+let _refreshPromise: Promise<boolean> | null = null;
+
+export function setAuthTokens(accessToken: string, refreshToken: string): void {
+  _accessToken = accessToken;
+  _refreshToken = refreshToken;
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+}
+
+export function clearAuthTokens(): void {
+  _accessToken = null;
+  _refreshToken = null;
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+}
+
+export function getAccessToken(): string | null {
+  if (!_accessToken) {
+    _accessToken = localStorage.getItem('accessToken');
+  }
+  return _accessToken;
+}
+
+export function getRefreshToken(): string | null {
+  if (!_refreshToken) {
+    _refreshToken = localStorage.getItem('refreshToken');
+  }
+  return _refreshToken;
+}
+
+export function setOnAuthFailure(callback: () => void): void {
+  _onAuthFailure = callback;
+}
+
+// ── Token refresh ─────────────────────────────────────────────────────
+
+async function attemptTokenRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    setAuthTokens(data.accessToken, data.refreshToken ?? refreshToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Core request function ─────────────────────────────────────────────
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  skipAuth = false,
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  
+  const token = getAccessToken();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> ?? {}),
+  };
+
+  if (token && !skipAuth) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
-  
+
+  if (response.status === 401 && !skipAuth) {
+    // Attempt token refresh (deduplicate concurrent refreshes)
+    if (!_isRefreshing) {
+      _isRefreshing = true;
+      _refreshPromise = attemptTokenRefresh();
+    }
+
+    const refreshed = await _refreshPromise;
+    _isRefreshing = false;
+    _refreshPromise = null;
+
+    if (refreshed) {
+      // Retry the original request with new token
+      const newToken = getAccessToken();
+      headers['Authorization'] = `Bearer ${newToken}`;
+      const retryResponse = await fetch(url, { ...options, headers });
+
+      if (!retryResponse.ok) {
+        const error = await retryResponse.json().catch(() => ({ message: 'Unknown error' }));
+        throw new APIError(error.message || `HTTP ${retryResponse.status}`, retryResponse.status, error.code);
+      }
+      return retryResponse.json();
+    }
+
+    // Refresh failed — clear auth and notify
+    clearAuthTokens();
+    _onAuthFailure?.();
+    throw new APIError('Authentication failed', 401);
+  }
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Unknown error' }));
     throw new APIError(
-      error.message || `HTTP ${response.status}`,
+      error.message || error.error || `HTTP ${response.status}`,
       response.status,
       error.code
     );
   }
-  
+
   return response.json();
 }
 
-/**
- * Health check
- */
+// ── Login / Logout ────────────────────────────────────────────────────
+
+export async function login(password: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  tokenType: string;
+}> {
+  return request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  }, true);
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await request<{ message: string }>('/auth/logout', { method: 'POST' });
+  } catch {
+    // Logout should clear local state regardless of server response
+  }
+  clearAuthTokens();
+}
+
+// ── Health check (unauthenticated) ────────────────────────────────────
+
 export async function fetchHealth(): Promise<HealthStatus> {
   try {
     const response = await fetch('/health');
@@ -60,14 +185,12 @@ export async function fetchHealth(): Promise<HealthStatus> {
   }
 }
 
-/**
- * Fetch current metrics
- */
+// ── Metrics ───────────────────────────────────────────────────────────
+
 export async function fetchMetrics(): Promise<MetricsSnapshot> {
   try {
     return await request<MetricsSnapshot>('/metrics');
   } catch {
-    // Return empty metrics if gateway is not running
     return {
       timestamp: Date.now(),
       tasks: {
@@ -118,9 +241,8 @@ export async function fetchMetrics(): Promise<MetricsSnapshot> {
   }
 }
 
-/**
- * Fetch task list
- */
+// ── Tasks ─────────────────────────────────────────────────────────────
+
 export async function fetchTasks(params?: {
   status?: string;
   limit?: number;
@@ -130,7 +252,7 @@ export async function fetchTasks(params?: {
   if (params?.status) query.set('status', params.status);
   if (params?.limit) query.set('limit', params.limit.toString());
   if (params?.offset) query.set('offset', params.offset.toString());
-  
+
   const queryString = query.toString();
   try {
     return await request<{ tasks: Task[]; total: number }>(
@@ -141,9 +263,6 @@ export async function fetchTasks(params?: {
   }
 }
 
-/**
- * Fetch single task
- */
 export async function fetchTask(id: string): Promise<Task | null> {
   try {
     return await request<Task>(`/tasks/${id}`);
@@ -152,9 +271,8 @@ export async function fetchTask(id: string): Promise<Task | null> {
   }
 }
 
-/**
- * Fetch security events
- */
+// ── Security ──────────────────────────────────────────────────────────
+
 export async function fetchSecurityEvents(params?: {
   severity?: string;
   limit?: number;
@@ -162,7 +280,7 @@ export async function fetchSecurityEvents(params?: {
   const query = new URLSearchParams();
   if (params?.severity) query.set('severity', params.severity);
   if (params?.limit) query.set('limit', params.limit.toString());
-  
+
   const queryString = query.toString();
   try {
     return await request<{ events: SecurityEvent[]; total: number }>(
@@ -173,9 +291,6 @@ export async function fetchSecurityEvents(params?: {
   }
 }
 
-/**
- * Verify audit chain
- */
 export async function verifyAuditChain(): Promise<{
   valid: boolean;
   entriesChecked: number;
@@ -191,11 +306,8 @@ export async function verifyAuditChain(): Promise<{
   }
 }
 
-// ─── Soul API ──────────────────────────────────────────────────
+// ─── Soul API ──────────────────────────────────────────────────────
 
-/**
- * Onboarding
- */
 export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
   return request<OnboardingStatus>('/soul/onboarding/status');
 }
@@ -210,9 +322,6 @@ export async function completeOnboarding(data: PersonalityCreate & { agentName?:
   });
 }
 
-/**
- * Agent name
- */
 export async function fetchAgentName(): Promise<{ agentName: string }> {
   return request('/soul/agent-name');
 }
@@ -224,9 +333,6 @@ export async function updateAgentName(agentName: string): Promise<{ agentName: s
   });
 }
 
-/**
- * Personalities
- */
 export async function fetchPersonalities(): Promise<{ personalities: Personality[] }> {
   return request('/soul/personalities');
 }
@@ -257,9 +363,6 @@ export async function activatePersonality(id: string): Promise<{ personality: Pe
   return request(`/soul/personalities/${id}/activate`, { method: 'POST' });
 }
 
-/**
- * Skills
- */
 export async function fetchSkills(params?: { status?: string; source?: string }): Promise<{ skills: Skill[] }> {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
@@ -302,9 +405,47 @@ export async function rejectSkill(id: string): Promise<void> {
   await request(`/soul/skills/${id}/reject`, { method: 'POST' });
 }
 
-/**
- * Prompt preview
- */
 export async function fetchPromptPreview(): Promise<PromptPreview> {
   return request('/soul/prompt/preview');
+}
+
+// ─── API Keys ─────────────────────────────────────────────────────────
+
+export async function fetchApiKeys(): Promise<{ keys: ApiKey[] }> {
+  return request('/auth/api-keys');
+}
+
+export async function createApiKey(data: ApiKeyCreateRequest): Promise<ApiKeyCreateResponse> {
+  return request('/auth/api-keys', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function revokeApiKey(id: string): Promise<void> {
+  await request(`/auth/api-keys/${id}`, { method: 'DELETE' });
+}
+
+// ─── Soul Config ──────────────────────────────────────────────────────
+
+export async function fetchSoulConfig(): Promise<SoulConfig> {
+  return request('/soul/config');
+}
+
+// ─── Integrations ─────────────────────────────────────────────────────
+
+export async function fetchIntegrations(): Promise<{ integrations: IntegrationInfo[]; total: number; running: number }> {
+  try {
+    return await request('/integrations');
+  } catch {
+    return { integrations: [], total: 0, running: 0 };
+  }
+}
+
+export async function fetchAvailablePlatforms(): Promise<{ platforms: string[] }> {
+  try {
+    return await request('/integrations/platforms');
+  } catch {
+    return { platforms: [] };
+  }
 }

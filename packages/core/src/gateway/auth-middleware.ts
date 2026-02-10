@@ -97,6 +97,29 @@ const ROUTE_PERMISSIONS: Record<string, Record<string, RoutePermission>> = {
   '/api/v1/soul/onboarding/complete': {
     POST: { resource: 'soul', action: 'write' },
   },
+  // Integration routes
+  '/api/v1/integrations': {
+    GET: { resource: 'integrations', action: 'read' },
+    POST: { resource: 'integrations', action: 'write' },
+  },
+  '/api/v1/integrations/platforms': {
+    GET: { resource: 'integrations', action: 'read' },
+  },
+  '/api/v1/integrations/:id': {
+    GET: { resource: 'integrations', action: 'read' },
+    PUT: { resource: 'integrations', action: 'write' },
+    DELETE: { resource: 'integrations', action: 'write' },
+  },
+  '/api/v1/integrations/:id/start': {
+    POST: { resource: 'integrations', action: 'write' },
+  },
+  '/api/v1/integrations/:id/stop': {
+    POST: { resource: 'integrations', action: 'write' },
+  },
+  '/api/v1/integrations/:id/messages': {
+    GET: { resource: 'integrations', action: 'read' },
+    POST: { resource: 'integrations', action: 'write' },
+  },
 };
 
 const PUBLIC_ROUTES = new Set(['/health', '/api/v1/auth/login']);

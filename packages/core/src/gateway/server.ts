@@ -20,6 +20,7 @@ import type { AuthService } from '../security/auth.js';
 import { createAuthHook, createRbacHook } from './auth-middleware.js';
 import { registerAuthRoutes } from './auth-routes.js';
 import { registerSoulRoutes } from '../soul/soul-routes.js';
+import { registerIntegrationRoutes } from '../integrations/integration-routes.js';
 
 /**
  * Check if an IP address belongs to a private/loopback range.
@@ -181,6 +182,15 @@ export class GatewayServer {
       registerSoulRoutes(this.app, { soulManager });
     } catch {
       // Soul manager may not be available — skip routes
+    }
+
+    // Integration routes
+    try {
+      const integrationManager = this.secureYeoman.getIntegrationManager();
+      const integrationStorage = this.secureYeoman.getIntegrationStorage();
+      registerIntegrationRoutes(this.app, { integrationManager, integrationStorage });
+    } catch {
+      // Integration manager may not be available — skip routes
     }
 
     // Health check

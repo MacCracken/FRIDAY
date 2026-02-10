@@ -1,18 +1,16 @@
 import { useState, useEffect } from 'react';
+import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Shield,
   Activity,
   Clock,
-  AlertTriangle,
   CheckCircle,
   XCircle,
-  Cpu,
   HardDrive,
-  Zap,
   Lock,
   RefreshCw,
-  Sparkles,
+  LogOut,
 } from 'lucide-react';
 import { MetricsGraph } from './components/MetricsGraph';
 import { TaskHistory } from './components/TaskHistory';
@@ -21,21 +19,48 @@ import { ResourceMonitor } from './components/ResourceMonitor';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { PersonalityEditor } from './components/PersonalityEditor';
 import { SkillsManager } from './components/SkillsManager';
+import { ConnectionManager } from './components/ConnectionManager';
+import { SettingsPage } from './components/SettingsPage';
+import { LoginPage } from './pages/LoginPage';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useAuth } from './hooks/useAuth';
 import { fetchMetrics, fetchHealth, fetchOnboardingStatus } from './api/client';
 import type { MetricsSnapshot } from './types';
 
-type Tab = 'overview' | 'tasks' | 'security' | 'personality' | 'skills';
-
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
-  
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Shield className="w-8 h-8 text-primary animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      <Route path="/login" element={
+        isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />
+      } />
+      <Route path="/*" element={
+        isAuthenticated ? <Dashboard /> : <Navigate to="/login" replace />
+      } />
+    </Routes>
+  );
+}
+
+// ── Dashboard (authenticated) ─────────────────────────────────────────
+
+function Dashboard() {
+  const { logout } = useAuth();
+
   // Check if we're on local network
   const [isLocalNetwork, setIsLocalNetwork] = useState(true);
-  
+
   useEffect(() => {
     const hostname = window.location.hostname;
-    const isLocal = hostname === 'localhost' || 
+    const isLocal = hostname === 'localhost' ||
                     hostname === '127.0.0.1' ||
                     hostname.startsWith('192.168.') ||
                     hostname.startsWith('10.') ||
@@ -43,23 +68,23 @@ function App() {
                     hostname.endsWith('.local');
     setIsLocalNetwork(isLocal);
   }, []);
-  
+
   // Fetch health status
-  const { data: health, isLoading: healthLoading, error: healthError } = useQuery({
+  const { data: health, error: healthError } = useQuery({
     queryKey: ['health'],
     queryFn: fetchHealth,
     refetchInterval: 5000,
   });
-  
+
   // Fetch metrics
-  const { data: metrics, isLoading: metricsLoading, refetch: refetchMetrics } = useQuery({
+  const { data: metrics, refetch: refetchMetrics } = useQuery({
     queryKey: ['metrics'],
     queryFn: fetchMetrics,
     refetchInterval: 5000,
   });
-  
+
   // WebSocket for real-time updates
-  const { connected, lastMessage } = useWebSocket('/ws/metrics');
+  const { connected } = useWebSocket('/ws/metrics');
 
   // Check onboarding status
   const { data: onboarding, refetch: refetchOnboarding } = useQuery({
@@ -87,9 +112,16 @@ function App() {
       </div>
     );
   }
-  
+
   const isConnected = !healthError && health?.status === 'ok';
-  
+
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+      isActive
+        ? 'border-primary text-primary'
+        : 'border-transparent text-muted-foreground hover:text-foreground'
+    }`;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -103,7 +135,7 @@ function App() {
                 <p className="text-xs text-muted-foreground">Performance Dashboard</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-4">
               {/* Connection Status */}
               <div className="flex items-center gap-2">
@@ -112,7 +144,7 @@ function App() {
                   {isConnected ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
-              
+
               {/* WebSocket Status */}
               <div className="flex items-center gap-2">
                 <Activity className={`w-4 h-4 ${connected ? 'text-success' : 'text-muted-foreground'}`} />
@@ -120,151 +152,58 @@ function App() {
                   {connected ? 'Live' : 'Polling'}
                 </span>
               </div>
-              
+
               {/* Refresh Button */}
-              <button 
+              <button
                 onClick={() => refetchMetrics()}
                 className="btn-ghost p-2"
                 title="Refresh metrics"
               >
                 <RefreshCw className="w-4 h-4" />
               </button>
+
+              {/* Logout Button */}
+              <button
+                onClick={() => void logout()}
+                className="btn-ghost p-2"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
       </header>
-      
-      {/* Navigation Tabs */}
+
+      {/* Navigation */}
       <nav className="border-b bg-card">
         <div className="container mx-auto px-4">
           <div className="flex gap-4">
-            <button
-              onClick={() => { setActiveTab('overview'); }}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'overview' 
-                  ? 'border-primary text-primary' 
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => { setActiveTab('tasks'); }}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'tasks' 
-                  ? 'border-primary text-primary' 
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Tasks
-            </button>
-            <button
-              onClick={() => { setActiveTab('security'); }}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'security'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Security
-            </button>
-            <button
-              onClick={() => { setActiveTab('personality'); }}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'personality'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Personality
-            </button>
-            <button
-              onClick={() => { setActiveTab('skills'); }}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'skills'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Skills
-            </button>
+            <NavLink to="/" end className={navLinkClass}>Overview</NavLink>
+            <NavLink to="/tasks" className={navLinkClass}>Tasks</NavLink>
+            <NavLink to="/security" className={navLinkClass}>Security</NavLink>
+            <NavLink to="/personality" className={navLinkClass}>Personality</NavLink>
+            <NavLink to="/skills" className={navLinkClass}>Skills</NavLink>
+            <NavLink to="/connections" className={navLinkClass}>Connections</NavLink>
+            <NavLink to="/settings" className={navLinkClass}>Settings</NavLink>
           </div>
         </div>
       </nav>
-      
+
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard
-                title="Tasks Today"
-                value={metrics?.tasks?.total ?? 0}
-                icon={<Activity className="w-5 h-5" />}
-                trend={metrics?.tasks?.successRate ? `${(metrics.tasks.successRate * 100).toFixed(1)}% success` : undefined}
-                trendUp={metrics?.tasks?.successRate ? metrics.tasks.successRate > 0.9 : undefined}
-              />
-              <StatCard
-                title="Active Tasks"
-                value={metrics?.tasks?.inProgress ?? 0}
-                icon={<Clock className="w-5 h-5" />}
-                subtitle={`${metrics?.tasks?.queueDepth ?? 0} queued`}
-              />
-              <StatCard
-                title="Audit Entries"
-                value={metrics?.security?.auditEntriesTotal ?? 0}
-                icon={<Shield className="w-5 h-5" />}
-                trend={metrics?.security?.auditChainValid ? 'Chain Valid' : 'Chain Invalid'}
-                trendUp={metrics?.security?.auditChainValid}
-              />
-              <StatCard
-                title="Memory Usage"
-                value={`${(metrics?.resources?.memoryUsedMb ?? 0).toFixed(1)} MB`}
-                icon={<HardDrive className="w-5 h-5" />}
-              />
-            </div>
-            
-            {/* Metrics Graph */}
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title text-lg">System Overview</h2>
-                <p className="card-description">Real-time visualization of agent activity</p>
-              </div>
-              <div className="card-content">
-                <MetricsGraph metrics={metrics} />
-              </div>
-            </div>
-            
-            {/* Resource Monitor */}
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title text-lg">Resource Usage</h2>
-              </div>
-              <div className="card-content">
-                <ResourceMonitor metrics={metrics} />
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {activeTab === 'tasks' && (
-          <TaskHistory />
-        )}
-        
-        {activeTab === 'security' && (
-          <SecurityEvents metrics={metrics} />
-        )}
-
-        {activeTab === 'personality' && (
-          <PersonalityEditor />
-        )}
-
-        {activeTab === 'skills' && (
-          <SkillsManager />
-        )}
+        <Routes>
+          <Route path="/" element={<OverviewPage metrics={metrics} />} />
+          <Route path="/tasks" element={<TaskHistory />} />
+          <Route path="/security" element={<SecurityEvents metrics={metrics} />} />
+          <Route path="/personality" element={<PersonalityEditor />} />
+          <Route path="/skills" element={<SkillsManager />} />
+          <Route path="/connections" element={<ConnectionManager />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
-      
+
       {/* Footer */}
       <footer className="border-t bg-card mt-auto">
         <div className="container mx-auto px-4 py-4">
@@ -277,6 +216,66 @@ function App() {
     </div>
   );
 }
+
+// ── Overview Page ─────────────────────────────────────────────────────
+
+function OverviewPage({ metrics }: { metrics?: MetricsSnapshot }) {
+  return (
+    <div className="space-y-6">
+      {/* Quick Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Tasks Today"
+          value={metrics?.tasks?.total ?? 0}
+          icon={<Activity className="w-5 h-5" />}
+          trend={metrics?.tasks?.successRate ? `${(metrics.tasks.successRate * 100).toFixed(1)}% success` : undefined}
+          trendUp={metrics?.tasks?.successRate ? metrics.tasks.successRate > 0.9 : undefined}
+        />
+        <StatCard
+          title="Active Tasks"
+          value={metrics?.tasks?.inProgress ?? 0}
+          icon={<Clock className="w-5 h-5" />}
+          subtitle={`${metrics?.tasks?.queueDepth ?? 0} queued`}
+        />
+        <StatCard
+          title="Audit Entries"
+          value={metrics?.security?.auditEntriesTotal ?? 0}
+          icon={<Shield className="w-5 h-5" />}
+          trend={metrics?.security?.auditChainValid ? 'Chain Valid' : 'Chain Invalid'}
+          trendUp={metrics?.security?.auditChainValid}
+        />
+        <StatCard
+          title="Memory Usage"
+          value={`${(metrics?.resources?.memoryUsedMb ?? 0).toFixed(1)} MB`}
+          icon={<HardDrive className="w-5 h-5" />}
+        />
+      </div>
+
+      {/* Metrics Graph */}
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title text-lg">System Overview</h2>
+          <p className="card-description">Real-time visualization of agent activity</p>
+        </div>
+        <div className="card-content">
+          <MetricsGraph metrics={metrics} />
+        </div>
+      </div>
+
+      {/* Resource Monitor */}
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title text-lg">Resource Usage</h2>
+        </div>
+        <div className="card-content">
+          <ResourceMonitor metrics={metrics} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── StatCard ──────────────────────────────────────────────────────────
 
 interface StatCardProps {
   title: string;
@@ -299,8 +298,8 @@ function StatCard({ title, value, icon, trend, trendUp, subtitle }: StatCardProp
           )}
           {trend && (
             <p className={`text-xs mt-1 flex items-center gap-1 ${
-              trendUp === true ? 'text-success' : 
-              trendUp === false ? 'text-destructive' : 
+              trendUp === true ? 'text-success' :
+              trendUp === false ? 'text-destructive' :
               'text-muted-foreground'
             }`}>
               {trendUp === true && <CheckCircle className="w-3 h-3" />}

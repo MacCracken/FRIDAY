@@ -116,6 +116,26 @@ export {
   type SoulConfig,
 } from './soul.js';
 
+// Integration types
+export {
+  PlatformSchema,
+  IntegrationStatusSchema,
+  IntegrationConfigSchema,
+  IntegrationCreateSchema,
+  IntegrationUpdateSchema,
+  MessageDirectionSchema,
+  MessageAttachmentSchema,
+  UnifiedMessageSchema,
+  type Platform,
+  type IntegrationStatus,
+  type IntegrationConfig,
+  type IntegrationCreate,
+  type IntegrationUpdate,
+  type MessageDirection,
+  type MessageAttachment,
+  type UnifiedMessage,
+} from './integration.js';
+
 // Config types
 export {
   CoreConfigSchema,
