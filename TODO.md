@@ -41,6 +41,7 @@ Foundation       Security         Dashboard        Integrations     Production
    +- Logging       +- Sandbox       +- History       +- Discord       +- Pen Testing
    +- Config        +- Validation    +- Connections   +- Slack         +- Audit
    +- Storage       +- Rate Limit    +- Security      +- WhatsApp      +- Docs
+   +- AI Providers  +- Brain/Soul    +- Soul UI       +- Agent Comms   +- Monitoring
 
 Timeline: ~12-16 weeks for MVP
 ```
@@ -379,6 +380,39 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
   - [x] Rate limiter now tracks `totalHits` (blocked requests) and `totalChecks` (all checks)
   - [x] `getMetrics()` populates `security.blockedRequestsTotal` and `security.rateLimitHitsTotal` from live rate limiter counters
   - [x] Counters are monotonically increasing and survive cleanup cycles
+
+#### Agent Brain (Memory/Knowledge/Skills)
+- [ ] **P2.5-006**: Separate Agent Brain from Soul system
+  - [ ] Create `packages/core/src/brain/` with `BrainStorage`, `BrainManager`, types, routes
+  - [ ] Memory system: episodic, semantic, procedural, preference memory types
+  - [ ] Knowledge base: topic-indexed entries with confidence scores and supersession tracking
+  - [ ] Move skills from Soul → Brain (skills are cognitive tools, not personality)
+  - [ ] SQLite `brain.db` with `memories`, `knowledge`, `brain_meta` tables
+  - [ ] `BrainManager.getRelevantContext(input)` — retrieves relevant memories/knowledge for prompt injection
+  - [ ] Memory decay (importance decreases for unaccessed memories) + pruning (expired memories removed)
+  - [ ] Backward-compatible: existing `/api/v1/soul/skills/*` endpoints delegate to Brain
+  - [ ] REST API: `/api/v1/brain/memories`, `/api/v1/brain/knowledge`, `/api/v1/brain/stats`
+  - [ ] Config: `brain.enabled`, `brain.maxMemories`, `brain.memoryRetentionDays`, `brain.contextWindowMemories`
+  - [ ] `SoulManager` updated to compose prompt from Soul personality + Brain context + Brain skills
+  - [ ] Skill migration: auto-migrate skills from `soul.db` → `brain.db` on first run
+  - [ ] 40+ unit tests for BrainStorage and BrainManager
+  - See `BRAIN_SOUL_PROMPT.md` for full implementation details
+
+#### E2E Encrypted Agent Communication
+- [ ] **P2.5-007**: E2E encrypted inter-agent communication
+  - [ ] Create `packages/core/src/comms/` with `AgentCrypto`, `AgentComms`, `CommsStorage`, types, routes
+  - [ ] Agent keypair: X25519 (key exchange) + Ed25519 (signing), stored encrypted via SecretStore
+  - [ ] Message encryption: ephemeral ECDH → HKDF → AES-256-GCM per message
+  - [ ] Message signing: Ed25519 signature over ciphertext for sender authentication
+  - [ ] Secret sanitization: strip API keys, tokens, passwords from all payloads before sending
+  - [ ] Local message log: each agent stores its own messages (encrypted at rest in `comms.db`)
+  - [ ] Peer management: register/discover other FRIDAY agents, store public keys
+  - [ ] Message types: `task_request`, `task_response`, `knowledge_share`, `status_update`, `coordination`
+  - [ ] REST API: `/api/v1/comms/identity`, `/api/v1/comms/peers`, `/api/v1/comms/message`, `/api/v1/comms/log`
+  - [ ] Config: `comms.enabled` (default: false), `comms.maxPeers`, `comms.messageRetentionDays`
+  - [ ] No secrets exposed in any inter-agent message (enforced by sanitization + tests)
+  - [ ] 40+ unit tests for AgentCrypto, AgentComms, CommsStorage
+  - See `BRAIN_SOUL_PROMPT.md` for full implementation details
 
 ---
 
@@ -1185,7 +1219,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 
 ### v1.1 (Post-MVP)
 
-- [ ] **Multi-agent orchestration**: Coordinate multiple SecureYeoman instances
+- [~] **Multi-agent orchestration**: Coordinate multiple SecureYeoman instances *(E2E comms started in P2.5-007)*
 - [ ] **MCP protocol support**: Model Context Protocol integration
 - [ ] **Skill marketplace**: Browse and install community skills
 - [ ] **Custom dashboards**: User-configurable dashboard layouts
@@ -1203,7 +1237,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 ### v2.0 (Future Vision)
 
 - [ ] **Distributed deployment**: Kubernetes-native
-- [ ] **Federation**: Cross-instance communication
+- [ ] **Federation**: Cross-instance communication *(groundwork in P2.5-007 E2E comms)*
 - [ ] **ML-based anomaly detection**: Advanced threat detection
 - [ ] **Voice interface**: Speech-to-text interaction
 - [ ] **Mobile app**: Native iOS/Android dashboard
