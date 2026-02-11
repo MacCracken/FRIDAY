@@ -6,6 +6,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Security: Enterprise-Grade](https://img.shields.io/badge/Security-Enterprise--Grade-green.svg)]()
 [![Tests: 589](https://img.shields.io/badge/Tests-589%20Passing-brightgreen.svg)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%20LTS-green.svg)](https://nodejs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![Security Audit](https://img.shields.io/badge/Security%20Audit-Passing-brightgreen.svg)]()
+[![Coverage](https://img.shields.io/badge/Coverage-Reported-blue.svg)]()
 
 > A secure, local-first AI assistant with enterprise-grade protection and comprehensive observability.
 
