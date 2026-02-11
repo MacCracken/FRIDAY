@@ -149,7 +149,7 @@ export class AnthropicProvider extends BaseProvider {
       }
 
       if (msg.role === 'assistant' && msg.toolCalls?.length) {
-        const content: Anthropic.ContentBlockParam[] = [];
+        const content: Anthropic.ContentBlock[] = [];
         if (msg.content) {
           content.push({ type: 'text', text: msg.content });
         }
@@ -210,7 +210,8 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   private mapUsage(usage: Anthropic.Usage): TokenUsage {
-    const cached = (usage as Record<string, unknown>).cache_read_input_tokens as number | undefined;
+    const usageRecord = usage as unknown as Record<string, unknown>;
+    const cached = usageRecord.cache_read_input_tokens as number | undefined;
     return {
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
@@ -238,7 +239,11 @@ export class AnthropicProvider extends BaseProvider {
     if (error instanceof Anthropic.APIError) {
       if (error.status === 429) {
         const retryAfter = (error.headers as Record<string, string> | undefined)?.['retry-after'];
-        return new RateLimitError('anthropic', retryAfter ? parseInt(retryAfter, 10) : undefined, error);
+        return new RateLimitError(
+          'anthropic',
+          retryAfter ? parseInt(retryAfter, 10) : undefined,
+          error
+        );
       }
       if (error.status === 401) {
         return new AuthenticationError('anthropic', error);

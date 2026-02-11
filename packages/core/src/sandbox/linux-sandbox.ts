@@ -94,7 +94,7 @@ export class LinuxSandbox implements Sandbox {
       if (violations.length > 0) {
         this.getLogger().warn('Sandbox violations detected during execution', {
           violationCount: violations.length,
-          violations: violations.map(v => v.description),
+          violations: violations.map((v) => v.description),
         });
       }
 
@@ -148,13 +148,11 @@ export class LinuxSandbox implements Sandbox {
   validatePath(
     filePath: string,
     mode: 'read' | 'write' | 'exec',
-    opts: NonNullable<SandboxOptions['filesystem']>,
+    opts: NonNullable<SandboxOptions['filesystem']>
   ): SandboxViolation | null {
     const resolved = path.resolve(filePath);
     const allowedPaths =
-      mode === 'read' ? opts.readPaths :
-      mode === 'write' ? opts.writePaths :
-      opts.execPaths;
+      mode === 'read' ? opts.readPaths : mode === 'write' ? opts.writePaths : opts.execPaths;
 
     for (const allowed of allowedPaths) {
       const resolvedAllowed = path.resolve(allowed);
@@ -173,7 +171,7 @@ export class LinuxSandbox implements Sandbox {
 
   private validatePathConfig(
     fs: NonNullable<SandboxOptions['filesystem']>,
-    violations: SandboxViolation[],
+    violations: SandboxViolation[]
   ): void {
     // Check for path traversal in configured paths
     const allPaths = [...fs.readPaths, ...fs.writePaths, ...fs.execPaths];
@@ -207,10 +205,14 @@ export class LinuxSandbox implements Sandbox {
         const version = readFileSync('/proc/version', 'utf-8');
         const match = version.match(/Linux version (\d+)\.(\d+)/);
         if (match) {
-          const major = parseInt(match[1], 10);
-          const minor = parseInt(match[2], 10);
-          if (major > 5 || (major === 5 && minor >= 13)) {
-            caps.landlock = true;
+          const majorStr = match[1];
+          const minorStr = match[2];
+          if (majorStr && minorStr) {
+            const major = parseInt(majorStr, 10);
+            const minor = parseInt(minorStr, 10);
+            if (major > 5 || (major === 5 && minor >= 13)) {
+              caps.landlock = true;
+            }
           }
         }
       }

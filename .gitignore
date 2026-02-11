@@ -32,8 +32,8 @@ Thumbs.db
 *.swp
 *.swo
 
-# Lock files (pnpm only — use pnpm-lock.yaml)
-package-lock.json
+# Lock files
+*.lock
 
 # Test coverage
 coverage/

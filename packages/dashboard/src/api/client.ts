@@ -4,7 +4,23 @@
  * All requests go to the local gateway
  */
 
-import type { MetricsSnapshot, Task, SecurityEvent, HealthStatus, Personality, PersonalityCreate, Skill, SkillCreate, OnboardingStatus, PromptPreview, ApiKey, ApiKeyCreateRequest, ApiKeyCreateResponse, SoulConfig, IntegrationInfo } from '../types';
+import type {
+  MetricsSnapshot,
+  Task,
+  SecurityEvent,
+  HealthStatus,
+  Personality,
+  PersonalityCreate,
+  Skill,
+  SkillCreate,
+  OnboardingStatus,
+  PromptPreview,
+  ApiKey,
+  ApiKeyCreateRequest,
+  ApiKeyCreateResponse,
+  SoulConfig,
+  IntegrationInfo,
+} from '../types.js';
 
 const API_BASE = '/api/v1';
 
@@ -87,14 +103,14 @@ async function attemptTokenRefresh(): Promise<boolean> {
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
-  skipAuth = false,
+  skipAuth = false
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   const token = getAccessToken();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> ?? {}),
+    ...((options.headers as Record<string, string>) ?? {}),
   };
 
   if (token && !skipAuth) {
@@ -125,7 +141,11 @@ async function request<T>(
 
       if (!retryResponse.ok) {
         const error = await retryResponse.json().catch(() => ({ message: 'Unknown error' }));
-        throw new APIError(error.message || `HTTP ${retryResponse.status}`, retryResponse.status, error.code);
+        throw new APIError(
+          error.message || `HTTP ${retryResponse.status}`,
+          retryResponse.status,
+          error.code
+        );
       }
       return retryResponse.json();
     }
@@ -156,10 +176,14 @@ export async function login(password: string): Promise<{
   expiresIn: number;
   tokenType: string;
 }> {
-  return request('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  }, true);
+  return request(
+    '/auth/login',
+    {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    },
+    true
+  );
 }
 
 export async function logout(): Promise<void> {
@@ -177,11 +201,21 @@ export async function fetchHealth(): Promise<HealthStatus> {
   try {
     const response = await fetch('/health');
     if (!response.ok) {
-      return { status: 'error', version: 'unknown', uptime: 0, checks: { database: false, auditChain: false } };
+      return {
+        status: 'error',
+        version: 'unknown',
+        uptime: 0,
+        checks: { database: false, auditChain: false },
+      };
     }
     return response.json();
   } catch {
-    return { status: 'error', version: 'unknown', uptime: 0, checks: { database: false, auditChain: false } };
+    return {
+      status: 'error',
+      version: 'unknown',
+      uptime: 0,
+      checks: { database: false, auditChain: false },
+    };
   }
 }
 
@@ -314,7 +348,9 @@ export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
   return request<OnboardingStatus>('/soul/onboarding/status');
 }
 
-export async function completeOnboarding(data: PersonalityCreate & { agentName?: string }): Promise<{
+export async function completeOnboarding(
+  data: PersonalityCreate & { agentName?: string }
+): Promise<{
   agentName: string;
   personality: Personality;
 }> {
@@ -343,14 +379,19 @@ export async function fetchActivePersonality(): Promise<{ personality: Personali
   return request('/soul/personality');
 }
 
-export async function createPersonality(data: PersonalityCreate): Promise<{ personality: Personality }> {
+export async function createPersonality(
+  data: PersonalityCreate
+): Promise<{ personality: Personality }> {
   return request('/soul/personalities', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function updatePersonality(id: string, data: Partial<PersonalityCreate>): Promise<{ personality: Personality }> {
+export async function updatePersonality(
+  id: string,
+  data: Partial<PersonalityCreate>
+): Promise<{ personality: Personality }> {
   return request(`/soul/personalities/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -365,7 +406,10 @@ export async function activatePersonality(id: string): Promise<{ personality: Pe
   return request(`/soul/personalities/${id}/activate`, { method: 'POST' });
 }
 
-export async function fetchSkills(params?: { status?: string; source?: string }): Promise<{ skills: Skill[] }> {
+export async function fetchSkills(params?: {
+  status?: string;
+  source?: string;
+}): Promise<{ skills: Skill[] }> {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
   if (params?.source) query.set('source', params.source);
@@ -380,7 +424,10 @@ export async function createSkill(data: SkillCreate): Promise<{ skill: Skill }> 
   });
 }
 
-export async function updateSkill(id: string, data: Partial<SkillCreate>): Promise<{ skill: Skill }> {
+export async function updateSkill(
+  id: string,
+  data: Partial<SkillCreate>
+): Promise<{ skill: Skill }> {
   return request(`/soul/skills/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -436,7 +483,11 @@ export async function fetchSoulConfig(): Promise<SoulConfig> {
 
 // ─── Integrations ─────────────────────────────────────────────────────
 
-export async function fetchIntegrations(): Promise<{ integrations: IntegrationInfo[]; total: number; running: number }> {
+export async function fetchIntegrations(): Promise<{
+  integrations: IntegrationInfo[];
+  total: number;
+  running: number;
+}> {
   try {
     return await request('/integrations');
   } catch {

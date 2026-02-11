@@ -10,7 +10,9 @@ export function useSessionTimeout(expiresInSeconds: number = 3600) {
     const logoutMs = expiresInSeconds * 1000;
 
     const warnTimer = setTimeout(() => setShowWarning(true), warnMs);
-    const logoutTimer = setTimeout(() => { void logout(); }, logoutMs);
+    const logoutTimer = setTimeout(() => {
+      void logout();
+    }, logoutMs);
 
     return () => {
       clearTimeout(warnTimer);

@@ -8,7 +8,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { AuthService, type AuthServiceConfig, type AuthServiceDeps } from '../security/auth.js';
 import { AuthStorage } from '../security/auth-storage.js';
-import { AuditChain, InMemoryAuditStorage, type AuditChainStorage } from '../logging/audit-chain.js';
+import {
+  AuditChain,
+  InMemoryAuditStorage,
+  type AuditChainStorage,
+} from '../logging/audit-chain.js';
 import { RBAC, initializeRBAC } from '../security/rbac.js';
 import { RateLimiter, createRateLimiter } from '../security/rate-limiter.js';
 import { createAuthHook, createRbacHook } from '../gateway/auth-middleware.js';
@@ -27,10 +31,15 @@ export const TEST_ADMIN_PASSWORD = 'test-admin-password-32chars!!';
 export function noopLogger(): SecureLogger {
   const noop = () => {};
   return {
-    trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
+    trace: noop,
+    debug: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+    fatal: noop,
     child: () => noopLogger(),
-    level: 'silent',
-  } as SecureLogger;
+    level: 'trace' as const,
+  };
 }
 
 // ── Test Stack ─────────────────────────────────────────────────────
@@ -82,7 +91,7 @@ export function createTestStack(): TestStack {
       rbac,
       rateLimiter,
       logger: logger.child({ component: 'AuthService' }),
-    },
+    }
   );
 
   return {
@@ -108,17 +117,14 @@ export async function createTestGateway(stack: TestStack): Promise<FastifyInstan
   const logger = stack.logger;
 
   // Auth + RBAC hooks
-  app.addHook(
-    'onRequest',
-    createAuthHook({ authService: stack.authService, logger }),
-  );
+  app.addHook('onRequest', createAuthHook({ authService: stack.authService, logger }));
   app.addHook(
     'onRequest',
     createRbacHook({
       rbac: stack.rbac,
       auditChain: stack.auditChain,
       logger,
-    }),
+    })
   );
 
   // Auth routes
@@ -169,7 +175,7 @@ export async function createTestGateway(stack: TestStack): Promise<FastifyInstan
 
 export async function loginAndGetToken(
   app: FastifyInstance,
-  password = TEST_ADMIN_PASSWORD,
+  password = TEST_ADMIN_PASSWORD
 ): Promise<{ accessToken: string; refreshToken: string }> {
   const res = await app.inject({
     method: 'POST',

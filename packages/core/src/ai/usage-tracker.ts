@@ -117,9 +117,10 @@ export class UsageTracker {
       if (!byProvider[r.provider]) {
         byProvider[r.provider] = { tokensUsed: 0, costUsd: 0, calls: 0, errors: 0 };
       }
-      byProvider[r.provider].tokensUsed += r.usage.totalTokens;
-      byProvider[r.provider].costUsd += r.costUsd;
-      byProvider[r.provider].calls++;
+      const providerStats = byProvider[r.provider]!;
+      providerStats.tokensUsed += r.usage.totalTokens;
+      providerStats.costUsd += r.costUsd;
+      providerStats.calls++;
 
       if (rDay === today) {
         tokensUsedToday += r.usage.totalTokens;
