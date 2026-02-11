@@ -11,6 +11,7 @@ import type { AuditChain } from '../logging/audit-chain.js';
 import type { Sandbox, SandboxCapabilities } from './types.js';
 import { NoopSandbox } from './noop-sandbox.js';
 import { LinuxSandbox } from './linux-sandbox.js';
+import { DarwinSandbox } from './darwin-sandbox.js';
 
 export interface SandboxManagerConfig {
   enabled: boolean;
@@ -68,6 +69,9 @@ export class SandboxManager {
     if (platformKey === 'linux') {
       const linux = new LinuxSandbox();
       this.capabilities = linux.getCapabilities();
+    } else if (platformKey === 'darwin') {
+      const darwin = new DarwinSandbox();
+      this.capabilities = darwin.getCapabilities();
     } else {
       this.capabilities = {
         landlock: false,
@@ -101,8 +105,18 @@ export class SandboxManager {
 
     if (this.config.technology === 'auto') {
       if (caps.platform === 'linux') {
-        this.getLogger().info('Using Linux sandbox (soft enforcement)');
-        this.sandbox = new LinuxSandbox();
+        const enforceLandlock = caps.landlock;
+        this.getLogger().info(
+          enforceLandlock
+            ? 'Using Linux sandbox (Landlock V2 enforcement)'
+            : 'Using Linux sandbox (soft enforcement)',
+        );
+        this.sandbox = new LinuxSandbox({ enforceLandlock });
+        return this.sandbox;
+      }
+      if (caps.platform === 'darwin') {
+        this.getLogger().info('Using macOS sandbox (sandbox-exec)');
+        this.sandbox = new DarwinSandbox();
         return this.sandbox;
       }
       // No sandbox available for this platform
@@ -119,7 +133,7 @@ export class SandboxManager {
         this.sandbox = new NoopSandbox();
         return this.sandbox;
       }
-      this.sandbox = new LinuxSandbox();
+      this.sandbox = new LinuxSandbox({ enforceLandlock: true });
       return this.sandbox;
     }
 

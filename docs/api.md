@@ -34,5 +34,5 @@ The gateway binds to `127.0.0.1:18789` by default (local network only).
 ## Related Documentation
 
 - [Installation Guide](installation.md)
-- [Configuration Guide](guides/configuration.md)
+- [Configuration Reference](configuration.md)
 - [Security Model](security/security-model.md)

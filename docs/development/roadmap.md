@@ -1,199 +1,199 @@
 # Development Roadmap
 
-> Development phases, timeline, and technical specifications for F.R.I.D.A.Y.
-
-[![Project Status: Active Development](https://img.shields.io/badge/Status-Active%20Development-brightgreen.svg)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-## Table of Contents
-
-1. [Development Phases](#development-phases)
-2. [Phase 1: Foundation](#phase-1-foundation)
-3. [Phase 2: Security Layer](#phase-2-security-layer)
-4. [Phase 2.5: Core Infrastructure Gaps](#phase-25-core-infrastructure-gaps)
-5. [Phase 3: Dashboard](#phase-3-dashboard)
-6. [Phase 4: Integrations](#phase-4-integrations)
-7. [Phase 5: Production Hardening](#phase-5-production-hardening)
-8. [Future Enhancements](#future-enhancements)
-9. [Research Required](#research-required)
+> Development phases, timeline, and progress for F.R.I.D.A.Y.
 
 ---
 
 ## Development Phases
 
 ```
-Phase 1          Phase 2          Phase 3          Phase 4          Phase 5
-Foundation       Security         Dashboard        Integrations     Production
-   |                |                |                |                |
-   v                v                v                v                v
-[Core Agent] -> [RBAC/Crypto] -> [React UI] -> [Platforms] -> [Hardening]
-   |                |                |                |                |
-   +- Task Loop     +- Encryption    +- Metrics       +- Telegram      +- Load Testing
-   +- Logging       +- Sandbox       +- History       +- Discord       +- Pen Testing
-   +- Config        +- Validation    +- Connections   +- Slack         +- Audit
-   +- Storage       +- Rate Limit    +- Security      +- WhatsApp      +- Docs
-
-Timeline: ~12-16 weeks for MVP
+Phase 1          Phase 2          Phase 2.5        Phase 3          Phase 4          Phase 5
+Foundation       Security         Infrastructure   Dashboard        Integrations     Production
+   |                |                |                |                |                |
+   v                v                v                v                v                v
+[Core Agent] -> [RBAC/Crypto] -> [Brain/Comms] -> [React UI] -> [Platforms] -> [Hardening]
+   |                |                |                |                |                |
+   +- Task Loop     +- Encryption    +- CLI           +- Metrics       +- Telegram      +- Load Testing
+   +- Logging       +- Sandbox       +- Brain/Soul    +- History       +- Discord       +- Security Testing
+   +- Config        +- Validation    +- E2E Comms     +- Connections   +- Slack         +- Prometheus
+   +- Storage       +- Rate Limit    +- Fallbacks     +- Security      +- GitHub        +- Docs
+   +- AI Providers  +- mTLS          +- Task Storage  +- Soul UI       +- Webhooks      +- Deployment
 ```
 
 ---
 
-## Phase 1: Foundation ✅
+## Phase 1: Foundation
 
-**Goal**: Establish core agent loop with comprehensive logging infrastructure.
-
-**Duration**: 2-3 weeks
 **Status**: Complete
+**Duration**: 3 weeks
 
-### Completed Tasks
-
-#### Core Agent Engine
-- ✅ TypeScript project structure with strict mode
-- ✅ Configuration management with YAML + env loading
-- ✅ Base agent loop with task queue and graceful shutdown
-- ✅ Multi-provider AI integration (Anthropic, OpenAI, Gemini, Ollama)
-
-#### Logging Infrastructure
-- ✅ Log entry schema with UUID v7 and correlation IDs
-- ✅ SQLite storage with WAL mode and query/filter support
-- ✅ Cryptographic audit chain with integrity verification
-- ✅ Log query API with REST endpoint
-
-#### Testing
-- ✅ 565 tests across 31 test files
-- ✅ 32 integration tests covering end-to-end flows
-
-### Deliverables
-- ✅ Working agent with Claude API integration
-- ✅ Comprehensive audit trail (audit chain + SQLite + query layer)
-- ✅ Configuration system
-- ✅ >80% test coverage
+- TypeScript project structure with strict mode, ESLint, Prettier, Vitest
+- Configuration management (YAML + env vars + Zod validation)
+- Base agent loop with task queue, event-driven architecture, graceful shutdown
+- Multi-provider AI integration (Anthropic, OpenAI, Gemini, Ollama)
+- Structured logging with UUID v7, correlation IDs, SQLite WAL storage
+- Cryptographic audit chain (HMAC-SHA256, integrity verification)
+- Log query API with REST endpoint
 
 ---
 
-## Phase 2: Security Layer ✅
+## Phase 2: Security Layer
 
-**Goal**: Implement enterprise-grade security controls.
-
-**Duration**: 3-4 weeks
 **Status**: Complete
+**Duration**: 4 weeks
 
-### Completed Features
+### Authentication & Authorization
+- RBAC with role definitions (Admin, Operator, Auditor, Viewer), inheritance, persistent storage
+- JWT authentication with refresh token rotation, blacklisting
+- API key authentication with rate limiting and revocation
+- Gateway middleware for per-route RBAC enforcement
 
-#### Authentication & Authorization
-- ✅ RBAC system with role definitions and inheritance
-- ✅ JWT authentication with refresh token rotation
-- ✅ API key authentication
-- ✅ Gateway middleware for per-route RBAC enforcement
+### Encryption & Secrets
+- AES-256-GCM encryption at rest with scrypt KDF
+- System keyring integration (macOS Keychain, Linux Secret Service)
+- Secret rotation with dual-key JWT verification and grace periods
 
-#### Encryption & Secrets
-- ✅ AES-256-GCM encryption at rest
-- ✅ System keyring integration (macOS Keychain, Linux Secret Service)
-- ✅ Secret rotation with expiry tracking
-- ✅ Secure secret storage with audit logging
+### Input Validation & Protection
+- Input validation pipeline (size limits, encoding normalization, injection detection)
+- Prompt injection defense (6 pattern families, blocking + warning modes)
+- Rate limiting with sliding window counters (per-user, per-IP, per-API-key, global)
 
-#### Input Validation & Protection
-- ✅ Input validation pipeline with size limits and encoding normalization
-- ✅ Prompt injection defense with pattern detection
-- ✅ Rate limiting with sliding window counters
-- ✅ Cross-platform sandbox abstraction
+### Sandboxing
+- Cross-platform sandbox abstraction (`Sandbox` interface, `SandboxManager`)
+- Linux: V1 soft sandbox + V2 Landlock kernel enforcement via forked worker
+- macOS: `sandbox-exec` profile generation with deny-default policy
+- NoopSandbox fallback with warning
 
-#### Soul System
-- ✅ Personality and skills management
-- ✅ AI prompt composition with token caps
-- ✅ Skill approval workflow
-- ✅ 18 REST API endpoints for soul management
-
-### Deliverables
-- ✅ Complete RBAC system
-- ✅ Encrypted secret storage
-- ✅ Input validation pipeline
-- ✅ JWT + API key authentication
-- ✅ System keyring integration
-- ✅ V1 soft sandbox (path validation + resource tracking)
+### Additional
+- Soul system (personality, skills, onboarding, 18 REST endpoints)
+- mTLS with client certificate authentication
+- Redis-backed distributed rate limiting
 
 ---
 
-## Phase 2.5: Core Infrastructure Gaps ✅
+## Phase 2.5: Core Infrastructure Gaps
 
-**Goal**: Fill critical gaps blocking dashboard and production readiness.
+**Status**: Complete
+**Duration**: 1 week
 
-### Completed Tasks
-- ✅ CLI entry point with arg parsing and graceful shutdown
-- ✅ SQLite task storage with filtering, pagination, and metrics
-- ✅ Security events query API
-- ✅ Rate limit metrics integration
-
----
-
-## Phase 3: Dashboard 🚧
-
-**Goal**: Build real-time monitoring dashboard with connection management.
-
-**Duration**: 4-5 weeks
-**Status**: ~40% complete
-
-### Completed Components
-- ✅ React + Vite + TypeScript setup
-- ✅ WebSocket client with auto-reconnection
-- ✅ Base API client with fetch wrapper
-- ✅ Core components (MetricsGraph, TaskHistory, SecurityEvents, ResourceMonitor)
-
-### Remaining Work
-- ⏳ Routing and navigation
-- ⏳ Soul/Personality UI pages
-- ⏳ Login page and session management
-- ⏳ Connection manager UI
-- ⏳ Live data integration (currently using mock data)
+- CLI entry point (`--port`, `--host`, `--config`, `--log-level`, `--tls`)
+- SQLite task storage with filtering, pagination, and metrics
+- Security events query API
+- Rate limit metrics integration
+- Brain system (memory, knowledge, skills with decay and pruning)
+- E2E encrypted inter-agent communication (X25519 + Ed25519 + AES-256-GCM)
+- Model fallback chain on rate limits (429) / provider unavailability (502/503)
 
 ---
 
-## Phase 4: Integrations ⏳
+## Phase 3: Dashboard
 
-**Goal**: Connect to messaging platforms and external services.
-
-**Duration**: 3-4 weeks
-**Status**: Not started
-
-### Planned Features
-- ⏳ Plugin architecture with lifecycle management
-- ⏳ Message abstraction layer
-- ⏳ Telegram integration
-- ⏳ Discord integration
-- ⏳ Slack integration
-- ⏳ GitHub integration
-
----
-
-## Phase 5: Production Hardening ⏳
-
-**Goal**: Prepare for production deployment.
-
-**Duration**: 2-3 weeks
-**Status**: Partially complete
+**Status**: ~98% complete
+**Duration**: 5 weeks
 
 ### Completed
-- ✅ Docker packaging with multi-stage build
-- ✅ CI/CD pipeline with GitHub Actions
-- ✅ Structured logging and audit chain
+- React + Vite + TypeScript with URL routing (react-router-dom v7)
+- TanStack Query for server-state management
+- WebSocket client with auto-reconnection and channel subscriptions
+- MetricsGraph (ReactFlow with custom node types and real-time updates)
+- TaskHistory with advanced filtering (status + type), live data
+- SecurityEvents with severity-based styling, live data
+- ConnectionManager with connect forms, start/stop/delete, error retry
+- ResourceMonitor with CPU/Memory gauges, token/cost tracking, real history
+- Soul/Personality UI (onboarding wizard, personality editor, skills manager)
+- Login page with JWT auth, automatic token refresh on 401
+- Session timeout warning, ErrorBoundary, ConfirmDialog
+- Responsive mobile layout (hamburger nav, stacked cards, hidden table columns)
+- Theme toggle (dark/light with localStorage persistence)
+- Settings page (agent identity, API key management, soul config overview)
+- DashboardLayout, StatusBar, NavigationTabs (memoized, 7 tabs)
+
+### Deferred
+- Storybook, mock data generators
+- Date range picker, export functionality
+- User profile dropdown, notification bell, search bar
+- Test connection button
+
+---
+
+## Phase 4: Integrations
+
+**Status**: Framework + Telegram complete
+**Duration**: 3-4 weeks (2 weeks remaining)
+
+### Completed
+- Plugin architecture (`Integration` interface, `IntegrationManager`, `IntegrationStorage`, factory pattern)
+- Message abstraction (`UnifiedMessage`, `MessageAttachment`, `PlatformAdapter`, `MessageRouter`)
+- REST API routes for CRUD + start/stop + messages with RBAC
+- Telegram adapter (grammy, long-polling, `/start`/`help`/`status` commands, 23 tests)
+- 24 integration framework tests
+
+### Remaining (moved to Phase 5 prompt)
+- Discord adapter (discord.js v14, slash commands, embeds, threads)
+- Slack adapter (@slack/bolt, socket mode, Block Kit)
+- GitHub adapter (@octokit, webhook handler, PR review, issue triage)
+
+---
+
+## Phase 5: Production Hardening
+
+**Status**: Partial (Docker + CI/CD done)
+**Duration**: 3 weeks
+
+### Completed
+- Docker packaging (multi-stage Dockerfile, docker-compose, non-root user, healthcheck)
+- CI/CD pipeline (lint -> typecheck -> test -> build -> security audit -> docker build, Node 20+22 matrix)
+- Documentation: installation.md, configuration.md, api/ reference
 
 ### Remaining
-- ⏳ Load testing
-- ⏳ Security testing
-- ⏳ Chaos testing
-- ⏳ Prometheus metrics
-- ⏳ Documentation completion
+- Integration framework improvements (ConversationManager, auto-reconnect, per-platform rate limiter)
+- Remaining platform adapters (Discord, Slack, GitHub)
+- Load testing (k6 scripts for all API endpoints)
+- Security testing (injection, JWT manipulation, rate limit bypass, RBAC, audit integrity, sandbox escape)
+- Prometheus metrics endpoint with Grafana dashboard and alert rules
+- Log aggregation configs (Loki + Promtail)
+- OpenAPI specification
+- Troubleshooting and deployment guides
+- Release script
+
+---
+
+## Test Coverage
+
+| Category | Tests | Files |
+|----------|-------|-------|
+| Core (AI, config, task, logging) | ~200 | 12 |
+| Security (auth, RBAC, crypto, rate limiter, sandbox) | ~250 | 10 |
+| Brain + Soul | ~130 | 4 |
+| Comms | ~40 | 1 |
+| Integrations (framework + Telegram) | ~47 | 2 |
+| Integration tests (E2E flows) | ~32 | 3 |
+| Dashboard | ~612 | 7+ |
+| **Total** | **~746 (core) + 612 (dashboard)** | **39+** |
+
+All core modules maintain >80% coverage thresholds.
+
+---
+
+## Timeline Summary
+
+| Phase | Duration | Status |
+|-------|----------|--------|
+| Phase 1: Foundation | 3 weeks | Complete |
+| Phase 2: Security | 4 weeks | Complete |
+| Phase 2.5: Infrastructure | 1 week | Complete |
+| Phase 3: Dashboard | 5 weeks | ~98% Complete |
+| Phase 4: Integrations | 4 weeks | Framework + Telegram Complete |
+| Phase 5: Production | 3 weeks | Partial (Docker + CI/CD) |
 
 ---
 
 ## Future Enhancements
 
 ### v1.1 (Post-MVP)
-- Multi-agent orchestration
 - MCP protocol support
 - Skill marketplace
 - Custom dashboards
-- Webhooks
 - Performance optimization
 
 ### v1.2
@@ -201,47 +201,13 @@ Timeline: ~12-16 weeks for MVP
 - Audit report generator
 - Cost optimization recommendations
 - A/B testing framework
-- Custom model support
 
 ### v2.0
-- Distributed deployment
-- Federation
+- Distributed deployment (Kubernetes)
+- Federation (cross-instance communication via E2E comms)
 - ML-based anomaly detection
 - Voice interface
 - Mobile app
-
----
-
-## Research Required
-
-### Sandbox Technologies
-- Compare seccomp vs eBPF for syscall filtering
-- Evaluate gVisor for containerized sandboxing
-- Research WASM isolation for plugin execution
-
-### Encryption Libraries
-- Compare libsodium vs WebCrypto vs Node.js crypto
-- Performance benchmarking of different algorithms
-
-### Performance Optimization
-- Database query optimization
-- Memory usage profiling
-- API response time improvements
-
----
-
-## Timeline Summary
-
-| Phase | Duration | Status | End Date |
-|-------|----------|---------|----------|
-| Phase 1 | 3 weeks | ✅ Complete | Week 3 |
-| Phase 2 | 4 weeks | ✅ Complete | Week 7 |
-| Phase 2.5 | 1 week | ✅ Complete | Week 8 |
-| Phase 3 | 5 weeks | 🚧 40% | Week 13 |
-| Phase 4 | 4 weeks | ⏳ Not Started | Week 17 |
-| Phase 5 | 3 weeks | ⏳ Partial | Week 20 |
-
-**Total MVP Timeline**: ~20 weeks
 
 ---
 
@@ -250,9 +216,9 @@ Timeline: ~12-16 weeks for MVP
 - [Architecture Overview](architecture.md)
 - [API Reference](../api/)
 - [Security Model](../security/security-model.md)
-- [Development Setup](contributing.md)
-- [Deployment Guide](../guides/deployment.md)
+- [Configuration Reference](../configuration.md)
+- [Installation Guide](../installation.md)
 
 ---
 
-*This roadmap is a living document and will be updated as development progresses.*
+*Last updated: February 2026*

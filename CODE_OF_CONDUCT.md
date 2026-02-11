@@ -33,7 +33,7 @@ In the interest of fostering an open and welcoming environment, we as contributo
 If you experience or witness unacceptable behavior, please report it to us:
 
 - Email: conduct@friday.dev
-- Private GitHub issue: [Create private issue](https://github.com/your-org/friday/issues/new?template=conduct_report.md)
+- Private GitHub issue: [Create private issue](https://github.com/MacCracken/FRIDAY/issues/new?template=conduct_report.md)
 - DM a project maintainer on Discord/GitHub
 
 All reports will be reviewed and investigated promptly and fairly.

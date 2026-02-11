@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { SoulConfigSchema } from './soul.js';
+import { SoulConfigSchema, BrainConfigSchema, CommsConfigSchema } from './soul.js';
 
 // Safe path validation (no path traversal)
 const SafePathSchema = z.string()
@@ -61,6 +61,8 @@ const RateLimitingConfigSchema = z.object({
   enabled: z.boolean().default(true),
   defaultWindowMs: z.number().int().positive().max(3600000).default(60000),
   defaultMaxRequests: z.number().int().positive().max(10000).default(100),
+  redisUrl: z.string().url().optional(),
+  redisPrefix: z.string().max(64).default('friday:rl').optional(),
 }).default({});
 
 const InputValidationConfigSchema = z.object({
@@ -182,6 +184,19 @@ export const GatewayConfigSchema = z.object({
 
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 
+// Fallback model configuration (used when primary provider hits rate limits or is unavailable)
+export const FallbackModelConfigSchema = z.object({
+  provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama']),
+  model: z.string(),
+  apiKeyEnv: EnvVarRefSchema,
+  baseUrl: z.string().url().optional(),
+  maxTokens: z.number().int().positive().max(200000).optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  requestTimeoutMs: z.number().int().positive().max(300000).optional(),
+});
+
+export type FallbackModelConfig = z.infer<typeof FallbackModelConfigSchema>;
+
 // Model/AI configuration
 export const ModelConfigSchema = z.object({
   provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama']).default('anthropic'),
@@ -203,6 +218,9 @@ export const ModelConfigSchema = z.object({
   // Retry configuration
   maxRetries: z.number().int().min(0).max(10).default(3),
   retryDelayMs: z.number().int().positive().default(1000),
+
+  // Fallback models for rate limit / provider unavailability
+  fallbacks: z.array(FallbackModelConfigSchema).max(5).default([]),
 });
 
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
@@ -217,6 +235,8 @@ export const ConfigSchema = z.object({
   gateway: GatewayConfigSchema.default({}),
   model: ModelConfigSchema.default({}),
   soul: SoulConfigSchema,
+  brain: BrainConfigSchema,
+  comms: CommsConfigSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

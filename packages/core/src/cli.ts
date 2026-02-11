@@ -9,8 +9,11 @@
  *   secureyeoman --log-level debug    # Verbose logging
  */
 
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { createSecureYeoman } from './secureyeoman.js';
 import type { SecureYeoman } from './secureyeoman.js';
+import { isOpenSSLAvailable, generateDevCerts } from './security/cert-gen.js';
 
 // ─── Arg parsing (minimal, no dependency) ────────────────────
 
@@ -19,6 +22,7 @@ interface CliArgs {
   host?: string;
   config?: string;
   logLevel?: string;
+  tls?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -49,6 +53,9 @@ function parseArgs(argv: string[]): CliArgs {
         args.logLevel = next;
         i++;
         break;
+      case '--tls':
+        args.tls = true;
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -74,6 +81,7 @@ Options:
   -H, --host <string>      Gateway host (default: 127.0.0.1)
   -c, --config <path>      Config file path (YAML)
   -l, --log-level <level>  Log level: trace|debug|info|warn|error|fatal
+      --tls                Enable TLS (auto-generates dev certs if needed)
   -v, --version            Show version
   -h, --help               Show this help
 
@@ -91,17 +99,18 @@ Environment Variables:
 
 // ─── Banner ──────────────────────────────────────────────────
 
-function printBanner(host: string, port: number): void {
+function printBanner(host: string, port: number, tls = false): void {
+  const scheme = tls ? 'https' : 'http';
   console.log(`
   ╔═══════════════════════════════════════════╗
   ║          SecureYeoman v0.1.0              ║
   ║   Secure Autonomous Agent Framework       ║
   ╚═══════════════════════════════════════════╝
 
-  Gateway:    http://${host}:${port}
-  Dashboard:  http://${host}:${port} (serve dashboard build)
-  Health:     http://${host}:${port}/health
-  API:        http://${host}:${port}/api/v1/
+  Gateway:    ${scheme}://${host}:${port}
+  Dashboard:  ${scheme}://${host}:${port} (serve dashboard build)
+  Health:     ${scheme}://${host}:${port}/health
+  API:        ${scheme}://${host}:${port}/api/v1/
 `);
 }
 
@@ -132,6 +141,29 @@ async function main(): Promise<void> {
     overrides.logging = { level: args.logLevel };
   }
 
+  // --tls: enable TLS, auto-generating dev certs if no paths configured
+  if (args.tls) {
+    const gw = (overrides.gateway ?? {}) as Record<string, unknown>;
+    const tls: Record<string, unknown> = { enabled: true };
+
+    // Auto-generate dev certs when no certPath/keyPath in overrides
+    if (!gw.tls || !(gw.tls as Record<string, unknown>).certPath) {
+      if (!isOpenSSLAvailable()) {
+        console.error('Error: --tls requires openssl on PATH to generate dev certs');
+        process.exit(1);
+      }
+      const certDir = path.join(os.homedir(), '.secureyeoman', 'dev-certs');
+      console.log(`Generating dev TLS certificates in ${certDir} ...`);
+      const certs = generateDevCerts(certDir);
+      tls.certPath = certs.serverCert;
+      tls.keyPath = certs.serverKey;
+      tls.caPath = certs.caCert;
+    }
+
+    gw.tls = tls;
+    overrides.gateway = gw;
+  }
+
   let instance: SecureYeoman | null = null;
 
   try {
@@ -146,7 +178,7 @@ async function main(): Promise<void> {
     const config = instance.getConfig();
     const host = args.host ?? config.gateway.host;
     const port = args.port ?? config.gateway.port;
-    printBanner(host, port);
+    printBanner(host, port, !!args.tls);
 
   } catch (error) {
     console.error(

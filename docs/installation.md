@@ -17,7 +17,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 
 # Install dependencies
@@ -42,7 +42,7 @@ The dashboard will be available at http://localhost:3000 and the API at http://l
 
 ```bash
 # Clone and configure
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 cp .env.example .env
 # Edit .env with your configuration
@@ -78,7 +78,7 @@ docker run -p 18789:18789 \
 ## Option 3: npm
 
 ```bash
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 npm install
 cp .env.example .env

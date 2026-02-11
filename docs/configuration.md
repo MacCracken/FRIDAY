@@ -35,6 +35,7 @@ Options:
   -H, --host <string>      Gateway bind address (default: 127.0.0.1)
   -c, --config <path>      Path to YAML config file
   -l, --log-level <level>  Log level: trace|debug|info|warn|error|fatal
+      --tls                Enable TLS (auto-generates dev certs if needed)
   -v, --version            Show version number
   -h, --help               Show help
 ```
@@ -88,6 +89,8 @@ security:
     enabled: true
     defaultWindowMs: 60000       # max 3600000 (1 hour)
     defaultMaxRequests: 100      # max 10000
+    redisUrl: redis://localhost:6379  # optional — enables distributed rate limiting
+    redisPrefix: friday:rl       # optional — Redis key prefix (max 64 chars)
 
   inputValidation:
     maxInputLength: 100000
@@ -167,6 +170,13 @@ model:
   requestTimeoutMs: 120000       # max 300000 (5 min)
   maxRetries: 3                  # max 10
   retryDelayMs: 1000
+  fallbacks:                     # up to 5 fallback models (tried on 429/502/503)
+    - provider: openai
+      model: gpt-4o
+      apiKeyEnv: OPENAI_API_KEY
+    - provider: gemini
+      model: gemini-2.0-flash
+      apiKeyEnv: GOOGLE_GENERATIVE_AI_API_KEY
 
 soul:
   enabled: true
@@ -217,6 +227,8 @@ soul:
 | `enabled` | boolean | `true` | Enable rate limiting |
 | `defaultWindowMs` | number | `60000` | Sliding window size in ms |
 | `defaultMaxRequests` | number | `100` | Max requests per window |
+| `redisUrl` | string | — | Redis URL for distributed rate limiting (optional) |
+| `redisPrefix` | string | `"friday:rl"` | Key prefix for Redis entries (max 64 chars) |
 
 ### gateway
 
@@ -224,8 +236,16 @@ soul:
 |-------|------|---------|-------------|
 | `host` | string | `"127.0.0.1"` | Bind address (local-only by default) |
 | `port` | number | `18789` | HTTP port (1024–65535) |
+| `tls.enabled` | boolean | `false` | Enable TLS/HTTPS |
+| `tls.certPath` | string | — | Path to server certificate PEM |
+| `tls.keyPath` | string | — | Path to server private key PEM |
+| `tls.caPath` | string | — | Path to CA certificate PEM (enables mTLS when set) |
 | `auth.tokenExpirySeconds` | number | `3600` | JWT access token lifetime |
 | `auth.refreshTokenExpirySeconds` | number | `86400` | Refresh token lifetime |
+
+When `tls.caPath` is provided, the server enables mutual TLS (mTLS): clients must present a certificate signed by the specified CA. The client certificate CN is used as the authenticated user identity with `operator` role.
+
+Use the `--tls` CLI flag for development — it auto-generates a self-signed CA and server certificate in `~/.secureyeoman/dev-certs/`.
 
 ### model
 
@@ -237,6 +257,21 @@ soul:
 | `temperature` | number | `0.7` | Sampling temperature (0.0–2.0) |
 | `requestTimeoutMs` | number | `120000` | Request timeout (max 5 min) |
 | `maxRetries` | number | `3` | Retry count on transient errors |
+| `fallbacks` | array | `[]` | Ordered list of fallback models (max 5). Tried on rate limit (429) or provider unavailability (502/503). |
+
+### model.fallbacks[]
+
+Each entry in the `fallbacks` array configures an alternative model to try when the primary (or a preceding fallback) returns a rate-limit or unavailability error. Fields not set inherit from the primary `model` config.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | enum | Yes | `anthropic`, `openai`, `gemini`, `ollama` |
+| `model` | string | Yes | Model identifier for the provider |
+| `apiKeyEnv` | string | Yes | Environment variable holding the API key |
+| `baseUrl` | string | No | Provider base URL override |
+| `maxTokens` | number | No | Max tokens per response (inherits from primary) |
+| `temperature` | number | No | Sampling temperature (inherits from primary) |
+| `requestTimeoutMs` | number | No | Request timeout in ms (inherits from primary) |
 
 ### soul
 

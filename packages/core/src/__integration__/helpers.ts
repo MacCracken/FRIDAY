@@ -14,7 +14,7 @@ import {
   type AuditChainStorage,
 } from '../logging/audit-chain.js';
 import { RBAC, initializeRBAC } from '../security/rbac.js';
-import { RateLimiter, createRateLimiter } from '../security/rate-limiter.js';
+import { type RateLimiterLike, createRateLimiter } from '../security/rate-limiter.js';
 import { createAuthHook, createRbacHook } from '../gateway/auth-middleware.js';
 import { registerAuthRoutes } from '../gateway/auth-routes.js';
 import type { SecureLogger } from '../logging/logger.js';
@@ -50,7 +50,7 @@ export interface TestStack {
   auditStorage: InMemoryAuditStorage;
   authStorage: AuthStorage;
   rbac: RBAC;
-  rateLimiter: RateLimiter;
+  rateLimiter: RateLimiterLike;
   logger: SecureLogger;
   cleanup: () => void;
 }

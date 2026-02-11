@@ -11,7 +11,7 @@ import { TokenPayloadSchema, type Role } from '@friday/shared';
 import type { AuthStorage, ApiKeyRow } from './auth-storage.js';
 import type { AuditChain } from '../logging/audit-chain.js';
 import type { RBAC } from './rbac.js';
-import type { RateLimiter } from './rate-limiter.js';
+import type { RateLimiterLike } from './rate-limiter.js';
 import type { SecureLogger } from '../logging/logger.js';
 
 // ── Public types ─────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ export interface AuthUser {
   userId: string;
   role: Role;
   permissions: string[];
-  authMethod: 'jwt' | 'api_key';
+  authMethod: 'jwt' | 'api_key' | 'certificate';
   jti?: string;
   exp?: number;
   apiKeyId?: string;
@@ -61,7 +61,7 @@ export interface AuthServiceDeps {
   storage: AuthStorage;
   auditChain: AuditChain;
   rbac: RBAC;
-  rateLimiter: RateLimiter;
+  rateLimiter: RateLimiterLike;
   logger: SecureLogger;
 }
 
@@ -113,7 +113,7 @@ export class AuthService {
 
   async login(password: string, ip: string): Promise<LoginResult> {
     // Rate-limit check
-    const rl = this.deps.rateLimiter.check('auth_attempts', ip, { ipAddress: ip });
+    const rl = await this.deps.rateLimiter.check('auth_attempts', ip, { ipAddress: ip });
     if (!rl.allowed) {
       await this.audit('auth_failure', 'Rate limit exceeded on login', { ip });
       throw new AuthError('Too many login attempts. Try again later.', 429);

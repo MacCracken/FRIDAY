@@ -90,3 +90,40 @@ export const SoulConfigSchema = z.object({
 }).default({});
 
 export type SoulConfig = z.infer<typeof SoulConfigSchema>;
+
+// ─── Brain Config ────────────────────────────────────────────
+
+export const MemoryTypeSchema = z.enum(['episodic', 'semantic', 'procedural', 'preference']);
+export type MemoryType = z.infer<typeof MemoryTypeSchema>;
+
+export const BrainConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxMemories: z.number().min(100).max(100000).default(10000),
+  maxKnowledge: z.number().min(100).max(50000).default(5000),
+  memoryRetentionDays: z.number().min(1).max(365).default(90),
+  importanceDecayRate: z.number().min(0).max(1).default(0.01),
+  contextWindowMemories: z.number().min(0).max(50).default(10),
+}).default({});
+
+export type BrainConfig = z.infer<typeof BrainConfigSchema>;
+
+// ─── Comms Config ────────────────────────────────────────────
+
+export const MessageTypeSchema = z.enum([
+  'task_request',
+  'task_response',
+  'knowledge_share',
+  'status_update',
+  'coordination',
+]);
+export type MessageType = z.infer<typeof MessageTypeSchema>;
+
+export const CommsConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  agentName: z.string().default(''),
+  listenForPeers: z.boolean().default(true),
+  maxPeers: z.number().int().positive().max(100).default(10),
+  messageRetentionDays: z.number().int().positive().max(365).default(30),
+}).default({});
+
+export type CommsConfig = z.infer<typeof CommsConfigSchema>;

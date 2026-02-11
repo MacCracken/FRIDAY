@@ -60,8 +60,11 @@ friday/
 │   │       ├── logging/       # Audit chain + storage
 │   │       ├── sandbox/       # Cross-platform sandbox
 │   │       ├── security/      # RBAC, auth, secrets
-│   │       ├── soul/          # Personality + skills
+│   │       ├── brain/          # Memory, knowledge, skills
+│   │       ├── comms/          # E2E encrypted agent comms
+│   │       ├── soul/          # Personality + identity
 │   │       ├── task/          # Task execution + storage
+│   │       ├── integrations/  # Platform adapters (Telegram, etc.)
 │   │       └── utils/         # Crypto utilities
 │   └── dashboard/             # React dashboard
 │       └── src/
@@ -91,7 +94,7 @@ friday/
 - Audit logging and integrity verification
 
 **Key Modules**:
-- `ai/` - AI provider abstraction (Anthropic, OpenAI, Gemini, Ollama)
+- `ai/` - AI provider abstraction (Anthropic, OpenAI, Gemini, Ollama) with configurable fallback chain on rate limits / provider unavailability
 - `task/` - Task queue, execution, and persistence
 - `logging/` - Structured logging with cryptographic audit chain
 - `config/` - Configuration loading and validation
@@ -144,7 +147,38 @@ friday/
 - `SecurityEvents` - Audit log viewer
 - `ConnectionManager` - Platform integration UI
 
-### 5. Sandbox System
+### 5. Brain System
+
+**Location**: `packages/core/src/brain/`
+
+**Responsibilities**:
+- Memory storage and retrieval (episodic, semantic, procedural, preference)
+- Knowledge base management with confidence tracking
+- Skill registry (moved from Soul for separation of concerns)
+- Context injection into AI prompts from relevant memories/knowledge
+
+**Key Modules**:
+- `storage.ts` - SQLite persistence for memories, knowledge, and skills
+- `manager.ts` - BrainManager with memory decay, pruning, and context retrieval
+- `brain-routes.ts` - REST API endpoints
+
+### 6. Agent Communication (Comms)
+
+**Location**: `packages/core/src/comms/`
+
+**Responsibilities**:
+- E2E encrypted messaging between FRIDAY instances
+- Peer agent discovery and management
+- Secret sanitization (strips API keys, tokens from payloads)
+- Local message log with retention policies
+
+**Key Modules**:
+- `crypto.ts` - X25519 key exchange + Ed25519 signing + AES-256-GCM encryption
+- `storage.ts` - Peer registry and message log persistence
+- `agent-comms.ts` - AgentComms orchestrator
+- `comms-routes.ts` - REST API endpoints
+
+### 7. Sandbox System
 
 **Location**: `packages/core/src/sandbox/`
 
@@ -155,9 +189,13 @@ friday/
 - Network restriction enforcement
 
 **Features**:
-- Platform-specific implementations
-- Resource usage tracking
+- Platform-specific implementations:
+  - **Linux**: V1 soft sandbox (path validation, resource tracking) + V2 Landlock kernel enforcement via forked worker process (graceful fallback to V1 if kernel lacks Landlock support)
+  - **macOS**: `sandbox-exec` profile generation with deny-default policy; falls back to resource tracking when sandbox-exec is unavailable
+  - **Other**: NoopSandbox fallback with warning
+- Resource usage tracking (memory peak, CPU time)
 - Violation detection and reporting
+- SandboxManager auto-detects platform capabilities and selects the appropriate implementation
 
 ---
 
@@ -372,9 +410,7 @@ Dashboard Display (WebSocket)
 
 - [API Reference](../api/)
 - [Security Model](../security/security-model.md)
-- [Deployment Guide](../guides/deployment.md)
 - [Development Roadmap](roadmap.md)
-- [Contributing Guide](contributing.md)
 
 ---
 

@@ -17,7 +17,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 
 # Install dependencies
@@ -35,7 +35,7 @@ pnpm dev
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 
 # Create environment file
@@ -50,7 +50,7 @@ docker compose up
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 
 # Install dependencies
@@ -250,7 +250,7 @@ curl http://localhost:18789/api/v1/metrics \
 
 ```javascript
 // Test WebSocket connection in browser console
-const ws = new WebSocket('ws://localhost:18789/ws?token=<your-jwt-token>');
+const ws = new WebSocket('ws://localhost:18789/ws/metrics');
 ws.onmessage = (event) => console.log(JSON.parse(event.data));
 ws.onopen = () => {
   ws.send(JSON.stringify({
@@ -364,10 +364,9 @@ rm ~/.secureyeoman/data/friday.db-wal
 
 ### Getting Help
 
-- **Documentation**: [Full Documentation](../development/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/friday/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/friday/discussions)
-- **Security**: [Security Policy](../../SECURITY.md)
+- **Documentation**: [Development Roadmap](../development/roadmap.md)
+- **Architecture**: [Architecture Overview](../development/architecture.md)
+- **Security**: [Security Model](../security/security-model.md)
 
 ### Debug Mode
 
@@ -384,25 +383,22 @@ Check logs for detailed error information.
 
 ## Production Deployment
 
-For production use, see the [Deployment Guide](deployment.md).
-
-Key differences for production:
+Key considerations for production:
 
 - Use environment variables instead of `.env` file
-- Enable TLS/SSL
+- Enable TLS via `--tls` flag or config
 - Set up proper firewall rules
 - Configure backup and monitoring
 - Use process manager like PM2 or systemd
+- See `docs/configuration.md` for full configuration reference
 
 ---
 
 ## Related Documentation
 
-- [Deployment Guide](deployment.md)
-- [Configuration Reference](configuration.md)
+- [Configuration Reference](../configuration.md)
 - [API Reference](../api/)
 - [Security Model](../security/security-model.md)
-- [Troubleshooting Guide](troubleshooting.md)
 
 ---
 

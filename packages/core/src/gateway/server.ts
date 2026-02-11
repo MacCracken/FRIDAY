@@ -10,6 +10,7 @@
  * - Input validation on all parameters
  */
 
+import { readFileSync } from 'node:fs';
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { WebSocket } from 'ws';
@@ -20,6 +21,8 @@ import type { AuthService } from '../security/auth.js';
 import { createAuthHook, createRbacHook } from './auth-middleware.js';
 import { registerAuthRoutes } from './auth-routes.js';
 import { registerSoulRoutes } from '../soul/soul-routes.js';
+import { registerBrainRoutes } from '../brain/brain-routes.js';
+import { registerCommsRoutes } from '../comms/comms-routes.js';
 import { registerIntegrationRoutes } from '../integrations/integration-routes.js';
 
 /**
@@ -66,11 +69,34 @@ export class GatewayServer {
     this.secureYeoman = options.secureYeoman;
     this.authService = options.authService;
     
+    // Build HTTPS options when TLS is enabled
+    const httpsOpts = this.config.tls.enabled
+      ? (() => {
+          const certPath = this.config.tls.certPath;
+          const keyPath = this.config.tls.keyPath;
+          if (!certPath || !keyPath) {
+            throw new Error('TLS enabled but certPath/keyPath not configured');
+          }
+          const opts: Record<string, unknown> = {
+            cert: readFileSync(certPath),
+            key: readFileSync(keyPath),
+          };
+          // When a CA path is provided, enable mTLS (client cert verification)
+          if (this.config.tls.caPath) {
+            opts.ca = readFileSync(this.config.tls.caPath);
+            opts.requestCert = true;
+            opts.rejectUnauthorized = true;
+          }
+          return opts;
+        })()
+      : undefined;
+
     // Create Fastify instance
     this.app = Fastify({
       logger: false, // We use our own logger
       trustProxy: false, // Security: don't trust proxy headers
       bodyLimit: 1_048_576, // 1 MB max request body
+      ...(httpsOpts ? { https: httpsOpts } : {}),
     });
     
     // Middleware and routes are set up in start()
@@ -182,6 +208,24 @@ export class GatewayServer {
       registerSoulRoutes(this.app, { soulManager });
     } catch {
       // Soul manager may not be available — skip routes
+    }
+
+    // Brain routes
+    try {
+      const brainManager = this.secureYeoman.getBrainManager();
+      registerBrainRoutes(this.app, { brainManager });
+    } catch {
+      // Brain manager may not be available — skip routes
+    }
+
+    // Comms routes
+    try {
+      const agentComms = this.secureYeoman.getAgentComms();
+      if (agentComms) {
+        registerCommsRoutes(this.app, { agentComms });
+      }
+    } catch {
+      // Agent comms may not be available — skip routes
     }
 
     // Integration routes
@@ -515,10 +559,13 @@ export class GatewayServer {
     try {
       await this.app.listen({ host, port });
       
+      const scheme = this.config.tls.enabled ? 'https' : 'http';
       this.getLogger().info('Gateway server started', {
         host,
         port,
-        url: `http://${host}:${port}`,
+        url: `${scheme}://${host}:${port}`,
+        tls: this.config.tls.enabled,
+        mtls: !!(this.config.tls.enabled && this.config.tls.caPath),
       });
       
       // Start metrics broadcast

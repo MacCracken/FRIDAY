@@ -114,6 +114,14 @@ export {
   type SkillStatus,
   type LearningMode,
   type SoulConfig,
+  MemoryTypeSchema,
+  BrainConfigSchema,
+  MessageTypeSchema,
+  CommsConfigSchema,
+  type MemoryType,
+  type BrainConfig,
+  type MessageType,
+  type CommsConfig,
 } from './soul.js';
 
 // Integration types
@@ -143,6 +151,7 @@ export {
   LoggingConfigSchema,
   MetricsConfigSchema,
   GatewayConfigSchema,
+  FallbackModelConfigSchema,
   ModelConfigSchema,
   ConfigSchema,
   PartialConfigSchema,
@@ -151,6 +160,7 @@ export {
   type LoggingConfig,
   type MetricsConfig,
   type GatewayConfig,
+  type FallbackModelConfig,
   type ModelConfig,
   type Config,
   type PartialConfig,

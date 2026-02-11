@@ -23,7 +23,7 @@ We welcome contributions! This guide will help you get started.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 
 # Install dependencies
@@ -197,8 +197,8 @@ docs/
 
 ### Getting Help
 
-- [GitHub Issues](https://github.com/your-org/friday/issues) - Bug reports and feature requests
-- [GitHub Discussions](https://github.com/your-org/friday/discussions) - Questions and community chat
+- [GitHub Issues](https://github.com/MacCracken/FRIDAY/issues) - Bug reports and feature requests
+- [GitHub Discussions](https://github.com/MacCracken/FRIDAY/discussions) - Questions and community chat
 
 ### Code of Conduct
 

@@ -277,6 +277,15 @@ export function validateSecrets(config: Config): void {
     }
   }
   
+  // Warn (don't fail) on missing fallback API keys
+  if (config.model.fallbacks) {
+    for (const fb of config.model.fallbacks) {
+      if (fb.provider !== 'ollama' && !getSecret(fb.apiKeyEnv)) {
+        console.warn(`Fallback ${fb.provider}/${fb.model} API key not set: ${fb.apiKeyEnv}`);
+      }
+    }
+  }
+
   // Token secret for JWT
   requiredSecrets.push(config.gateway.auth.tokenSecret);
 

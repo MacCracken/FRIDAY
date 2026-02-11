@@ -20,7 +20,7 @@
 
 ```bash
 # Install and run in 3 commands
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 pnpm install && pnpm dev
 ```
@@ -68,7 +68,7 @@ F.R.I.D.A.Y. is a **secure autonomous agent system** built around the **SecureYe
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 pnpm install
 
@@ -222,8 +222,8 @@ This project is licensed under the [MIT License](LICENSE).
 ## 🔗 Links
 
 - **Documentation**: [docs/](docs/)
-- **Issues & Discussions**: [GitHub](https://github.com/your-org/friday)
-- **Community**: [GitHub Discussions](https://github.com/your-org/friday/discussions)
+- **Issues & Discussions**: [GitHub](https://github.com/MacCracken/FRIDAY)
+- **Community**: [GitHub Discussions](https://github.com/MacCracken/FRIDAY/discussions)
 - **Security**: [Security Policy](SECURITY.md)
 
 ---

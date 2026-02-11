@@ -5,12 +5,12 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { AuthService } from '../security/auth.js';
 import { AuthError } from '../security/auth.js';
-import type { RateLimiter } from '../security/rate-limiter.js';
+import type { RateLimiterLike } from '../security/rate-limiter.js';
 import type { Role } from '@friday/shared';
 
 export interface AuthRoutesOptions {
   authService: AuthService;
-  rateLimiter: RateLimiter;
+  rateLimiter: RateLimiterLike;
 }
 
 export function registerAuthRoutes(

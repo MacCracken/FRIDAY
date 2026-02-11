@@ -30,6 +30,7 @@
     "better-sqlite3": "^11.1.2",
     "fastify": "^5.7.4",
     "grammy": "^1.40.0",
+    "ioredis": "^5.9.2",
     "jose": "^6.0.0",
     "openai": "^6.19.0",
     "pino": "^9.3.2",

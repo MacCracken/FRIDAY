@@ -31,19 +31,17 @@
 ## Development Phases
 
 ```
-Phase 1          Phase 2          Phase 3          Phase 4          Phase 5
-Foundation       Security         Dashboard        Integrations     Production
-   |                |                |                |                |
-   v                v                v                v                v
-[Core Agent] -> [RBAC/Crypto] -> [React UI] -> [Platforms] -> [Hardening]
-   |                |                |                |                |
-   +- Task Loop     +- Encryption    +- Metrics       +- Telegram      +- Load Testing
-   +- Logging       +- Sandbox       +- History       +- Discord       +- Pen Testing
-   +- Config        +- Validation    +- Connections   +- Slack         +- Audit
-   +- Storage       +- Rate Limit    +- Security      +- WhatsApp      +- Docs
-   +- AI Providers  +- Brain/Soul    +- Soul UI       +- Agent Comms   +- Monitoring
-
-Timeline: ~12-16 weeks for MVP
+Phase 1          Phase 2          Phase 2.5        Phase 3          Phase 4          Phase 5
+Foundation       Security         Infrastructure   Dashboard        Integrations     Production
+   |                |                |                |                |                |
+   v                v                v                v                v                v
+[Core Agent] -> [RBAC/Crypto] -> [Brain/Comms] -> [React UI] -> [Platforms] -> [Hardening]
+   |                |                |                |                |                |
+   +- Task Loop     +- Encryption    +- CLI           +- Metrics       +- Telegram ✓    +- Load Testing
+   +- Logging       +- Sandbox       +- Brain/Soul    +- History       +- Discord       +- Security Testing
+   +- Config        +- Validation    +- E2E Comms     +- Connections   +- Slack         +- Prometheus
+   +- Storage       +- Rate Limit    +- Fallbacks     +- Security      +- GitHub        +- Docs
+   +- AI Providers  +- mTLS          +- Task Storage  +- Soul UI       +- Webhooks      +- Deployment
 ```
 
 ---
@@ -141,7 +139,7 @@ Timeline: ~12-16 weeks for MVP
 - [x] Working agent that can execute tasks via Claude API (+ OpenAI, Gemini, Ollama)
 - [x] Comprehensive logging with audit trail (audit chain + SQLite storage + query layer)
 - [x] Configuration system
-- [x] Test coverage > 80% (612 tests passing across 33 test files — all core modules covered)
+- [x] Test coverage > 80% (~746 tests passing across 39 test files — all core modules covered)
 
 ---
 
@@ -151,7 +149,7 @@ Timeline: ~12-16 weeks for MVP
 
 **Duration**: 3-4 weeks
 
-**Status**: Sprints 1-3 complete. 612 tests passing across 33 files. Sandbox V1 (soft sandbox with path validation + resource tracking) done. Remaining: kernel-level enforcement (seccomp, Landlock via child process), macOS sandbox.
+**Status**: Sprints 1-3 complete. All Phase 2 items done. Brain/Soul separation, E2E comms, mTLS, Redis rate limiter, macOS sandbox, and Linux Landlock V2 all implemented. ~746 tests passing across 39 test files.
 
 ### Completed (built during P1)
 
@@ -208,10 +206,10 @@ Timeline: ~12-16 weeks for MVP
   - [x] Auto-cleanup of expired windows
   - [x] 13 unit tests
 
-- [x] **P2-014**: Rate limit storage *(partially completed in P1)*
+- [x] **P2-014**: Rate limit storage *(completed)*
   - [x] In-memory storage (single node)
   - [x] Metrics via `getStats()`
-  - [ ] Redis adapter (distributed)
+  - [x] Redis adapter (distributed) — `RedisRateLimiter` with sorted-set sliding window
 
 ### Remaining P2 Tasks
 
@@ -285,33 +283,39 @@ Timeline: ~12-16 weeks for MVP
   - [x] `GET /api/v1/sandbox/status` endpoint
   - [x] 37 unit tests + 7 integration tests
 
-- [x] **P2-008**: Linux sandbox implementation *(V1 — soft sandbox with path validation)*
+- [x] **P2-008**: Linux sandbox implementation *(V1 + V2 Landlock)*
   - [x] `LinuxSandbox` with filesystem path validation against allowlists
   - [x] Landlock capability detection (`/proc/sys/kernel/landlock_restrict_self`, kernel >= 5.13)
   - [x] Memory and CPU resource tracking with violation detection
   - [x] Path traversal detection in configuration
-  - [ ] seccomp-bpf filter creation (deferred to V2 — requires native bindings)
-  - [ ] Kernel-level Landlock enforcement via child process (deferred to V2)
-  - [ ] Namespace isolation (PID, network, mount) (deferred to V2)
+  - [x] V2: Landlock enforcement via forked `landlock-worker.ts` child process
+  - [x] V2: `enforceLandlock` constructor option, graceful fallback to V1 on non-Landlock kernels
+  - [ ] seccomp-bpf filter creation (deferred — requires native bindings)
+  - [ ] Namespace isolation (PID, network, mount) (deferred)
 
-- [ ] **P2-009**: macOS sandbox implementation
-  - sandbox-exec profile
-  - App Sandbox entitlements
-  - File access restrictions
-  - **Depends on**: P2-010 ✅
+- [x] **P2-009**: macOS sandbox implementation
+  - [x] `DarwinSandbox` with `sandbox-exec` profile generation (deny-default policy)
+  - [x] System path allowlisting for Node.js (/usr, /System, /Library)
+  - [x] User-configurable read/write/exec paths
+  - [x] Network access control
+  - [x] Fallback to resource-tracking-only when sandbox-exec unavailable
+  - [x] 10 unit tests
 
 #### Priority D: Optional / Deferred
 
-- [ ] **P2-004**: mTLS support (optional for v1)
-  - Certificate generation scripts
-  - Certificate validation
-  - Client certificate authentication
-  - **Defer** unless deploying in zero-trust environments
+- [x] **P2-004**: mTLS support
+  - [x] TLS wired into Fastify constructor (cert/key/ca file loading)
+  - [x] Client certificate authentication (CN extraction, `authMethod: 'certificate'`)
+  - [x] Certificate generation utility (`cert-gen.ts` — dev CA + server + client certs via openssl)
+  - [x] `--tls` CLI flag with auto-generated dev certs
+  - [x] RBAC permissions for brain/comms routes
+  - [x] 9 unit tests
 
-- [ ] **P2-014b**: Redis rate limit adapter
-  - Redis-backed sliding window
-  - Distributed rate limiting across instances
-  - **Defer** until multi-instance deployment is needed
+- [x] **P2-014b**: Redis rate limit adapter
+  - [x] `RedisRateLimiter` with sorted-set sliding window (ZADD/ZREMRANGEBYSCORE/ZCARD pipeline)
+  - [x] Fail-open on Redis unavailability
+  - [x] `createRateLimiter()` factory auto-selects Redis when `redisUrl` configured
+  - [x] 12 unit tests with mocked ioredis
 
 ### Proposed Execution Order
 
@@ -320,7 +324,7 @@ Sprint 1 (Week 1-2):  P2-002 (JWT) → P2-003 (API keys) → P2-001b (RBAC middl
 Sprint 2 (Week 2-3):  P2-006 (keyring) → P2-007b (rotation)
 Sprint 2.5:           P2-015 (Soul system — personality + skills)
 Sprint 3 (Week 3-4):  P2-010 (sandbox interface) → P2-008 (Linux sandbox)
-Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
+Sprint 4:             P2-004 (mTLS) ✅, P2-009 (macOS sandbox) ✅, P2-014b (Redis) ✅, P2-008 V2 (Landlock) ✅
 ```
 
 ### Deliverables
@@ -331,7 +335,9 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 - [x] JWT + API key authentication for gateway
 - [x] RBAC middleware on all gateway routes
 - [x] System keyring integration
-- [x] Sandboxed execution environment *(V1 soft sandbox — path validation + resource tracking)*
+- [x] Sandboxed execution environment *(V1 soft sandbox + V2 Landlock + macOS sandbox-exec)*
+- [x] mTLS support with client certificate authentication
+- [x] Redis-backed distributed rate limiting
 - [ ] Security audit documentation
 - [x] Code audit and refactoring pass (noop logger extraction, JSON.parse guards, queue race fix, bodyLimit, IP check, error handling)
 
@@ -382,38 +388,44 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
   - [x] Counters are monotonically increasing and survive cleanup cycles
 
 #### Agent Brain (Memory/Knowledge/Skills)
-- [ ] **P2.5-006**: Separate Agent Brain from Soul system
-  - [ ] Create `packages/core/src/brain/` with `BrainStorage`, `BrainManager`, types, routes
-  - [ ] Memory system: episodic, semantic, procedural, preference memory types
-  - [ ] Knowledge base: topic-indexed entries with confidence scores and supersession tracking
-  - [ ] Move skills from Soul → Brain (skills are cognitive tools, not personality)
-  - [ ] SQLite `brain.db` with `memories`, `knowledge`, `brain_meta` tables
-  - [ ] `BrainManager.getRelevantContext(input)` — retrieves relevant memories/knowledge for prompt injection
-  - [ ] Memory decay (importance decreases for unaccessed memories) + pruning (expired memories removed)
-  - [ ] Backward-compatible: existing `/api/v1/soul/skills/*` endpoints delegate to Brain
-  - [ ] REST API: `/api/v1/brain/memories`, `/api/v1/brain/knowledge`, `/api/v1/brain/stats`
-  - [ ] Config: `brain.enabled`, `brain.maxMemories`, `brain.memoryRetentionDays`, `brain.contextWindowMemories`
-  - [ ] `SoulManager` updated to compose prompt from Soul personality + Brain context + Brain skills
-  - [ ] Skill migration: auto-migrate skills from `soul.db` → `brain.db` on first run
-  - [ ] 40+ unit tests for BrainStorage and BrainManager
-  - See `BRAIN_SOUL_PROMPT.md` for full implementation details
+- [x] **P2.5-006**: Separate Agent Brain from Soul system
+  - [x] Create `packages/core/src/brain/` with `BrainStorage`, `BrainManager`, types, routes
+  - [x] Memory system: episodic, semantic, procedural, preference memory types
+  - [x] Knowledge base: topic-indexed entries with confidence scores and supersession tracking
+  - [x] Move skills from Soul → Brain (skills are cognitive tools, not personality)
+  - [x] SQLite `brain.db` with `memories`, `knowledge`, `skills`, `brain_meta` tables
+  - [x] `BrainManager.getRelevantContext(input)` — retrieves relevant memories/knowledge for prompt injection
+  - [x] Memory decay (importance decreases for unaccessed memories) + pruning (expired memories removed)
+  - [x] Backward-compatible: existing `/api/v1/soul/skills/*` endpoints delegate to Brain
+  - [x] REST API: `/api/v1/brain/memories`, `/api/v1/brain/knowledge`, `/api/v1/brain/stats`, `/api/v1/brain/maintenance`
+  - [x] Config: `brain.enabled`, `brain.maxMemories`, `brain.memoryRetentionDays`, `brain.contextWindowMemories`
+  - [x] `SoulManager` updated to compose prompt from Soul personality + Brain context + Brain skills
+  - [x] `SoulManager` constructor accepts optional `BrainManager` — backward-compatible (works without Brain)
+  - [x] 52 unit tests for BrainStorage and BrainManager (`brain.test.ts`)
+#### Model Fallback on Rate Limits
+- [x] **P2.5-008**: Configurable model fallback chain
+  - [x] `FallbackModelConfig` schema with up to 5 fallback models
+  - [x] AIClient automatically tries fallbacks on RateLimitError (429) or ProviderUnavailableError (502/503)
+  - [x] Lazy fallback provider instantiation (not created until needed)
+  - [x] Works for both streaming and non-streaming chat
+  - [x] Audit logging: `ai_fallback_triggered`, `ai_fallback_attempt`, `ai_fallback_success`, `ai_fallback_exhausted`
+  - [x] Config loader warns (non-blocking) on missing fallback API keys
+  - [x] 11 unit tests (`client.test.ts` fallback describe block)
 
 #### E2E Encrypted Agent Communication
-- [ ] **P2.5-007**: E2E encrypted inter-agent communication
-  - [ ] Create `packages/core/src/comms/` with `AgentCrypto`, `AgentComms`, `CommsStorage`, types, routes
-  - [ ] Agent keypair: X25519 (key exchange) + Ed25519 (signing), stored encrypted via SecretStore
-  - [ ] Message encryption: ephemeral ECDH → HKDF → AES-256-GCM per message
-  - [ ] Message signing: Ed25519 signature over ciphertext for sender authentication
-  - [ ] Secret sanitization: strip API keys, tokens, passwords from all payloads before sending
-  - [ ] Local message log: each agent stores its own messages (encrypted at rest in `comms.db`)
-  - [ ] Peer management: register/discover other FRIDAY agents, store public keys
-  - [ ] Message types: `task_request`, `task_response`, `knowledge_share`, `status_update`, `coordination`
-  - [ ] REST API: `/api/v1/comms/identity`, `/api/v1/comms/peers`, `/api/v1/comms/message`, `/api/v1/comms/log`
-  - [ ] Config: `comms.enabled` (default: false), `comms.maxPeers`, `comms.messageRetentionDays`
-  - [ ] No secrets exposed in any inter-agent message (enforced by sanitization + tests)
-  - [ ] 40+ unit tests for AgentCrypto, AgentComms, CommsStorage
-  - See `BRAIN_SOUL_PROMPT.md` for full implementation details
-
+- [x] **P2.5-007**: E2E encrypted inter-agent communication
+  - [x] Create `packages/core/src/comms/` with `AgentCrypto`, `AgentComms`, `CommsStorage`, types, routes
+  - [x] Agent keypair: X25519 (key exchange) + Ed25519 (signing), stored as JSON file (encrypted at rest planned)
+  - [x] Message encryption: ephemeral ECDH → HKDF → AES-256-GCM per message
+  - [x] Message signing: Ed25519 signature over ciphertext for sender authentication
+  - [x] Secret sanitization: strip API keys, tokens, passwords from all payloads before sending
+  - [x] Local message log: each agent stores its own messages in `comms.db`
+  - [x] Peer management: register/discover other FRIDAY agents, store public keys (upsert support)
+  - [x] Message types: `task_request`, `task_response`, `knowledge_share`, `status_update`, `coordination`
+  - [x] REST API: `/api/v1/comms/identity`, `/api/v1/comms/peers`, `/api/v1/comms/message`, `/api/v1/comms/send`, `/api/v1/comms/log`
+  - [x] Config: `comms.enabled` (default: false), `comms.maxPeers`, `comms.messageRetentionDays`
+  - [x] No secrets exposed in any inter-agent message (enforced by sanitization + tests)
+  - [x] 40 unit tests for AgentCrypto, sanitizePayload, CommsStorage, AgentComms (`comms.test.ts`)
 ---
 
 ## Phase 3: Dashboard
@@ -586,7 +598,7 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 
 **Duration**: 3-4 weeks
 
-**Status**: P4-001, P4-002, and P4-003 (Telegram) complete. Ready for Discord (P4-004) and Slack (P4-005).
+**Status**: P4-001, P4-002, and P4-003 (Telegram) complete. Remaining adapters (Discord, Slack, GitHub) moved to Phase 5 prompt (`future_prompts/PRODUCTION_PROMPT.md`).
 
 ### Tasks
 
@@ -680,7 +692,7 @@ P4-007 (GitHub) → P4-006/P4-008 (optional/deferred)
 
 **Duration**: 2-3 weeks
 
-**Status**: Not started. Some groundwork done (structured logging, audit chain, rate limiting already in place).
+**Status**: Partial. Docker packaging (P5-004) and CI/CD (P5-005) complete. Documentation partially done. Remaining items detailed in `future_prompts/PRODUCTION_PROMPT.md` and `future_prompts/TESTING_PROMPT.md`.
 
 ### Tasks
 
@@ -1024,6 +1036,20 @@ src/
 | GET | `/api/v1/soul/config` | Get soul config | Yes |
 | GET | `/api/v1/soul/onboarding/status` | Check onboarding status | Yes |
 | POST | `/api/v1/soul/onboarding/complete` | Complete onboarding | Yes (Operator+) |
+| GET | `/api/v1/brain/memories` | Query memories | Yes |
+| POST | `/api/v1/brain/memories` | Create memory | Yes (Operator+) |
+| DELETE | `/api/v1/brain/memories/:id` | Delete memory | Yes (Operator+) |
+| GET | `/api/v1/brain/knowledge` | Query knowledge | Yes |
+| POST | `/api/v1/brain/knowledge` | Add knowledge entry | Yes (Operator+) |
+| GET | `/api/v1/brain/stats` | Brain statistics | Yes |
+| POST | `/api/v1/brain/maintenance` | Trigger decay/prune | Yes (Admin) |
+| GET | `/api/v1/comms/identity` | This agent's public identity | Yes |
+| GET | `/api/v1/comms/peers` | List known peers | Yes |
+| POST | `/api/v1/comms/peers` | Add peer | Yes (Admin) |
+| DELETE | `/api/v1/comms/peers/:id` | Remove peer | Yes (Admin) |
+| POST | `/api/v1/comms/message` | Receive encrypted message | Yes |
+| POST | `/api/v1/comms/send` | Send message to peer | Yes (Operator+) |
+| GET | `/api/v1/comms/log` | View local message log | Yes |
 
 ### WebSocket Channels
 
@@ -1244,12 +1270,12 @@ type Severity = "info" | "warn" | "error" | "critical";
 
 ### v1.1 (Post-MVP)
 
-- [~] **Multi-agent orchestration**: Coordinate multiple SecureYeoman instances *(E2E comms started in P2.5-007)*
+- [x] **Multi-agent orchestration**: E2E encrypted inter-agent communication (P2.5-007)
 - [ ] **MCP protocol support**: Model Context Protocol integration
 - [ ] **Skill marketplace**: Browse and install community skills
 - [ ] **Custom dashboards**: User-configurable dashboard layouts
 - [ ] **Webhooks**: Outbound webhooks for events
-- [ ] **CLI tool**: Command-line interface for operations *(moved to P2.5-001)*
+- [x] **CLI tool**: Command-line interface (P2.5-001)
 
 ### v1.2
 
@@ -1262,7 +1288,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 ### v2.0 (Future Vision)
 
 - [ ] **Distributed deployment**: Kubernetes-native
-- [ ] **Federation**: Cross-instance communication *(groundwork in P2.5-007 E2E comms)*
+- [x] **Federation**: Cross-instance E2E encrypted messaging (P2.5-007)
 - [ ] **ML-based anomaly detection**: Advanced threat detection
 - [ ] **Voice interface**: Speech-to-text interaction
 - [ ] **Mobile app**: Native iOS/Android dashboard
@@ -1345,7 +1371,7 @@ type Severity = "info" | "warn" | "error" | "critical";
 
 ```bash
 # Clone and setup
-git clone https://github.com/your-org/friday.git
+git clone https://github.com/MacCracken/FRIDAY.git
 cd friday
 pnpm install
 

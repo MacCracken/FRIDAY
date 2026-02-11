@@ -8,4 +8,5 @@ export type {
 
 export { NoopSandbox } from './noop-sandbox.js';
 export { LinuxSandbox } from './linux-sandbox.js';
+export { DarwinSandbox } from './darwin-sandbox.js';
 export { SandboxManager, type SandboxManagerConfig, type SandboxManagerDeps } from './manager.js';

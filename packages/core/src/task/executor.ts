@@ -12,7 +12,7 @@ import { uuidv7, sha256 } from '../utils/crypto.js';
 import { getLogger, createNoopLogger, type SecureLogger, type LogContext } from '../logging/logger.js';
 import { type AuditChain } from '../logging/audit-chain.js';
 import { type InputValidator } from '../security/input-validator.js';
-import { type RateLimiter } from '../security/rate-limiter.js';
+import { type RateLimiterLike } from '../security/rate-limiter.js';
 import { getRBAC, type PermissionCheck } from '../security/rbac.js';
 import {
   TaskStatus,
@@ -64,7 +64,7 @@ export class TaskExecutor {
   private readonly activeTasks = new Map<string, TaskEntry>();
   private readonly taskQueue: { task: Task; context: ExecutionContext; resolve: (task: Task) => void; reject: (error: Error) => void }[] = [];
   private readonly validator: InputValidator;
-  private readonly rateLimiter: RateLimiter;
+  private readonly rateLimiter: RateLimiterLike;
   private readonly auditChain: AuditChain;
   private readonly sandbox: Sandbox | null;
   private readonly sandboxOptions: SandboxOptions | undefined;
@@ -75,7 +75,7 @@ export class TaskExecutor {
   constructor(
     config: TaskExecutorConfig,
     validator: InputValidator,
-    rateLimiter: RateLimiter,
+    rateLimiter: RateLimiterLike,
     auditChain: AuditChain,
     sandbox?: Sandbox,
     sandboxOptions?: SandboxOptions,
@@ -143,7 +143,7 @@ export class TaskExecutor {
     }
     
     // Check rate limit
-    const rateLimitResult = this.rateLimiter.check('task_creation', context.userId, {
+    const rateLimitResult = await this.rateLimiter.check('task_creation', context.userId, {
       userId: context.userId,
       ipAddress: context.ipAddress,
     });
@@ -519,7 +519,7 @@ export class TaskExecutor {
  */
 export function createTaskExecutor(
   validator: InputValidator,
-  rateLimiter: RateLimiter,
+  rateLimiter: RateLimiterLike,
   auditChain: AuditChain,
   config?: Partial<TaskExecutorConfig>,
   sandbox?: Sandbox,

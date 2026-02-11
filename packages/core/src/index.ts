@@ -167,6 +167,45 @@ export {
   AuthenticationError,
 } from './ai/index.js';
 
+// Brain
+export {
+  BrainStorage,
+  BrainManager,
+  type Memory,
+  type MemoryType,
+  type MemoryCreate,
+  type MemoryQuery,
+  type KnowledgeEntry,
+  type KnowledgeCreate,
+  type KnowledgeQuery,
+  type BrainManagerDeps,
+  type BrainStats,
+} from './brain/index.js';
+
+export {
+  registerBrainRoutes,
+  type BrainRoutesOptions,
+} from './brain/brain-routes.js';
+
+// Comms
+export {
+  AgentCrypto,
+  AgentComms,
+  CommsStorage,
+  sanitizePayload,
+  type AgentIdentity,
+  type EncryptedMessage,
+  type MessagePayload,
+  type DecryptedLogEntry,
+  type MessageLogQuery,
+  type AgentCommsDeps,
+} from './comms/index.js';
+
+export {
+  registerCommsRoutes,
+  type CommsRoutesOptions,
+} from './comms/comms-routes.js';
+
 // Soul
 export {
   SoulStorage,

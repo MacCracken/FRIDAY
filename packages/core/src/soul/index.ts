@@ -17,5 +17,6 @@ export type {
   LearningMode,
   SoulConfig,
   SoulManagerDeps,
+  SoulManagerWithBrainDeps,
   SkillFilter,
 } from './types.js';

@@ -2,6 +2,7 @@
  * Auth Middleware — Fastify onRequest hooks for JWT / API-key auth and RBAC.
  */
 
+import type { TLSSocket } from 'node:tls';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { AuthService, AuthUser } from '../security/auth.js';
 import { AuthError } from '../security/auth.js';
@@ -120,6 +121,44 @@ const ROUTE_PERMISSIONS: Record<string, Record<string, RoutePermission>> = {
     GET: { resource: 'integrations', action: 'read' },
     POST: { resource: 'integrations', action: 'write' },
   },
+  // Brain routes
+  '/api/v1/brain/memories': {
+    GET: { resource: 'brain', action: 'read' },
+    POST: { resource: 'brain', action: 'write' },
+  },
+  '/api/v1/brain/memories/:id': {
+    DELETE: { resource: 'brain', action: 'write' },
+  },
+  '/api/v1/brain/knowledge': {
+    GET: { resource: 'brain', action: 'read' },
+    POST: { resource: 'brain', action: 'write' },
+  },
+  '/api/v1/brain/stats': {
+    GET: { resource: 'brain', action: 'read' },
+  },
+  '/api/v1/brain/maintenance': {
+    POST: { resource: 'brain', action: 'write' },
+  },
+  // Comms routes
+  '/api/v1/comms/identity': {
+    GET: { resource: 'comms', action: 'read' },
+  },
+  '/api/v1/comms/peers': {
+    GET: { resource: 'comms', action: 'read' },
+    POST: { resource: 'comms', action: 'write' },
+  },
+  '/api/v1/comms/peers/:id': {
+    DELETE: { resource: 'comms', action: 'write' },
+  },
+  '/api/v1/comms/message': {
+    POST: { resource: 'comms', action: 'write' },
+  },
+  '/api/v1/comms/send': {
+    POST: { resource: 'comms', action: 'write' },
+  },
+  '/api/v1/comms/log': {
+    GET: { resource: 'comms', action: 'read' },
+  },
 };
 
 const PUBLIC_ROUTES = new Set(['/health', '/api/v1/auth/login']);
@@ -144,6 +183,25 @@ export function createAuthHook(opts: AuthHookOptions) {
     const path = routeKey(request);
 
     if (PUBLIC_ROUTES.has(path)) return;
+
+    // Try client certificate (mTLS)
+    const socket = request.raw.socket as TLSSocket;
+    if (typeof socket.authorized === 'boolean' && socket.authorized) {
+      try {
+        const cert = socket.getPeerCertificate();
+        if (cert && cert.subject && cert.subject.CN) {
+          request.authUser = {
+            userId: cert.subject.CN,
+            role: 'operator',
+            permissions: [],
+            authMethod: 'certificate',
+          };
+          return;
+        }
+      } catch {
+        // Fall through to JWT/API-key auth
+      }
+    }
 
     // Try Bearer token
     const authHeader = request.headers.authorization;

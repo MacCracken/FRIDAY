@@ -563,6 +563,5 @@ Exceeding limits will result in connection termination.
 ## Related Documentation
 
 - [REST API](rest-api.md)
-- [Authentication Guide](../guides/authentication.md)
 - [Security Model](../security/security-model.md)
-- [Development Guide](../development/contributing.md)
+- [Configuration Reference](../configuration.md)

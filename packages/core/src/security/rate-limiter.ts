@@ -10,6 +10,7 @@
 
 import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 import type { SecurityConfig } from '@friday/shared';
+import { RedisRateLimiter } from './rate-limiter-redis.js';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -24,6 +25,22 @@ export interface RateLimitRule {
   maxRequests: number;
   keyType: 'ip' | 'user' | 'api_key' | 'global';
   onExceed: 'reject' | 'delay' | 'log_only';
+}
+
+/**
+ * Common interface for rate limiters (in-memory and Redis-backed).
+ * Consumers should type-hint against this instead of the concrete class.
+ */
+export interface RateLimiterLike {
+  addRule(rule: RateLimitRule): void;
+  removeRule(name: string): boolean;
+  check(
+    ruleName: string,
+    key: string,
+    context?: { userId?: string; ipAddress?: string },
+  ): RateLimitResult | Promise<RateLimitResult>;
+  stop(): void | Promise<void>;
+  getStats(): { totalHits: number; totalChecks: number };
 }
 
 interface WindowEntry {
@@ -322,44 +339,30 @@ export class RateLimiter {
   }
 }
 
+/** Common rate limit rules added to any limiter instance. */
+const COMMON_RULES: RateLimitRule[] = [
+  { name: 'api_requests',        windowMs: 60000,   maxRequests: 100, keyType: 'user', onExceed: 'reject' },
+  { name: 'auth_attempts',       windowMs: 900000,  maxRequests: 5,   keyType: 'ip',   onExceed: 'reject' },
+  { name: 'task_creation',       windowMs: 60000,   maxRequests: 20,  keyType: 'user', onExceed: 'reject' },
+  { name: 'expensive_operations', windowMs: 3600000, maxRequests: 10,  keyType: 'user', onExceed: 'reject' },
+];
+
 /**
- * Create a rate limiter with common rules
+ * Create a rate limiter with common rules.
+ *
+ * When `config.rateLimiting.redisUrl` is set, returns a Redis-backed
+ * `RedisRateLimiter`; otherwise returns the in-memory `RateLimiter`.
  */
-export function createRateLimiter(config: SecurityConfig): RateLimiter {
-  const limiter = new RateLimiter(config.rateLimiting);
-  
-  // Add common rules
-  limiter.addRule({
-    name: 'api_requests',
-    windowMs: 60000, // 1 minute
-    maxRequests: 100,
-    keyType: 'user',
-    onExceed: 'reject',
-  });
-  
-  limiter.addRule({
-    name: 'auth_attempts',
-    windowMs: 900000, // 15 minutes
-    maxRequests: 5,
-    keyType: 'ip',
-    onExceed: 'reject',
-  });
-  
-  limiter.addRule({
-    name: 'task_creation',
-    windowMs: 60000, // 1 minute
-    maxRequests: 20,
-    keyType: 'user',
-    onExceed: 'reject',
-  });
-  
-  limiter.addRule({
-    name: 'expensive_operations',
-    windowMs: 3600000, // 1 hour
-    maxRequests: 10,
-    keyType: 'user',
-    onExceed: 'reject',
-  });
-  
+export function createRateLimiter(config: SecurityConfig): RateLimiterLike {
+  const rl = config.rateLimiting;
+
+  if (rl.redisUrl) {
+    const limiter = new RedisRateLimiter(rl, rl.redisUrl, rl.redisPrefix ?? 'friday:rl');
+    for (const rule of COMMON_RULES) limiter.addRule(rule);
+    return limiter;
+  }
+
+  const limiter = new RateLimiter(rl);
+  for (const rule of COMMON_RULES) limiter.addRule(rule);
   return limiter;
 }

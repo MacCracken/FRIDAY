@@ -18,7 +18,7 @@ import { initializeLogger, type SecureLogger } from './logging/logger.js';
 import { AuditChain, InMemoryAuditStorage, type AuditChainStorage, type AuditQueryOptions, type AuditQueryResult } from './logging/audit-chain.js';
 import { SQLiteAuditStorage } from './logging/sqlite-storage.js';
 import { createValidator, type InputValidator } from './security/input-validator.js';
-import { createRateLimiter, type RateLimiter } from './security/rate-limiter.js';
+import { createRateLimiter, type RateLimiterLike } from './security/rate-limiter.js';
 import { initializeRBAC, type RBAC } from './security/rbac.js';
 import { RBACStorage } from './security/rbac-storage.js';
 import { createTaskExecutor, type TaskExecutor, type TaskHandler, type ExecutionContext } from './task/executor.js';
@@ -30,6 +30,9 @@ import { AuthStorage } from './security/auth-storage.js';
 import { AuthService } from './security/auth.js';
 import { SoulStorage } from './soul/storage.js';
 import { SoulManager } from './soul/manager.js';
+import { BrainStorage } from './brain/storage.js';
+import { BrainManager } from './brain/manager.js';
+import { AgentComms } from './comms/agent-comms.js';
 import { TaskStorage } from './task/task-storage.js';
 import { IntegrationStorage } from './integrations/storage.js';
 import { IntegrationManager } from './integrations/manager.js';
@@ -62,7 +65,7 @@ export class SecureYeoman {
   private auditChain: AuditChain | null = null;
   private auditStorage: AuditChainStorage | null = null;
   private validator: InputValidator | null = null;
-  private rateLimiter: RateLimiter | null = null;
+  private rateLimiter: RateLimiterLike | null = null;
   private rbac: RBAC | null = null;
   private taskExecutor: TaskExecutor | null = null;
   private aiClient: AIClient | null = null;
@@ -73,8 +76,11 @@ export class SecureYeoman {
   private rotationManager: SecretRotationManager | null = null;
   private rotationStorage: RotationStorage | null = null;
   private rbacStorage: RBACStorage | null = null;
+  private brainStorage: BrainStorage | null = null;
+  private brainManager: BrainManager | null = null;
   private soulStorage: SoulStorage | null = null;
   private soulManager: SoulManager | null = null;
+  private agentComms: AgentComms | null = null;
   private integrationStorage: IntegrationStorage | null = null;
   private integrationManager: IntegrationManager | null = null;
   private messageRouter: MessageRouter | null = null;
@@ -277,7 +283,21 @@ export class SecureYeoman {
         });
       }
 
-      // Step 5.7: Initialize soul system
+      // Step 5.7: Initialize brain system
+      this.brainStorage = new BrainStorage({
+        dbPath: `${this.config.core.dataDir}/brain.db`,
+      });
+      this.brainManager = new BrainManager(
+        this.brainStorage,
+        this.config.brain,
+        {
+          auditChain: this.auditChain,
+          logger: this.logger.child({ component: 'BrainManager' }),
+        },
+      );
+      this.logger.debug('Brain manager initialized');
+
+      // Step 5.7b: Initialize soul system (now depends on Brain)
       this.soulStorage = new SoulStorage({
         dbPath: `${this.config.core.dataDir}/soul.db`,
       });
@@ -288,6 +308,7 @@ export class SecureYeoman {
           auditChain: this.auditChain,
           logger: this.logger.child({ component: 'SoulManager' }),
         },
+        this.brainManager,
       );
       if (this.soulManager.needsOnboarding()) {
         if (!this.soulManager.getAgentName()) {
@@ -297,6 +318,22 @@ export class SecureYeoman {
         this.logger.debug('Soul default personality created (onboarding)');
       }
       this.logger.debug('Soul manager initialized');
+
+      // Step 5.7c: Initialize agent comms (if enabled)
+      if (this.config.comms?.enabled) {
+        this.agentComms = new AgentComms(
+          this.config.comms,
+          {
+            logger: this.logger.child({ component: 'AgentComms' }),
+            auditChain: this.auditChain,
+          },
+        );
+        await this.agentComms.init({
+          keyStorePath: `${this.config.core.dataDir}/agent-keys.json`,
+          dbPath: `${this.config.core.dataDir}/comms.db`,
+        });
+        this.logger.debug('Agent comms initialized');
+      }
 
       // Step 5.75: Initialize integration system
       this.integrationStorage = new IntegrationStorage({
@@ -352,7 +389,7 @@ export class SecureYeoman {
       };
       this.taskExecutor = createTaskExecutor(
         this.validator,
-        this.rateLimiter,
+        this.rateLimiter!,
         this.auditChain,
         undefined,
         sandbox,
@@ -592,7 +629,7 @@ export class SecureYeoman {
   /**
    * Get the rate limiter instance
    */
-  getRateLimiter(): RateLimiter {
+  getRateLimiter(): RateLimiterLike {
     this.ensureInitialized();
     return this.rateLimiter!;
   }
@@ -620,6 +657,17 @@ export class SecureYeoman {
   }
 
   /**
+   * Get the brain manager instance
+   */
+  getBrainManager(): BrainManager {
+    this.ensureInitialized();
+    if (!this.brainManager) {
+      throw new Error('Brain manager is not available');
+    }
+    return this.brainManager;
+  }
+
+  /**
    * Get the soul manager instance
    */
   getSoulManager(): SoulManager {
@@ -628,6 +676,14 @@ export class SecureYeoman {
       throw new Error('Soul manager is not available');
     }
     return this.soulManager;
+  }
+
+  /**
+   * Get the agent comms instance (may be null if comms is disabled)
+   */
+  getAgentComms(): AgentComms | null {
+    this.ensureInitialized();
+    return this.agentComms;
   }
 
   /**
@@ -836,11 +892,24 @@ export class SecureYeoman {
     }
     this.integrationStorage = null;
 
+    // Close agent comms
+    if (this.agentComms) {
+      this.agentComms.close();
+      this.agentComms = null;
+    }
+
     // Close soul storage
     if (this.soulStorage) {
       this.soulStorage.close();
       this.soulStorage = null;
       this.soulManager = null;
+    }
+
+    // Close brain storage
+    if (this.brainStorage) {
+      this.brainStorage.close();
+      this.brainStorage = null;
+      this.brainManager = null;
     }
 
     // Close auth storage

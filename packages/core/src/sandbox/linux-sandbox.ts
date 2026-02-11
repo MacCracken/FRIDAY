@@ -11,7 +11,9 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { fork } from 'node:child_process';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getLogger, createNoopLogger, type SecureLogger } from '../logging/logger.js';
 import type {
   Sandbox,
@@ -20,10 +22,21 @@ import type {
   SandboxResult,
   SandboxViolation,
 } from './types.js';
+import type { WorkerExecMessage, WorkerResponse } from './landlock-worker.js';
+
+export interface LinuxSandboxOptions {
+  /** Enable Landlock kernel-level enforcement via forked worker. */
+  enforceLandlock?: boolean;
+}
 
 export class LinuxSandbox implements Sandbox {
   private capabilities: SandboxCapabilities | null = null;
   private logger: SecureLogger | null = null;
+  private readonly enforceLandlock: boolean;
+
+  constructor(opts?: LinuxSandboxOptions) {
+    this.enforceLandlock = opts?.enforceLandlock ?? false;
+  }
 
   private getLogger(): SecureLogger {
     if (!this.logger) {
@@ -37,6 +50,106 @@ export class LinuxSandbox implements Sandbox {
   }
 
   async run<T>(fn: () => Promise<T>, opts?: SandboxOptions): Promise<SandboxResult<T>> {
+    // Dispatch to Landlock worker if enforcement is enabled and kernel supports it
+    if (this.enforceLandlock && this.getCapabilities().landlock) {
+      return this.runWithLandlock(fn, opts);
+    }
+
+    return this.runV1(fn, opts);
+  }
+
+  /**
+   * V2: Run function in a forked child process with Landlock enforcement.
+   * Falls back to V1 if the worker fails to start.
+   */
+  private async runWithLandlock<T>(
+    fn: () => Promise<T>,
+    opts?: SandboxOptions,
+  ): Promise<SandboxResult<T>> {
+    const workerPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'landlock-worker.js',
+    );
+
+    // Check if compiled worker exists, fall back to V1 if not
+    if (!existsSync(workerPath)) {
+      this.getLogger().warn('Landlock worker not found, falling back to V1 soft sandbox');
+      return this.runV1(fn, opts);
+    }
+
+    return new Promise<SandboxResult<T>>((resolve) => {
+      try {
+        const child = fork(workerPath, [], {
+          stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        });
+
+        const timeoutMs = opts?.timeoutMs ?? 30000;
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL');
+          resolve({
+            success: false,
+            error: new Error(`Sandboxed execution timed out after ${timeoutMs}ms`),
+            resourceUsage: { memoryPeakMb: 0, cpuTimeMs: timeoutMs },
+            violations: [{ type: 'resource', description: 'Execution timeout', timestamp: Date.now() }],
+          });
+        }, timeoutMs);
+
+        child.on('message', (msg: WorkerResponse) => {
+          clearTimeout(timer);
+          if (msg.type === 'result') {
+            resolve(msg.result as SandboxResult<T>);
+          } else if (msg.type === 'error') {
+            resolve({
+              success: false,
+              error: new Error(msg.message),
+              resourceUsage: { memoryPeakMb: 0, cpuTimeMs: 0 },
+              violations: [],
+            });
+          }
+          child.kill();
+        });
+
+        child.on('error', (err) => {
+          clearTimeout(timer);
+          this.getLogger().warn('Landlock worker failed to start, falling back to V1', {
+            error: err.message,
+          });
+          void this.runV1(fn, opts).then(resolve);
+        });
+
+        child.on('exit', (code) => {
+          clearTimeout(timer);
+          if (code !== 0 && code !== null) {
+            resolve({
+              success: false,
+              error: new Error(`Landlock worker exited with code ${code}`),
+              resourceUsage: { memoryPeakMb: 0, cpuTimeMs: 0 },
+              violations: [],
+            });
+          }
+        });
+
+        // Send the function to the worker
+        const execMsg: WorkerExecMessage = {
+          type: 'exec',
+          config: {
+            fnBody: fn.toString(),
+            options: opts,
+            enforceLandlock: true,
+          },
+        };
+        child.send(execMsg);
+      } catch (err) {
+        // Fork itself failed — fall back to V1
+        this.getLogger().warn('Failed to fork Landlock worker', {
+          error: err instanceof Error ? err.message : 'Unknown',
+        });
+        void this.runV1(fn, opts).then(resolve);
+      }
+    });
+  }
+
+  private async runV1<T>(fn: () => Promise<T>, opts?: SandboxOptions): Promise<SandboxResult<T>> {
     const violations: SandboxViolation[] = [];
     const startTime = Date.now();
     const memBefore = process.memoryUsage().heapUsed;

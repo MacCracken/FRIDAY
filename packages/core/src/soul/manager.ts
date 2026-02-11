@@ -3,9 +3,13 @@
  *
  * Manages the full lifecycle of personalities and skills, including
  * creation, approval workflows, and prompt composition.
+ *
+ * When a BrainManager is provided, skills are delegated to the Brain
+ * and relevant context is injected into the composed prompt.
  */
 
 import type { SoulStorage } from './storage.js';
+import type { BrainManager } from '../brain/manager.js';
 import type {
   Personality,
   PersonalityCreate,
@@ -21,13 +25,15 @@ import type {
 
 export class SoulManager {
   private readonly storage: SoulStorage;
+  private readonly brain: BrainManager | null;
   private readonly config: SoulConfig;
   private readonly deps: SoulManagerDeps;
 
-  constructor(storage: SoulStorage, config: SoulConfig, deps: SoulManagerDeps) {
+  constructor(storage: SoulStorage, config: SoulConfig, deps: SoulManagerDeps, brain?: BrainManager) {
     this.storage = storage;
     this.config = config;
     this.deps = deps;
+    this.brain = brain ?? null;
   }
 
   // ── Agent Name ─────────────────────────────────────────────
@@ -97,9 +103,12 @@ export class SoulManager {
     return this.storage.listPersonalities();
   }
 
-  // ── Skills ──────────────────────────────────────────────────
+  // ── Skills (delegated to Brain when available) ────────────
 
   createSkill(data: SkillCreate): Skill {
+    if (this.brain) {
+      return this.brain.createSkill(data);
+    }
     const count = this.storage.getSkillCount();
     if (count >= this.config.maxSkills) {
       throw new Error(`Maximum skill limit reached (${this.config.maxSkills})`);
@@ -108,30 +117,54 @@ export class SoulManager {
   }
 
   updateSkill(id: string, data: SkillUpdate): Skill {
+    if (this.brain) {
+      return this.brain.updateSkill(id, data);
+    }
     return this.storage.updateSkill(id, data);
   }
 
   deleteSkill(id: string): void {
+    if (this.brain) {
+      this.brain.deleteSkill(id);
+      return;
+    }
     this.storage.deleteSkill(id);
   }
 
   enableSkill(id: string): void {
+    if (this.brain) {
+      this.brain.enableSkill(id);
+      return;
+    }
     this.storage.updateSkill(id, { enabled: true });
   }
 
   disableSkill(id: string): void {
+    if (this.brain) {
+      this.brain.disableSkill(id);
+      return;
+    }
     this.storage.updateSkill(id, { enabled: false });
   }
 
   listSkills(filter?: SkillFilter): Skill[] {
+    if (this.brain) {
+      return this.brain.listSkills(filter);
+    }
     return this.storage.listSkills(filter);
   }
 
   getSkill(id: string): Skill | null {
+    if (this.brain) {
+      return this.brain.getSkill(id);
+    }
     return this.storage.getSkill(id);
   }
 
   approveSkill(id: string): Skill {
+    if (this.brain) {
+      return this.brain.approveSkill(id);
+    }
     const skill = this.storage.getSkill(id);
     if (!skill) {
       throw new Error(`Skill not found: ${id}`);
@@ -143,6 +176,10 @@ export class SoulManager {
   }
 
   rejectSkill(id: string): void {
+    if (this.brain) {
+      this.brain.rejectSkill(id);
+      return;
+    }
     const skill = this.storage.getSkill(id);
     if (!skill) {
       throw new Error(`Skill not found: ${id}`);
@@ -180,12 +217,16 @@ export class SoulManager {
   }
 
   incrementSkillUsage(skillId: string): void {
+    if (this.brain) {
+      this.brain.incrementSkillUsage(skillId);
+      return;
+    }
     this.storage.incrementUsage(skillId);
   }
 
   // ── Composition ─────────────────────────────────────────────
 
-  composeSoulPrompt(): string {
+  composeSoulPrompt(input?: string): string {
     if (!this.config.enabled) {
       return '';
     }
@@ -220,7 +261,19 @@ export class SoulManager {
       }
     }
 
-    const skills = this.storage.getEnabledSkills();
+    // Brain context injection (NEW)
+    if (this.brain && input) {
+      const context = this.brain.getRelevantContext(input);
+      if (context) {
+        parts.push('## Relevant Context\n' + context);
+      }
+    }
+
+    // Skills from Brain or Soul storage
+    const skills = this.brain
+      ? this.brain.getActiveSkills()
+      : this.storage.getEnabledSkills();
+
     for (const skill of skills) {
       if (skill.instructions) {
         parts.push(`## Skill: ${skill.name}\n${skill.instructions}`);
@@ -243,6 +296,10 @@ export class SoulManager {
       return [];
     }
 
+    if (this.brain) {
+      return this.brain.getActiveTools();
+    }
+
     const skills = this.storage.getEnabledSkills();
     const tools: Tool[] = [];
     for (const skill of skills) {
@@ -257,6 +314,12 @@ export class SoulManager {
 
   getConfig(): SoulConfig {
     return this.config;
+  }
+
+  // ── Brain Access ────────────────────────────────────────────
+
+  getBrain(): BrainManager | null {
+    return this.brain;
   }
 
   // ── Cleanup ─────────────────────────────────────────────────

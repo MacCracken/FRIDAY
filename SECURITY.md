@@ -18,7 +18,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 **Do NOT open a public issue!** Instead, report vulnerabilities through one of these channels:
 
 - **Email**: security@friday.dev
-- **GitHub Private Report**: [Submit private vulnerability report](https://github.com/your-org/friday/security/advisories/new)
+- **GitHub Private Report**: [Submit private vulnerability report](https://github.com/MacCracken/FRIDAY/security/advisories/new)
 - **PGP Key**: Available for encrypted communication on request
 
 #### Step 2: Include in Your Report
@@ -175,6 +175,6 @@ For security-related questions:
 - **General Security Questions**: security@friday.dev
 - **PGP Key**: Available upon request
 
-For non-security issues, please use our regular [support channels](https://github.com/your-org/friday/issues).
+For non-security issues, please use our regular [support channels](https://github.com/MacCracken/FRIDAY/issues).
 
 Thank you for helping keep F.R.I.D.A.Y. secure!

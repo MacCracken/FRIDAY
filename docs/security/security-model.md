@@ -261,10 +261,15 @@ const rbacSystem = {
 ```yaml
 sandbox:
   linux:
-    seccomp: { enabled: true, mode: "strict" }
+    # V1: Soft sandbox with path validation and resource tracking
+    # V2: Landlock kernel-level enforcement via forked worker process
     landlock: { enabled: true, filesystem_rules: "restrictive" }
     namespaces: ["user", "pid", "network", "mount"]
-  
+
+  darwin:
+    # macOS sandbox-exec with deny-default .sb profile
+    sandbox_exec: { enabled: true }
+
   resource_limits:
     memory: { soft: "512MB", hard: "1GB" }
     cpu: { max_percent: 50 }
@@ -298,6 +303,7 @@ const encryptionConfig = {
 |---------|----------------|----------------|
 | **JWT with Rotation** | Short-lived access tokens + refresh tokens | Token theft, replay attacks |
 | **API Key Management** | Secure generation, rate limiting, revocation | API abuse, credential leakage |
+| **mTLS Client Certs** | Client certificate CN extraction, CA validation | Zero-trust environments, machine-to-machine auth |
 | **Multi-Factor Auth** | Optional 2FA for admin operations | Credential compromise |
 | **Session Management** | Secure cookies, timeout handling | Session hijacking |
 
@@ -528,10 +534,8 @@ const postIncident = {
 ## Related Documentation
 
 - [API Security](../api/rest-api.md#authentication)
-- [Audit Procedures](audit-procedures.md)
 - [Architecture Overview](../development/architecture.md)
-- [Configuration Guide](../guides/configuration.md)
-- [Security Policy](../../SECURITY.md)
+- [Configuration Reference](../configuration.md)
 
 ---
 

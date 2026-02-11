@@ -7,15 +7,19 @@
 ## Context
 
 The system currently has:
-- 589 unit/integration tests across 32 files (Vitest)
+- ~746 unit/integration tests across 39 files (Vitest)
 - Fastify gateway on port 18789 with JWT + API key + RBAC auth
 - WebSocket endpoint at `/ws/metrics` for real-time updates
-- SQLite databases (WAL mode) for audit, auth, tasks, soul, integrations, RBAC
+- SQLite databases (WAL mode) for audit, auth, tasks, soul, integrations, RBAC, brain, comms
 - Rate limiting (5 auth attempts/15min, 100 API requests/min)
 - Input validation with injection detection
-- Sandbox execution (V1 soft)
-- CI pipeline: lint → typecheck → test → build → security audit → docker build
+- Sandbox execution (V1 soft + V2 Landlock on Linux, sandbox-exec on macOS)
+- CI pipeline: lint -> typecheck -> test -> build -> security audit -> docker build
 - Vitest config at `packages/core/vitest.config.ts` with 80% coverage thresholds
+- Brain system (memory, knowledge, skills) with REST API
+- E2E encrypted agent communication (comms)
+- Model fallback chain on rate limits / provider unavailability
+- mTLS support with client certificate authentication
 
 ---
 
@@ -56,7 +60,7 @@ Test all API endpoints under sustained load:
 
 **Scenarios:**
 
-1. **Sustained load** — 50 VUs for 5 minutes
+1. **Sustained load** -- 50 VUs for 5 minutes
    - `GET /health` (unauthenticated)
    - `GET /api/v1/metrics` (authenticated)
    - `GET /api/v1/tasks` (with pagination)
@@ -64,11 +68,12 @@ Test all API endpoints under sustained load:
    - `GET /api/v1/audit` (with time range)
    - `GET /api/v1/soul/personality` (authenticated)
    - `GET /api/v1/integrations` (authenticated)
+   - `GET /api/v1/brain/stats` (authenticated)
 
-2. **Spike test** — Ramp 0 → 200 VUs in 30s, hold 1 min, ramp down
+2. **Spike test** -- Ramp 0 -> 200 VUs in 30s, hold 1 min, ramp down
    - Same endpoints as sustained load
 
-3. **Stress test** — Ramp to 500 VUs over 5 minutes
+3. **Stress test** -- Ramp to 500 VUs over 5 minutes
    - Focus on `/api/v1/metrics` and `/health`
 
 **Thresholds:**
@@ -87,7 +92,7 @@ export const options = {
 ### 1.4 Create `tests/load/auth-flow.js`
 
 Test the authentication flow under load:
-- Login → use token → refresh → logout cycle
+- Login -> use token -> refresh -> logout cycle
 - Rate limit testing (verify 429 after 5 attempts/15min)
 - Concurrent token refresh (test deduplication)
 - Invalid token handling under load
@@ -209,7 +214,7 @@ for (const payload of SQL_PAYLOADS) {
       headers: authHeaders(token),
       payload: { type: 'query', input: { command: payload } },
     });
-    // Should either reject (400) or sanitize — never execute
+    // Should either reject (400) or sanitize -- never execute
     expect([400, 200]).toContain(res.statusCode);
     if (res.statusCode === 200) {
       // Verify payload was sanitized, not executed
@@ -256,51 +261,51 @@ const PATH_PAYLOADS = [
 ### 2.3 Create `tests/security/jwt-manipulation.test.ts`
 
 Test JWT token security:
-- **Expired tokens**: Forge token with past expiry → expect 401
-- **Invalid signature**: Modify payload without re-signing → expect 401
-- **Algorithm confusion**: Send token with `alg: none` → expect 401
-- **Token reuse after logout**: Logout, then use same token → expect 401
-- **Refresh token rotation**: Use refresh token twice → expect 401 on second use
-- **Token with wrong secret**: Sign with different secret → expect 401
-- **Missing claims**: Remove userId/role from payload → expect 401/403
+- **Expired tokens**: Forge token with past expiry -> expect 401
+- **Invalid signature**: Modify payload without re-signing -> expect 401
+- **Algorithm confusion**: Send token with `alg: none` -> expect 401
+- **Token reuse after logout**: Logout, then use same token -> expect 401
+- **Refresh token rotation**: Use refresh token twice -> expect 401 on second use
+- **Token with wrong secret**: Sign with different secret -> expect 401
+- **Missing claims**: Remove userId/role from payload -> expect 401/403
 
 ### 2.4 Create `tests/security/rate-limit-bypass.test.ts`
 
 Test rate limiter robustness:
-- **Basic enforcement**: Exceed 5 login attempts → expect 429
-- **IP spoofing**: Set `X-Forwarded-For` header → verify ignored (`trustProxy: false`)
-- **User rotation**: Try different usernames → verify IP-based limit still applies
-- **Window reset**: Wait for window to expire → verify limit resets
-- **Concurrent requests**: Fire 20 simultaneous requests → verify atomic counting
-- **API key limits**: Exceed per-key rate limit → expect 429
+- **Basic enforcement**: Exceed 5 login attempts -> expect 429
+- **IP spoofing**: Set `X-Forwarded-For` header -> verify ignored (`trustProxy: false`)
+- **User rotation**: Try different usernames -> verify IP-based limit still applies
+- **Window reset**: Wait for window to expire -> verify limit resets
+- **Concurrent requests**: Fire 20 simultaneous requests -> verify atomic counting
+- **API key limits**: Exceed per-key rate limit -> expect 429
 
 ### 2.5 Create `tests/security/rbac-enforcement.test.ts`
 
 Test RBAC permission boundaries:
-- **Viewer cannot write**: Try POST/PUT/DELETE with viewer role → expect 403
+- **Viewer cannot write**: Try POST/PUT/DELETE with viewer role -> expect 403
 - **Auditor limited access**: Verify read-only on audit/security, no write
 - **Operator boundaries**: Can write tasks/soul/integrations, cannot manage auth
 - **Admin full access**: All endpoints accessible
 - **Unmapped routes**: Verify default-deny (admin-only)
-- **Role escalation**: Try to change own role → expect 403
+- **Role escalation**: Try to change own role -> expect 403
 
 ### 2.6 Create `tests/security/audit-integrity.test.ts`
 
 Test audit chain tamper resistance:
 - **Chain verification**: Verify chain after normal operations
-- **Tamper detection**: Modify an audit entry → verify chain breaks
-- **Gap detection**: Delete an audit entry → verify chain detects gap
-- **Signing key rotation**: Rotate key → verify old entries still validate
-- **Concurrent writes**: Write audit entries concurrently → verify chain integrity
+- **Tamper detection**: Modify an audit entry -> verify chain breaks
+- **Gap detection**: Delete an audit entry -> verify chain detects gap
+- **Signing key rotation**: Rotate key -> verify old entries still validate
+- **Concurrent writes**: Write audit entries concurrently -> verify chain integrity
 
 ### 2.7 Create `tests/security/sandbox-escape.test.ts`
 
 Test sandbox boundaries (skip on platforms without sandbox):
 - **Filesystem escape**: Try to read outside allowed paths
 - **Write to restricted paths**: Try to write to /etc, /usr
-- **Resource exhaustion**: Allocate > maxMemoryMb → verify violation
-- **CPU time bomb**: Spin loop exceeding maxCpuPercent → verify violation
-- **Path traversal in config**: Use `../` in allowedReadPaths → verify rejection
+- **Resource exhaustion**: Allocate > maxMemoryMb -> verify violation
+- **CPU time bomb**: Spin loop exceeding maxCpuPercent -> verify violation
+- **Path traversal in config**: Use `../` in allowedReadPaths -> verify rejection
 
 ### 2.8 Dependency audit script
 
@@ -392,5 +397,5 @@ Create `.github/workflows/load-test.yml`:
 - [ ] Audit chain tamper tests pass
 - [ ] Sandbox escape tests pass (platform-appropriate)
 - [ ] CI pipeline includes security test job
-- [ ] All existing 589 tests continue to pass
+- [ ] All existing ~746 tests continue to pass
 - [ ] Load test thresholds: p95 < 200ms, error rate < 1%

@@ -45,7 +45,7 @@ Health check endpoint - no authentication required.
 ```json
 {
   "status": "healthy",
-  "timestamp": "2024-01-01T00:00:00.000Z",
+  "timestamp": "2026-02-11T00:00:00.000Z",
   "version": "0.1.0",
   "uptime": 3600
 }
@@ -118,7 +118,7 @@ Get current user information.
 {
   "id": "user_123",
   "role": "admin",
-  "created_at": "2024-01-01T00:00:00.000Z"
+  "created_at": "2026-02-11T00:00:00.000Z"
 }
 ```
 
@@ -147,7 +147,7 @@ Create new API key.
   "name": "My API Key",
   "api_key": "sk-...",
   "permissions": ["tasks.read", "tasks.write"],
-  "created_at": "2024-01-01T00:00:00.000Z"
+  "created_at": "2026-02-11T00:00:00.000Z"
 }
 ```
 
@@ -192,9 +192,9 @@ List tasks with filtering and pagination.
       "status": "completed",
       "input": { "command": "echo hello" },
       "output": { "result": "hello" },
-      "created_at": "2024-01-01T00:00:00.000Z",
-      "started_at": "2024-01-01T00:00:01.000Z",
-      "completed_at": "2024-01-01T00:00:02.000Z",
+      "created_at": "2026-02-11T00:00:00.000Z",
+      "started_at": "2026-02-11T00:00:01.000Z",
+      "completed_at": "2026-02-11T00:00:02.000Z",
       "duration_ms": 1000,
       "resources": {
         "tokens": { "input": 10, "output": 20, "total": 30 },
@@ -233,7 +233,7 @@ Create new task.
   "type": "execute",
   "status": "pending",
   "input": { "command": "echo hello" },
-  "created_at": "2024-01-01T00:00:00.000Z",
+  "created_at": "2026-02-11T00:00:00.000Z",
   "timeout": 30000
 }
 ```
@@ -252,9 +252,9 @@ Get task details.
   "status": "completed",
   "input": { "command": "echo hello" },
   "output": { "result": "hello" },
-  "created_at": "2024-01-01T00:00:00.000Z",
-  "started_at": "2024-01-01T00:00:01.000Z",
-  "completed_at": "2024-01-01T00:00:02.000Z",
+  "created_at": "2026-02-11T00:00:00.000Z",
+  "started_at": "2026-02-11T00:00:01.000Z",
+  "completed_at": "2026-02-11T00:00:02.000Z",
   "duration_ms": 1000,
   "resources": {
     "tokens": { "input": 10, "output": 20, "total": 30 },
@@ -317,7 +317,7 @@ Get current system metrics.
     "blocked_requests_total": 25,
     "rate_limit_hits_total": 10
   },
-  "timestamp": "2024-01-01T00:00:00.000Z"
+  "timestamp": "2026-02-11T00:00:00.000Z"
 }
 ```
 
@@ -338,7 +338,7 @@ Get historical metrics data.
   "category": "tasks",
   "data_points": [
     {
-      "timestamp": "2024-01-01T00:00:00.000Z",
+      "timestamp": "2026-02-11T00:00:00.000Z",
       "total": 100,
       "completed": 80,
       "failed": 5
@@ -371,7 +371,7 @@ Get audit log entries.
   "entries": [
     {
       "id": "audit_123",
-      "timestamp": "2024-01-01T00:00:00.000Z",
+      "timestamp": "2026-02-11T00:00:00.000Z",
       "level": "info",
       "event": "task_completed",
       "message": "Task completed successfully",
@@ -399,7 +399,7 @@ Verify audit chain integrity.
 {
   "valid": true,
   "entries_verified": 1000,
-  "last_verification": "2024-01-01T00:00:00.000Z"
+  "last_verification": "2026-02-11T00:00:00.000Z"
 }
 ```
 
@@ -435,7 +435,7 @@ Get security events.
         "ip_address": "192.168.1.1",
         "reason": "invalid_password"
       },
-      "timestamp": "2024-01-01T00:00:00.000Z",
+      "timestamp": "2026-02-11T00:00:00.000Z",
       "acknowledged": false
     }
   ],
@@ -578,11 +578,249 @@ List skills with filtering.
       "description": "Read and write files",
       "status": "enabled",
       "source": "user_authored",
-      "created_at": "2024-01-01T00:00:00.000Z"
+      "created_at": "2026-02-11T00:00:00.000Z"
     }
   ]
 }
 ```
+
+---
+
+### Brain System
+
+#### GET /api/v1/brain/memories
+
+List memories with optional filtering.
+
+**Required Permissions**: `brain.read`
+
+**Query Parameters**
+- `type` (optional): Filter by memory type (`episodic`, `semantic`, `procedural`, `preference`)
+- `search` (optional): Full-text search across memory content
+- `minImportance` (optional): Minimum importance score (0-1)
+- `limit` (optional): Number of results (default: 50)
+
+**Response**
+```json
+{
+  "memories": [
+    {
+      "id": "mem_123",
+      "type": "semantic",
+      "content": "User prefers dark mode interfaces",
+      "source": "conversation",
+      "importance": 0.8,
+      "context": { "topic": "preferences" },
+      "accessCount": 5,
+      "createdAt": 1700000000000,
+      "lastAccessedAt": 1700100000000
+    }
+  ]
+}
+```
+
+#### POST /api/v1/brain/memories
+
+Create a new memory.
+
+**Required Permissions**: `brain.write`
+
+**Request Body**
+```json
+{
+  "type": "semantic",
+  "content": "User prefers dark mode interfaces",
+  "source": "conversation",
+  "importance": 0.8,
+  "context": { "topic": "preferences" }
+}
+```
+
+#### DELETE /api/v1/brain/memories/{memoryId}
+
+Delete a memory.
+
+**Required Permissions**: `brain.write`
+
+#### GET /api/v1/brain/knowledge
+
+Query knowledge entries.
+
+**Required Permissions**: `brain.read`
+
+**Query Parameters**
+- `topic` (optional): Filter by topic
+- `search` (optional): Full-text search
+- `minConfidence` (optional): Minimum confidence score (0-1)
+- `limit` (optional): Number of results (default: 50)
+
+**Response**
+```json
+{
+  "knowledge": [
+    {
+      "id": "know_123",
+      "topic": "TypeScript",
+      "content": "Use strict mode for better type safety",
+      "source": "documentation",
+      "confidence": 0.95,
+      "createdAt": 1700000000000,
+      "updatedAt": 1700100000000
+    }
+  ]
+}
+```
+
+#### POST /api/v1/brain/knowledge
+
+Create a new knowledge entry.
+
+**Required Permissions**: `brain.write`
+
+**Request Body**
+```json
+{
+  "topic": "TypeScript",
+  "content": "Use strict mode for better type safety",
+  "source": "documentation",
+  "confidence": 0.95
+}
+```
+
+#### GET /api/v1/brain/stats
+
+Get brain system statistics.
+
+**Required Permissions**: `brain.read`
+
+**Response**
+```json
+{
+  "stats": {
+    "totalMemories": 150,
+    "totalKnowledge": 45,
+    "totalSkills": 12,
+    "memoriesByType": {
+      "episodic": 50,
+      "semantic": 60,
+      "procedural": 25,
+      "preference": 15
+    }
+  }
+}
+```
+
+#### POST /api/v1/brain/maintenance
+
+Run brain maintenance (decay and prune expired memories).
+
+**Required Permissions**: `brain.write`
+
+**Response**
+```json
+{
+  "decayed": 10,
+  "pruned": 3
+}
+```
+
+---
+
+### Agent Communication (Comms)
+
+#### GET /api/v1/comms/identity
+
+Get this agent's communication identity.
+
+**Required Permissions**: `comms.read`
+
+**Response**
+```json
+{
+  "identity": {
+    "id": "agent_abc",
+    "name": "FRIDAY",
+    "publicKey": "base64...",
+    "signingKey": "base64...",
+    "endpoint": "http://localhost:18789/api/v1/comms",
+    "capabilities": ["chat", "task_delegation"]
+  }
+}
+```
+
+#### GET /api/v1/comms/peers
+
+List known peers.
+
+**Required Permissions**: `comms.read`
+
+#### POST /api/v1/comms/peers
+
+Register a new peer agent.
+
+**Required Permissions**: `comms.write`
+
+**Request Body**
+```json
+{
+  "id": "agent_xyz",
+  "name": "JARVIS",
+  "publicKey": "base64...",
+  "signingKey": "base64...",
+  "endpoint": "http://other-host:18789/api/v1/comms",
+  "capabilities": ["chat"]
+}
+```
+
+#### DELETE /api/v1/comms/peers/{peerId}
+
+Remove a peer agent.
+
+**Required Permissions**: `comms.write`
+
+#### POST /api/v1/comms/receive
+
+Receive an encrypted message from a peer. Messages are E2E encrypted using ephemeral X25519 key exchange with AES-256-GCM.
+
+**Request Body**
+```json
+{
+  "id": "msg_123",
+  "fromAgentId": "agent_xyz",
+  "toAgentId": "agent_abc",
+  "ephemeralPublicKey": "base64...",
+  "nonce": "base64...",
+  "ciphertext": "base64...",
+  "signature": "base64...",
+  "timestamp": 1700000000000
+}
+```
+
+#### POST /api/v1/comms/send/{peerId}
+
+Send an encrypted message to a peer.
+
+**Required Permissions**: `comms.write`
+
+**Request Body**
+```json
+{
+  "type": "chat",
+  "content": "Hello from FRIDAY",
+  "metadata": {}
+}
+```
+
+#### GET /api/v1/comms/messages
+
+Query the local message log.
+
+**Required Permissions**: `comms.read`
+
+**Query Parameters**
+- `peerId` (optional): Filter by peer
+- `type` (optional): Filter by message type
+- `limit` (optional): Number of results (default: 50)
 
 ---
 
@@ -598,7 +836,7 @@ List skills with filtering.
     "details": {
       "task_id": "task_123"
     },
-    "timestamp": "2024-01-01T00:00:00.000Z",
+    "timestamp": "2026-02-11T00:00:00.000Z",
     "request_id": "req_123"
   }
 }
@@ -659,6 +897,5 @@ See [WebSocket Documentation](websocket-api.md) for real-time updates.
 ## Related Documentation
 
 - [WebSocket API](websocket-api.md)
-- [Authentication Guide](../guides/authentication.md)
 - [Security Model](../security/security-model.md)
-- [Development Guide](../development/contributing.md)
+- [Configuration Reference](../configuration.md)
