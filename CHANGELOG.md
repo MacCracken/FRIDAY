@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## Performance Optimization
+## Phase Pre-MVP: Performance Optimization
 
 ### Improved
 - **Frontend code splitting** — Lazy-loaded 8 route components (`MetricsGraph`, `TaskHistory`, `SecurityEvents`, `ResourceMonitor`, `PersonalityEditor`, `SkillsManager`, `ConnectionManager`, `SettingsPage`) via `React.lazy()` + `Suspense`; ReactFlow (~200KB) + Recharts (~100KB) only load when visited
