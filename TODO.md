@@ -424,7 +424,7 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 
 ### Tasks
 
-**Status**: ~90% complete. React Router with URL routing, JWT login, auth token refresh, logout, and live data wiring all implemented. Core components (MetricsGraph, TaskHistory, SecurityEvents, ResourceMonitor, PersonalityEditor, SkillsManager, OnboardingWizard) fully working. ConnectionManager shows live integration data. SettingsPage has agent identity, API key management, and soul config. Missing: theme toggle, advanced filtering, responsive mobile layout.
+**Status**: ~95% complete. Full refactor done: App.tsx slimmed to routing-only (<30 lines), extracted DashboardLayout, StatusBar, NavigationTabs (memoized). ErrorBoundary wraps route content. ConfirmDialog replaces window.confirm(). Theme toggle (dark/light with localStorage persistence) working. Advanced task filtering (status + type). Responsive mobile layout with hamburger nav and stacked cards. Session timeout warning. All icon buttons have aria-labels. React Query optimized: global refetchInterval removed, per-query intervals set. ResourceMonitor accumulates real memory history. All 589 tests passing.
 
 #### Project Setup
 - [x] **P3-001**: Initialize React project
@@ -472,11 +472,12 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 
 - [x] **P3-007**: TaskHistory component *(wired to live data)*
   - [x] Data table with sorting
-  - [ ] Advanced filtering
-  - [ ] Date range picker
+  - [x] Advanced filtering (status + type filters with clear button)
+  - [ ] Date range picker (deferred)
   - [x] Status badges
   - [x] Duration visualization
-  - [ ] Export functionality
+  - [ ] Export functionality (deferred)
+  - [x] Responsive table (hidden columns on mobile)
   - *Wired to live data via authenticated API calls*
 
 - [x] **P3-008**: SecurityEvents component *(wired to live data)*
@@ -495,30 +496,33 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
   - [x] Activity indicators (placeholder)
   - [x] Error display (placeholder)
 
-- [x] **P3-010**: ResourceMonitor component *(V1 — basic gauges)*
+- [x] **P3-010**: ResourceMonitor component *(V1 — real history)*
   - [x] CPU/Memory gauges
   - [x] Token usage display
   - [x] Cost tracking display
-  - [ ] Historical graphs (mock data for memory history)
-  - [ ] Alert thresholds
-  - [ ] Trend indicators
+  - [x] Historical memory graph (real data accumulated via useRef, 30 data points max)
+  - [ ] Alert thresholds (deferred)
+  - [ ] Trend indicators (deferred)
 
-- [~] **P3-011**: Header and navigation
-  - [x] Navigation menu (NavLink tab bar with URL routing — 7 tabs: Overview, Tasks, Security, Personality, Skills, Connections, Settings)
-  - [x] Logout button
-  - [ ] User profile dropdown
-  - [ ] Notification bell
-  - [ ] Search bar
-  - [ ] Theme toggle
+- [x] **P3-011**: Header and navigation *(refactored)*
+  - [x] Navigation menu (memoized NavigationTabs with URL routing — 7 tabs)
+  - [x] Responsive hamburger menu on mobile (auto-closes on route change)
+  - [x] Logout button (with aria-label)
+  - [x] Theme toggle (dark/light with localStorage persistence)
+  - [x] Session timeout warning banner
+  - [x] StatusBar extracted with connection/WS indicators
+  - [ ] User profile dropdown (deferred)
+  - [ ] Notification bell (deferred)
+  - [ ] Search bar (deferred)
 
 - [~] **P3-012**: Settings pages
   - [x] Agent identity (name edit)
-  - [x] API key management (create, list, revoke with RBAC roles)
+  - [x] API key management (create, list, revoke with ConfirmDialog and RBAC roles)
   - [x] Soul system config overview (enabled, learning mode, limits)
-  - [ ] General settings (theme, language)
-  - [ ] Security settings (RBAC defaults, rate limit config)
-  - [ ] Notification settings
-  - [ ] Log retention settings
+  - [x] Theme toggle (in header StatusBar, not settings page)
+  - [ ] Security settings (RBAC defaults, rate limit config) (deferred)
+  - [ ] Notification settings (deferred)
+  - [ ] Log retention settings (deferred)
 
 #### Soul/Personality UI *(NEW — not in original plan)*
 - [x] **P3-015**: Onboarding wizard
@@ -546,16 +550,29 @@ Deferred:             P2-004 (mTLS), P2-009 (macOS sandbox), P2-014b (Redis)
 - [x] **P3-014**: Session management
   - [x] Token refresh (automatic on 401)
   - [x] Logout (API call + local state clear)
-  - [ ] Session timeout warning
+  - [x] Session timeout warning (useSessionTimeout hook, banner 5 min before expiry)
+
+#### Code Quality *(NEW — from dashboard review)*
+- [x] **P3-018**: Dashboard refactor and gap completion
+  - [x] App.tsx slimmed to <30 lines (routing only)
+  - [x] DashboardLayout, StatusBar, NavigationTabs extracted
+  - [x] ErrorBoundary wrapping route content and MetricsGraph
+  - [x] ConfirmDialog replacing window.confirm() in PersonalityEditor, SkillsManager, SettingsPage
+  - [x] Skeleton components for loading states
+  - [x] Global refetchInterval removed; per-query intervals set appropriately
+  - [x] ResourceMonitor uses real accumulated history (useRef) instead of mock data
+  - [x] All icon-only buttons have aria-labels
+  - [x] Role="status" on live indicators
+  - [x] Responsive: hamburger nav on mobile, stacked cards, hidden table columns
 
 ### Deliverables
-- [~] Fully functional dashboard *(routing, auth, live data done — settings/connections pending)*
+- [x] Fully functional dashboard *(routing, auth, live data, theme, filters, responsive)*
 - [x] Real-time metrics visualization
-- [x] Task history browser *(live data via authenticated API)*
+- [x] Task history browser *(live data + status/type filtering)*
 - [x] Security event monitor *(live data via authenticated API)*
-- [ ] Connection management UI
+- [~] Connection management UI *(live status cards; config wizard blocked by P4-003+)*
 - [x] Soul/personality management pages
-- [ ] Responsive design (mobile support)
+- [x] Responsive design (mobile hamburger nav, stacked cards, scrollable tables)
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Settings, Key, Plus, Trash2, Copy, Check, Shield, Bot } from 'lucide-react';
 import {
@@ -9,6 +9,7 @@ import {
   revokeApiKey,
   fetchSoulConfig,
 } from '../api/client';
+import { ConfirmDialog } from './common/ConfirmDialog';
 import type { ApiKey, ApiKeyCreateRequest, ApiKeyCreateResponse, SoulConfig } from '../types';
 
 function formatDate(ts: string): string {
@@ -49,6 +50,7 @@ export function SettingsPage() {
   });
   const [createdKey, setCreatedKey] = useState<ApiKeyCreateResponse | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
 
   const { data: keysData, isLoading: keysLoading } = useQuery({
     queryKey: ['apiKeys'],
@@ -84,15 +86,33 @@ export function SettingsPage() {
     setTimeout(() => setCopiedKey(false), 2000);
   };
 
+  const handleConfirmRevoke = useCallback(() => {
+    if (revokeTarget) {
+      revokeKeyMutation.mutate(revokeTarget.id);
+      setRevokeTarget(null);
+    }
+  }, [revokeTarget, revokeKeyMutation]);
+
   return (
     <div className="space-y-6">
+      {/* Revoke confirmation */}
+      <ConfirmDialog
+        open={!!revokeTarget}
+        title="Revoke API Key"
+        message={`Are you sure you want to revoke "${revokeTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Revoke"
+        destructive
+        onConfirm={handleConfirmRevoke}
+        onCancel={() => setRevokeTarget(null)}
+      />
+
       {/* Header */}
       <div>
         <h2 className="text-xl font-semibold text-primary flex items-center gap-2">
           <Settings className="w-5 h-5" />
           Settings
         </h2>
-        <p className="text-sm text-muted mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           System configuration and API key management
         </p>
       </div>
@@ -103,26 +123,26 @@ export function SettingsPage() {
           <Bot className="w-4 h-4" />
           Agent Identity
         </h3>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted">Agent Name:</span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm text-muted-foreground">Agent Name:</span>
           {editingName ? (
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                className="input text-sm px-2 py-1"
+                className="px-2 py-1 rounded border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 autoFocus
               />
               <button
-                className="btn btn-sm btn-primary"
+                className="btn btn-primary text-sm px-3 py-1"
                 onClick={() => updateNameMutation.mutate(nameInput)}
                 disabled={!nameInput.trim() || updateNameMutation.isPending}
               >
                 Save
               </button>
               <button
-                className="btn btn-sm"
+                className="btn btn-ghost text-sm px-3 py-1"
                 onClick={() => setEditingName(false)}
               >
                 Cancel
@@ -132,11 +152,12 @@ export function SettingsPage() {
             <div className="flex items-center gap-2">
               <span className="font-medium">{agentNameData?.agentName ?? '...'}</span>
               <button
-                className="text-xs text-muted hover:text-primary"
+                className="text-xs text-muted-foreground hover:text-primary"
                 onClick={() => {
                   setNameInput(agentNameData?.agentName ?? '');
                   setEditingName(true);
                 }}
+                aria-label="Edit agent name"
               >
                 Edit
               </button>
@@ -153,7 +174,7 @@ export function SettingsPage() {
             API Keys
           </h3>
           <button
-            className="btn btn-sm btn-primary flex items-center gap-1"
+            className="btn btn-primary text-sm px-3 py-1 flex items-center gap-1"
             onClick={() => {
               setShowCreateKey(true);
               setCreatedKey(null);
@@ -166,17 +187,18 @@ export function SettingsPage() {
 
         {/* Created key banner */}
         {createdKey && (
-          <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 space-y-2">
-            <p className="text-xs font-medium text-green-400">
+          <div className="p-3 rounded-lg bg-success/10 border border-success/30 space-y-2">
+            <p className="text-xs font-medium text-success">
               API key created. Copy it now — it won't be shown again.
             </p>
             <div className="flex items-center gap-2">
-              <code className="text-xs bg-surface px-2 py-1 rounded flex-1 overflow-hidden text-ellipsis">
+              <code className="text-xs bg-muted px-2 py-1 rounded flex-1 overflow-hidden text-ellipsis">
                 {createdKey.rawKey}
               </code>
               <button
-                className="btn btn-sm flex items-center gap-1"
+                className="btn btn-ghost text-sm px-2 py-1 flex items-center gap-1"
                 onClick={() => copyToClipboard(createdKey.rawKey)}
+                aria-label="Copy API key"
               >
                 {copiedKey ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copiedKey ? 'Copied' : 'Copy'}
@@ -187,24 +209,24 @@ export function SettingsPage() {
 
         {/* Create form */}
         {showCreateKey && (
-          <div className="p-3 rounded-lg bg-surface space-y-3">
-            <div className="grid grid-cols-3 gap-3">
+          <div className="p-3 rounded-lg bg-muted/30 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-xs text-muted block mb-1">Name</label>
+                <label className="text-xs text-muted-foreground block mb-1">Name</label>
                 <input
                   type="text"
                   value={newKeyForm.name}
                   onChange={(e) => setNewKeyForm({ ...newKeyForm, name: e.target.value })}
                   placeholder="e.g. CI Pipeline"
-                  className="input text-sm w-full"
+                  className="px-2 py-1 rounded border bg-background text-foreground text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div>
-                <label className="text-xs text-muted block mb-1">Role</label>
+                <label className="text-xs text-muted-foreground block mb-1">Role</label>
                 <select
                   value={newKeyForm.role}
                   onChange={(e) => setNewKeyForm({ ...newKeyForm, role: e.target.value })}
-                  className="input text-sm w-full"
+                  className="px-2 py-1 rounded border bg-background text-foreground text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   {ROLE_OPTIONS.map((r) => (
                     <option key={r} value={r}>{r}</option>
@@ -212,26 +234,26 @@ export function SettingsPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-muted block mb-1">Expires (days)</label>
+                <label className="text-xs text-muted-foreground block mb-1">Expires (days)</label>
                 <input
                   type="number"
                   value={newKeyForm.expiresInDays ?? ''}
                   onChange={(e) => setNewKeyForm({ ...newKeyForm, expiresInDays: e.target.value ? Number(e.target.value) : undefined })}
                   placeholder="90"
-                  className="input text-sm w-full"
+                  className="px-2 py-1 rounded border bg-background text-foreground text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
             </div>
             <div className="flex gap-2">
               <button
-                className="btn btn-sm btn-primary"
+                className="btn btn-primary text-sm px-3 py-1"
                 onClick={() => createKeyMutation.mutate(newKeyForm)}
                 disabled={!newKeyForm.name.trim() || createKeyMutation.isPending}
               >
                 {createKeyMutation.isPending ? 'Creating...' : 'Create'}
               </button>
               <button
-                className="btn btn-sm"
+                className="btn btn-ghost text-sm px-3 py-1"
                 onClick={() => setShowCreateKey(false)}
               >
                 Cancel
@@ -242,33 +264,29 @@ export function SettingsPage() {
 
         {/* Keys list */}
         {keysLoading ? (
-          <p className="text-sm text-muted">Loading...</p>
+          <p className="text-sm text-muted-foreground">Loading...</p>
         ) : !keysData?.keys?.length ? (
-          <p className="text-sm text-muted">No API keys created yet.</p>
+          <p className="text-sm text-muted-foreground">No API keys created yet.</p>
         ) : (
           <div className="space-y-2">
             {keysData.keys.map((key: ApiKey) => (
-              <div key={key.id} className="flex items-center justify-between p-2 rounded bg-surface text-sm">
+              <div key={key.id} className="flex items-center justify-between p-2 rounded bg-muted/30 text-sm flex-wrap gap-2">
                 <div className="flex items-center gap-3">
-                  <Key className="w-3 h-3 text-muted" />
+                  <Key className="w-3 h-3 text-muted-foreground" />
                   <span className="font-medium">{key.name}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-background text-muted">{key.role}</span>
-                  <span className="text-xs text-muted">
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-background text-muted-foreground">{key.role}</span>
+                  <span className="text-xs text-muted-foreground">
                     {key.prefix}...
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted">
+                  <span className="text-xs text-muted-foreground">
                     Created {formatDate(key.createdAt)}
                   </span>
                   <button
-                    className="text-red-400 hover:text-red-300"
-                    onClick={() => {
-                      if (confirm(`Revoke API key "${key.name}"?`)) {
-                        revokeKeyMutation.mutate(key.id);
-                      }
-                    }}
-                    title="Revoke key"
+                    className="text-destructive hover:text-destructive/80"
+                    onClick={() => setRevokeTarget(key)}
+                    aria-label={`Revoke API key ${key.name}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -288,21 +306,21 @@ export function SettingsPage() {
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
-              <span className="text-xs text-muted block">Status</span>
-              <span className={soulConfig.enabled ? 'text-green-400' : 'text-red-400'}>
+              <span className="text-xs text-muted-foreground block">Status</span>
+              <span className={soulConfig.enabled ? 'text-success' : 'text-destructive'}>
                 {soulConfig.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
             <div>
-              <span className="text-xs text-muted block">Learning Mode</span>
+              <span className="text-xs text-muted-foreground block">Learning Mode</span>
               <span>{soulConfig.learningMode.join(', ')}</span>
             </div>
             <div>
-              <span className="text-xs text-muted block">Max Skills</span>
+              <span className="text-xs text-muted-foreground block">Max Skills</span>
               <span>{soulConfig.maxSkills}</span>
             </div>
             <div>
-              <span className="text-xs text-muted block">Max Prompt Tokens</span>
+              <span className="text-xs text-muted-foreground block">Max Prompt Tokens</span>
               <span>{soulConfig.maxPromptTokens.toLocaleString()}</span>
             </div>
           </div>

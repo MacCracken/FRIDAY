@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Wrench, Plus, Edit2, Trash2, Check, X, ToggleLeft, ToggleRight,
+  Wrench, Plus, Edit2, Trash2, ToggleLeft, ToggleRight,
   ThumbsUp, ThumbsDown, Filter,
 } from 'lucide-react';
 import {
@@ -14,6 +14,7 @@ import {
   approveSkill,
   rejectSkill,
 } from '../api/client';
+import { ConfirmDialog } from './common/ConfirmDialog';
 import type { Skill, SkillCreate } from '../types';
 
 function formatDate(ts: number): string {
@@ -37,9 +38,10 @@ const STATUS_BADGES: Record<string, string> = {
 
 export function SkillsManager() {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState<string | null>(null); // skill id or 'new'
+  const [editing, setEditing] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterSource, setFilterSource] = useState<string>('');
+  const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const [form, setForm] = useState<SkillCreate>({
     name: '',
     description: '',
@@ -115,8 +117,26 @@ export function SkillsManager() {
     }
   };
 
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteTarget) {
+      deleteMut.mutate(deleteTarget.id);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, deleteMut]);
+
   return (
     <div className="space-y-6">
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Skill"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
       {/* Header + Filters */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
@@ -131,12 +151,13 @@ export function SkillsManager() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Filter className="w-4 h-4 text-muted-foreground" />
         <select
           value={filterStatus}
           onChange={e => setFilterStatus(e.target.value)}
           className="px-2 py-1 rounded border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          aria-label="Filter by status"
         >
           <option value="">All statuses</option>
           <option value="active">Active</option>
@@ -147,6 +168,7 @@ export function SkillsManager() {
           value={filterSource}
           onChange={e => setFilterSource(e.target.value)}
           className="px-2 py-1 rounded border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          aria-label="Filter by source"
         >
           <option value="">All sources</option>
           <option value="user">User</option>
@@ -254,7 +276,7 @@ export function SkillsManager() {
                     ))}
                   </div>
                 )}
-                <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
+                <div className="flex gap-4 mt-2 text-xs text-muted-foreground flex-wrap">
                   <span>Used {s.usageCount} times</span>
                   {s.lastUsedAt && <span>Last: {formatDate(s.lastUsedAt)}</span>}
                   <span>Created {formatDate(s.createdAt)}</span>
@@ -268,14 +290,14 @@ export function SkillsManager() {
                     <button
                       onClick={() => approveMut.mutate(s.id)}
                       className="btn-ghost p-2 text-success hover:bg-success/10"
-                      title="Approve"
+                      aria-label={`Approve skill ${s.name}`}
                     >
                       <ThumbsUp className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => rejectMut.mutate(s.id)}
                       className="btn-ghost p-2 text-destructive hover:bg-destructive/10"
-                      title="Reject"
+                      aria-label={`Reject skill ${s.name}`}
                     >
                       <ThumbsDown className="w-4 h-4" />
                     </button>
@@ -287,7 +309,7 @@ export function SkillsManager() {
                   <button
                     onClick={() => s.enabled ? disableMut.mutate(s.id) : enableMut.mutate(s.id)}
                     className={`btn-ghost p-2 ${s.enabled ? 'text-success' : 'text-muted-foreground'}`}
-                    title={s.enabled ? 'Disable' : 'Enable'}
+                    aria-label={s.enabled ? `Disable skill ${s.name}` : `Enable skill ${s.name}`}
                   >
                     {s.enabled ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                   </button>
@@ -296,14 +318,14 @@ export function SkillsManager() {
                 <button
                   onClick={() => startEdit(s)}
                   className="btn-ghost p-2 text-muted-foreground hover:text-foreground"
-                  title="Edit"
+                  aria-label={`Edit skill ${s.name}`}
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => { if (confirm(`Delete skill "${s.name}"?`)) deleteMut.mutate(s.id); }}
+                  onClick={() => setDeleteTarget(s)}
                   className="btn-ghost p-2 text-muted-foreground hover:text-destructive"
-                  title="Delete"
+                  aria-label={`Delete skill ${s.name}`}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

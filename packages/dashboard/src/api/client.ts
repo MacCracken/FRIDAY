@@ -245,11 +245,13 @@ export async function fetchMetrics(): Promise<MetricsSnapshot> {
 
 export async function fetchTasks(params?: {
   status?: string;
+  type?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ tasks: Task[]; total: number }> {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
+  if (params?.type) query.set('type', params.type);
   if (params?.limit) query.set('limit', params.limit.toString());
   if (params?.offset) query.set('offset', params.offset.toString());
 

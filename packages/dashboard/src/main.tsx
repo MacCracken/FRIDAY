@@ -9,12 +9,16 @@ import './index.css';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5000,
-      refetchInterval: 10000,
-      retry: 3,
+      staleTime: 30_000,
+      retry: 2,
+      refetchOnWindowFocus: false,
     },
   },
 });
+
+// Apply saved theme on load (before render to avoid flash)
+const savedTheme = localStorage.getItem('theme') || 'dark';
+document.documentElement.classList.toggle('dark', savedTheme === 'dark');
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

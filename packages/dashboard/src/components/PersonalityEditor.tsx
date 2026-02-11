@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { User, Plus, Edit2, Trash2, Check, X, Star, Eye } from 'lucide-react';
 import {
@@ -11,6 +11,7 @@ import {
   updateAgentName,
   fetchPromptPreview,
 } from '../api/client';
+import { ConfirmDialog } from './common/ConfirmDialog';
 import type { Personality, PersonalityCreate, PromptPreview } from '../types';
 
 const TRAIT_OPTIONS: Record<string, string[]> = {
@@ -30,10 +31,11 @@ function formatDate(ts: number): string {
 
 export function PersonalityEditor() {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState<string | null>(null); // personality id or 'new'
+  const [editing, setEditing] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [editAgentName, setEditAgentName] = useState(false);
   const [agentNameInput, setAgentNameInput] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Personality | null>(null);
   const [form, setForm] = useState<PersonalityCreate>({
     name: '',
     description: '',
@@ -134,11 +136,29 @@ export function PersonalityEditor() {
     }
   };
 
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteTarget) {
+      deleteMut.mutate(deleteTarget.id);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, deleteMut]);
+
   return (
     <div className="space-y-6">
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Personality"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
       {/* Agent Name */}
       <div className="card p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <p className="text-sm text-muted-foreground">Agent Name</p>
             {editAgentName ? (
@@ -150,10 +170,10 @@ export function PersonalityEditor() {
                   className="px-2 py-1 rounded border bg-background text-foreground text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary"
                   maxLength={50}
                 />
-                <button onClick={() => agentNameMut.mutate(agentNameInput)} className="btn-ghost p-1 text-success">
+                <button onClick={() => agentNameMut.mutate(agentNameInput)} className="btn-ghost p-1 text-success" aria-label="Save agent name">
                   <Check className="w-4 h-4" />
                 </button>
-                <button onClick={() => setEditAgentName(false)} className="btn-ghost p-1 text-muted-foreground">
+                <button onClick={() => setEditAgentName(false)} className="btn-ghost p-1 text-muted-foreground" aria-label="Cancel editing">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -163,6 +183,7 @@ export function PersonalityEditor() {
                 <button
                   onClick={() => { setAgentNameInput(agentNameData?.agentName ?? ''); setEditAgentName(true); }}
                   className="btn-ghost p-1 text-muted-foreground hover:text-foreground"
+                  aria-label="Edit agent name"
                 >
                   <Edit2 className="w-3 h-3" />
                 </button>
@@ -181,7 +202,7 @@ export function PersonalityEditor() {
       {/* Prompt Preview */}
       {showPreview && preview && (
         <div className="card p-4">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
             <h3 className="font-medium">Composed System Prompt</h3>
             <div className="flex gap-3 text-xs text-muted-foreground">
               <span>{preview.charCount.toLocaleString()} chars</span>
@@ -210,7 +231,7 @@ export function PersonalityEditor() {
         <div className="card p-4 space-y-4 border-primary">
           <h3 className="font-medium">{editing === 'new' ? 'Create Personality' : 'Edit Personality'}</h3>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Name</label>
               <input
@@ -282,7 +303,7 @@ export function PersonalityEditor() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Voice</label>
               <input
@@ -353,7 +374,7 @@ export function PersonalityEditor() {
                     onClick={() => activateMut.mutate(p.id)}
                     disabled={activateMut.isPending}
                     className="btn-ghost p-2 text-muted-foreground hover:text-success"
-                    title="Activate"
+                    aria-label={`Activate personality ${p.name}`}
                   >
                     <Star className="w-4 h-4" />
                   </button>
@@ -361,15 +382,15 @@ export function PersonalityEditor() {
                 <button
                   onClick={() => startEdit(p)}
                   className="btn-ghost p-2 text-muted-foreground hover:text-foreground"
-                  title="Edit"
+                  aria-label={`Edit personality ${p.name}`}
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => { if (confirm(`Delete personality "${p.name}"?`)) deleteMut.mutate(p.id); }}
+                  onClick={() => setDeleteTarget(p)}
                   disabled={p.isActive || deleteMut.isPending}
                   className="btn-ghost p-2 text-muted-foreground hover:text-destructive disabled:opacity-30"
-                  title={p.isActive ? 'Cannot delete active personality' : 'Delete'}
+                  aria-label={p.isActive ? 'Cannot delete active personality' : `Delete personality ${p.name}`}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

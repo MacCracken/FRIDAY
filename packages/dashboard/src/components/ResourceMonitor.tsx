@@ -1,10 +1,10 @@
 /**
  * Resource Monitor Component
- * 
+ *
  * Displays real-time resource usage with charts
  */
 
-import { useMemo } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import {
   AreaChart,
   Area,
@@ -24,29 +24,35 @@ interface ResourceMonitorProps {
   metrics?: MetricsSnapshot;
 }
 
+interface HistoryPoint {
+  time: string;
+  value: number;
+}
+
+const MAX_HISTORY_POINTS = 30;
+
 export function ResourceMonitor({ metrics }: ResourceMonitorProps) {
-  // Mock historical data (in real implementation, this would come from the API)
-  const memoryHistory = useMemo(() => {
-    const now = Date.now();
-    const points = [];
-    for (let i = 30; i >= 0; i--) {
-      points.push({
-        time: new Date(now - i * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        value: (metrics?.resources?.memoryUsedMb ?? 50) + Math.random() * 20 - 10,
-      });
-    }
-    return points;
+  const historyRef = useRef<HistoryPoint[]>([]);
+  const [memoryHistory, setMemoryHistory] = useState<HistoryPoint[]>([]);
+
+  // Accumulate real memory data points
+  useEffect(() => {
+    if (metrics?.resources?.memoryUsedMb == null) return;
+
+    const point: HistoryPoint = {
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      value: metrics.resources.memoryUsedMb,
+    };
+
+    historyRef.current = [...historyRef.current, point].slice(-MAX_HISTORY_POINTS);
+    setMemoryHistory([...historyRef.current]);
   }, [metrics?.resources?.memoryUsedMb]);
-  
-  const memoryPercent = metrics?.resources?.memoryLimitMb 
-    ? ((metrics.resources.memoryUsedMb / metrics.resources.memoryLimitMb) * 100)
-    : 0;
-  
+
   const tokenData = [
     { name: 'Used', value: metrics?.resources?.tokensUsedToday ?? 0, color: '#0ea5e9' },
     { name: 'Cached', value: metrics?.resources?.tokensCachedToday ?? 0, color: '#22c55e' },
   ];
-  
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Memory Usage Chart */}
@@ -56,47 +62,53 @@ export function ResourceMonitor({ metrics }: ResourceMonitorProps) {
           <h3 className="font-medium">Memory Usage</h3>
         </div>
         <div className="h-[200px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={memoryHistory}>
-              <defs>
-                <linearGradient id="memoryGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" opacity={0.1} />
-              <XAxis 
-                dataKey="time" 
-                tick={{ fontSize: 10 }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis 
-                tick={{ fontSize: 10 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(value) => `${value.toFixed(0)} MB`}
-              />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: 'hsl(var(--card))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px',
-                }}
-                formatter={(value: number) => [`${value.toFixed(1)} MB`, 'Memory']}
-              />
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke="#0ea5e9"
-                fill="url(#memoryGradient)"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {memoryHistory.length > 1 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={memoryHistory}>
+                <defs>
+                  <linearGradient id="memoryGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" opacity={0.1} />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => `${value.toFixed(0)} MB`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px',
+                  }}
+                  formatter={(value: number) => [`${value.toFixed(1)} MB`, 'Memory']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#0ea5e9"
+                  fill="url(#memoryGradient)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+              Collecting memory data...
+            </div>
+          )}
         </div>
       </div>
-      
+
       {/* Resource Stats */}
       <div className="space-y-4">
         {/* CPU */}
@@ -108,7 +120,7 @@ export function ResourceMonitor({ metrics }: ResourceMonitorProps) {
           unit="%"
           color="bg-primary"
         />
-        
+
         {/* Memory */}
         <ResourceBar
           icon={<HardDrive className="w-4 h-4" />}
@@ -118,7 +130,7 @@ export function ResourceMonitor({ metrics }: ResourceMonitorProps) {
           unit="MB"
           color="bg-success"
         />
-        
+
         {/* Token Usage */}
         <div className="p-4 rounded-lg bg-muted/30">
           <div className="flex items-center gap-2 mb-3">
@@ -153,7 +165,7 @@ export function ResourceMonitor({ metrics }: ResourceMonitorProps) {
             </div>
           </div>
         </div>
-        
+
         {/* Cost */}
         <div className="p-4 rounded-lg bg-muted/30">
           <div className="flex items-center gap-2 mb-2">
@@ -189,7 +201,7 @@ function ResourceBar({ icon, label, value, max, unit, color }: ResourceBarProps)
   const percent = Math.min((value / max) * 100, 100);
   const isWarning = percent > 80;
   const isCritical = percent > 95;
-  
+
   return (
     <div className="p-4 rounded-lg bg-muted/30">
       <div className="flex items-center justify-between mb-2">
@@ -202,7 +214,7 @@ function ResourceBar({ icon, label, value, max, unit, color }: ResourceBarProps)
         </span>
       </div>
       <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div 
+        <div
           className={`h-full transition-all ${
             isCritical ? 'bg-destructive' : isWarning ? 'bg-warning' : color
           }`}

@@ -78,7 +78,7 @@ export function SecurityEvents({ metrics }: SecurityEventsProps) {
               onClick={handleVerifyChain}
               disabled={verifying}
               className="btn-ghost p-2"
-              title="Verify audit chain"
+              aria-label="Verify audit chain"
             >
               <RefreshCw className={`w-4 h-4 ${verifying ? 'animate-spin' : ''}`} />
             </button>
