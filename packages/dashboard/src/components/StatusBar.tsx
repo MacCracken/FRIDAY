@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Activity, RefreshCw, LogOut, Sun, Moon, User, ChevronDown,
+  Activity, RefreshCw, LogOut, Sun, Moon, User, ChevronDown, Loader2,
 } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
@@ -9,6 +9,7 @@ import { getAccessToken } from '../api/client';
 interface StatusBarProps {
   isConnected: boolean;
   wsConnected: boolean;
+  reconnecting: boolean;
   onRefresh: () => void;
   onLogout: () => void;
 }
@@ -24,7 +25,7 @@ function parseJwtRole(): string {
   }
 }
 
-export function StatusBar({ isConnected, wsConnected, onRefresh, onLogout }: StatusBarProps) {
+export function StatusBar({ isConnected, wsConnected, reconnecting, onRefresh, onLogout }: StatusBarProps) {
   const { theme, toggle } = useTheme();
   const { showWarning, dismiss } = useSessionTimeout(3600);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -44,7 +45,7 @@ export function StatusBar({ isConnected, wsConnected, onRefresh, onLogout }: Sta
 
   return (
     <>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* Connection Status */}
         <div className="flex items-center gap-2" role="status" aria-label="Server connection status">
           <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-destructive'}`} />
@@ -54,10 +55,14 @@ export function StatusBar({ isConnected, wsConnected, onRefresh, onLogout }: Sta
         </div>
 
         {/* WebSocket Status */}
-        <div className="flex items-center gap-2" role="status" aria-label="Live updates status">
-          <Activity className={`w-4 h-4 ${wsConnected ? 'text-success' : 'text-muted-foreground'}`} />
+        <div className="flex items-center gap-1.5" role="status" aria-label="Live updates status">
+          {reconnecting ? (
+            <Loader2 className="w-4 h-4 animate-spin text-warning" />
+          ) : (
+            <Activity className={`w-4 h-4 ${wsConnected ? 'text-success' : 'text-muted-foreground'}`} />
+          )}
           <span className="text-sm text-muted-foreground hidden sm:inline">
-            {wsConnected ? 'Live' : 'Polling'}
+            {reconnecting ? 'Reconnecting...' : wsConnected ? 'Live' : 'Polling'}
           </span>
         </div>
 

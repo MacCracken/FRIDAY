@@ -4,6 +4,7 @@ import { Menu, X } from 'lucide-react';
 
 const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: 'Overview', end: true },
+  { to: '/chat', label: 'Chat' },
   { to: '/tasks', label: 'Tasks' },
   { to: '/security', label: 'Security' },
   { to: '/personality', label: 'Personality' },
@@ -40,9 +41,9 @@ export const NavigationTabs = React.memo(function NavigationTabs() {
 
   return (
     <nav className="border-b bg-card">
-      <div className="container mx-auto px-4">
+      <div className="container mx-auto px-3 sm:px-4">
         {/* Desktop nav */}
-        <div className="hidden md:flex gap-4" role="tablist">
+        <div className="hidden md:flex gap-1 lg:gap-4 overflow-x-auto" role="tablist">
           {NAV_ITEMS.map(({ to, label, end }) => (
             <NavLink key={to} to={to} end={end} className={navLinkClass} role="tab">
               {label}

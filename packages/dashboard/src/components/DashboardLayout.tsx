@@ -33,6 +33,7 @@ const SkillsManager = lazy(() => import('./SkillsManager').then(m => ({ default:
 const ConnectionManager = lazy(() => import('./ConnectionManager').then(m => ({ default: m.ConnectionManager })));
 const SettingsPage = lazy(() => import('./SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SecuritySettings = lazy(() => import('./SecuritySettings').then(m => ({ default: m.SecuritySettings })));
+const ChatPage = lazy(() => import('./ChatPage').then(m => ({ default: m.ChatPage })));
 
 export function DashboardLayout() {
   const { logout } = useAuth();
@@ -96,22 +97,25 @@ export function DashboardLayout() {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="border-b bg-card relative">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Shield className="w-8 h-8 text-primary" />
-              <div>
-                <h1 className="text-xl font-bold">SecureYeoman</h1>
+        <div className="container mx-auto px-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <Shield className="w-7 h-7 sm:w-8 sm:h-8 text-primary flex-shrink-0" />
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl font-bold truncate">SecureYeoman</h1>
                 <p className="text-xs text-muted-foreground hidden sm:block">Performance Dashboard</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <SearchBar />
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="hidden md:block">
+                <SearchBar />
+              </div>
               <NotificationBell />
               <StatusBar
                 isConnected={isConnected}
                 wsConnected={connected}
+                reconnecting={reconnecting}
                 onRefresh={() => refetchMetrics()}
                 onLogout={() => void logout()}
               />
@@ -120,23 +124,16 @@ export function DashboardLayout() {
         </div>
       </header>
 
-      {/* Reconnecting Banner */}
-      {reconnecting && (
-        <div className="bg-warning/10 border-b border-warning text-warning text-sm px-4 py-2 flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          Reconnecting to live updates...
-        </div>
-      )}
-
       {/* Navigation */}
       <NavigationTabs />
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6 flex-1">
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 flex-1">
         <ErrorBoundary>
           <Suspense fallback={<PageSkeleton />}>
             <Routes>
               <Route path="/" element={<OverviewPage metrics={metrics} />} />
+              <Route path="/chat" element={<ChatPage />} />
               <Route path="/tasks" element={<TaskHistory />} />
               <Route path="/security" element={<SecurityEvents metrics={metrics} />} />
               <Route path="/personality" element={<PersonalityEditor />} />
@@ -152,10 +149,10 @@ export function DashboardLayout() {
 
       {/* Footer */}
       <footer className="border-t bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between text-xs sm:text-sm text-muted-foreground">
             <span>SecureYeoman v0.1.0</span>
-            <span>Local Network Only</span>
+            <span className="hidden sm:inline">Local Network Only</span>
           </div>
         </div>
       </footer>
@@ -250,7 +247,7 @@ function StatCard({ title, value, icon, trend, trendUp, subtitle }: StatCardProp
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="text-2xl font-bold mt-1">{value}</p>
+          <p className="text-xl sm:text-2xl font-bold mt-1 truncate">{value}</p>
           {subtitle && (
             <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
           )}
