@@ -985,6 +985,101 @@ Query the local message log.
 
 ---
 
+### Chat
+
+#### POST /api/v1/chat
+
+Send a message to the active personality and receive an AI response.
+
+**Required Permissions**: Authenticated
+
+**Request Body**
+```json
+{
+  "message": "Hello, what can you help me with?",
+  "history": [
+    { "role": "user", "content": "Previous message" },
+    { "role": "assistant", "content": "Previous response" }
+  ]
+}
+```
+
+**Response**
+```json
+{
+  "role": "assistant",
+  "content": "I'm FRIDAY, your AI assistant. I can help with...",
+  "model": "claude-sonnet-4-20250514",
+  "provider": "anthropic",
+  "tokensUsed": 256
+}
+```
+
+---
+
+### Model Management
+
+#### GET /api/v1/model/info
+
+Get current model configuration and list of all available models.
+
+**Required Permissions**: Authenticated
+
+**Response**
+```json
+{
+  "current": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "maxTokens": 16384,
+    "temperature": 0.7
+  },
+  "available": {
+    "anthropic": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "inputPer1M": 3,
+        "outputPer1M": 15,
+        "cachedInputPer1M": 0.3
+      }
+    ],
+    "openai": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "inputPer1M": 2.5,
+        "outputPer1M": 10
+      }
+    ]
+  }
+}
+```
+
+#### POST /api/v1/model/switch
+
+Switch the AI model at runtime. The switch is not persisted across restarts.
+
+**Required Permissions**: Authenticated
+
+**Request Body**
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o"
+}
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "model": "openai/gpt-4o"
+}
+```
+
+---
+
 ## Error Handling
 
 ### Error Response Format

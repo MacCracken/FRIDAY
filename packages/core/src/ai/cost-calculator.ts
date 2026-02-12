@@ -43,6 +43,62 @@ const FALLBACK_PRICING: Record<string, ModelPricing> = {
   ollama: { inputPer1M: 0, outputPer1M: 0 },
 };
 
+export interface AvailableModel {
+  provider: string;
+  model: string;
+  inputPer1M: number;
+  outputPer1M: number;
+  cachedInputPer1M?: number;
+}
+
+const MODEL_PROVIDER_MAP: Record<string, string> = {
+  'claude-opus-4-20250514': 'anthropic',
+  'claude-sonnet-4-20250514': 'anthropic',
+  'claude-haiku-3-5-20241022': 'anthropic',
+  'gpt-4o': 'openai',
+  'gpt-4o-mini': 'openai',
+  'gpt-4-turbo': 'openai',
+  'o1': 'openai',
+  'o1-mini': 'openai',
+  'o3-mini': 'openai',
+  'gemini-2.0-flash': 'gemini',
+  'gemini-1.5-pro': 'gemini',
+  'gemini-1.5-flash': 'gemini',
+};
+
+/**
+ * Returns all known models grouped by provider.
+ */
+export function getAvailableModels(): Record<string, AvailableModel[]> {
+  const grouped: Record<string, AvailableModel[]> = {};
+
+  for (const [model, pricing] of Object.entries(PRICING)) {
+    const provider = MODEL_PROVIDER_MAP[model] ?? 'unknown';
+    if (!grouped[provider]) {
+      grouped[provider] = [];
+    }
+    grouped[provider].push({
+      provider,
+      model,
+      inputPer1M: pricing.inputPer1M,
+      outputPer1M: pricing.outputPer1M,
+      cachedInputPer1M: pricing.cachedInputPer1M,
+    });
+  }
+
+  // Always include ollama as a provider option
+  if (!grouped['ollama']) {
+    grouped['ollama'] = [{
+      provider: 'ollama',
+      model: 'local',
+      inputPer1M: 0,
+      outputPer1M: 0,
+    }];
+  }
+
+  return grouped;
+}
+
 export class CostCalculator {
   /**
    * Calculate cost in USD for a given provider, model, and token usage.

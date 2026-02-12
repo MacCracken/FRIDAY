@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CostCalculator } from './cost-calculator.js';
+import { CostCalculator, getAvailableModels } from './cost-calculator.js';
 import type { TokenUsage } from '@friday/shared';
 
 describe('CostCalculator', () => {
@@ -61,5 +61,50 @@ describe('CostCalculator', () => {
   it('should handle zero usage', () => {
     const cost = calc.calculate('anthropic', 'claude-sonnet-4-20250514', usage(0, 0));
     expect(cost).toBe(0);
+  });
+});
+
+describe('getAvailableModels', () => {
+  it('should return models grouped by provider', () => {
+    const models = getAvailableModels();
+    expect(models).toHaveProperty('anthropic');
+    expect(models).toHaveProperty('openai');
+    expect(models).toHaveProperty('gemini');
+    expect(models).toHaveProperty('ollama');
+  });
+
+  it('should include expected Anthropic models', () => {
+    const models = getAvailableModels();
+    const anthropicNames = models.anthropic.map((m) => m.model);
+    expect(anthropicNames).toContain('claude-sonnet-4-20250514');
+    expect(anthropicNames).toContain('claude-opus-4-20250514');
+  });
+
+  it('should include expected OpenAI models', () => {
+    const models = getAvailableModels();
+    const openaiNames = models.openai.map((m) => m.model);
+    expect(openaiNames).toContain('gpt-4o');
+    expect(openaiNames).toContain('gpt-4o-mini');
+    expect(openaiNames).toContain('o3-mini');
+  });
+
+  it('should have correct structure for each model', () => {
+    const models = getAvailableModels();
+    for (const [provider, modelList] of Object.entries(models)) {
+      for (const model of modelList) {
+        expect(model.provider).toBe(provider);
+        expect(typeof model.model).toBe('string');
+        expect(typeof model.inputPer1M).toBe('number');
+        expect(typeof model.outputPer1M).toBe('number');
+      }
+    }
+  });
+
+  it('should show $0 pricing for ollama', () => {
+    const models = getAvailableModels();
+    for (const model of models.ollama) {
+      expect(model.inputPer1M).toBe(0);
+      expect(model.outputPer1M).toBe(0);
+    }
   });
 });

@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
+const GATEWAY_URL = process.env.VITE_GATEWAY_URL || 'http://127.0.0.1:18789';
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -18,15 +20,28 @@ export default defineConfig({
     // Proxy API requests to the gateway
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:18789',
+        target: GATEWAY_URL,
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            console.error('[vite proxy /api] error:', err.message);
+            if ('writeHead' in res && !res.headersSent) {
+              (res as import('http').ServerResponse).writeHead(502, { 'Content-Type': 'application/json' });
+              (res as import('http').ServerResponse).end(JSON.stringify({ error: `Proxy error: ${err.message}` }));
+            }
+          });
+        },
       },
       '/health': {
-        target: 'http://127.0.0.1:18789',
+        target: GATEWAY_URL,
+        changeOrigin: true,
+      },
+      '/metrics': {
+        target: GATEWAY_URL,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:18789',
+        target: GATEWAY_URL.replace('http', 'ws'),
         ws: true,
       },
     },

@@ -133,9 +133,10 @@ export class AuthService {
       throw new AuthError('Too many login attempts. Try again later.', 429);
     }
 
-    // Constant-time password comparison (hash both sides)
+    // Constant-time password comparison
+    // adminPassword is already stored as a sha256 hex digest
     const passwordHash = sha256(password);
-    const expectedHash = sha256(this.config.adminPassword);
+    const expectedHash = this.config.adminPassword;
 
     if (!secureCompare(passwordHash, expectedHash)) {
       await this.audit('auth_failure', 'Invalid admin password', { ip });
@@ -350,7 +351,7 @@ export class AuthService {
   async resetPassword(currentPassword: string, newPassword: string): Promise<void> {
     // Verify current password
     const currentHash = sha256(currentPassword);
-    const expectedHash = sha256(this.config.adminPassword);
+    const expectedHash = this.config.adminPassword;
 
     if (!secureCompare(currentHash, expectedHash)) {
       await this.audit('auth_failure', 'Password reset failed: wrong current password', {
@@ -364,8 +365,8 @@ export class AuthService {
       throw new AuthError('New password must be at least 32 characters', 400);
     }
 
-    // Update the stored admin password (login() hashes both sides for comparison)
-    (this.config as { adminPassword: string }).adminPassword = newPassword;
+    // Update the stored admin password (store as sha256 hex digest)
+    (this.config as { adminPassword: string }).adminPassword = sha256(newPassword);
 
     // Rotate token secret and clear previous to invalidate all existing sessions
     const newSecret = generateSecureToken(32);

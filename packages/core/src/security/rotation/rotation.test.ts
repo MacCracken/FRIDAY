@@ -8,10 +8,12 @@ import { AuditChain, InMemoryAuditStorage } from '../../logging/audit-chain.js';
 import { RBAC } from '../rbac.js';
 import { RateLimiter } from '../rate-limiter.js';
 import type { SecureLogger } from '../../logging/logger.js';
+import { sha256 } from '../../utils/crypto.js';
 
 const SIGNING_KEY = 'a]&3Gk9$mQ#vL7@pR!wZ5*xN2^bT8+dF';
 const TOKEN_SECRET = 'test-token-secret-at-least-32chars!!';
-const ADMIN_PASSWORD = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD_RAW = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD = sha256(ADMIN_PASSWORD_RAW);
 
 function noopLogger(): SecureLogger {
   const noop = () => {};
@@ -270,7 +272,7 @@ describe('JWT dual-key verification (grace period)', () => {
 
   it('tokens signed with old key still validate after rotation', async () => {
     // Login with original secret
-    const result = await authService.login(ADMIN_PASSWORD, '127.0.0.1');
+    const result = await authService.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
     const token = result.accessToken;
 
     // Rotate to new secret
@@ -282,7 +284,7 @@ describe('JWT dual-key verification (grace period)', () => {
   });
 
   it('after clearPreviousSecret, old tokens fail', async () => {
-    const result = await authService.login(ADMIN_PASSWORD, '127.0.0.1');
+    const result = await authService.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
     const token = result.accessToken;
 
     authService.updateTokenSecret('brand-new-secret-that-is-32-chars!!');
@@ -294,7 +296,7 @@ describe('JWT dual-key verification (grace period)', () => {
   it('new tokens work after rotation', async () => {
     authService.updateTokenSecret('brand-new-secret-that-is-32-chars!!');
 
-    const result = await authService.login(ADMIN_PASSWORD, '127.0.0.1');
+    const result = await authService.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
     const user = await authService.validateToken(result.accessToken);
     expect(user.userId).toBe('admin');
   });

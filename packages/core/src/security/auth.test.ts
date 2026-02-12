@@ -5,9 +5,11 @@ import { AuditChain, InMemoryAuditStorage } from '../logging/audit-chain.js';
 import { RBAC } from './rbac.js';
 import { RateLimiter } from './rate-limiter.js';
 import type { SecureLogger } from '../logging/logger.js';
+import { sha256 } from '../utils/crypto.js';
 
 const TOKEN_SECRET = 'test-token-secret-at-least-32chars!!';
-const ADMIN_PASSWORD = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD_RAW = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD = sha256(ADMIN_PASSWORD_RAW);
 const SIGNING_KEY = 'a]&3Gk9$mQ#vL7@pR!wZ5*xN2^bT8+dF';
 
 function noopLogger(): SecureLogger {
@@ -67,7 +69,7 @@ describe('AuthService', () => {
 
   describe('login', () => {
     it('should return tokens on valid admin password', async () => {
-      const result = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const result = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       expect(result.tokenType).toBe('Bearer');
       expect(result.accessToken).toBeTruthy();
       expect(result.refreshToken).toBeTruthy();
@@ -91,7 +93,7 @@ describe('AuthService', () => {
 
   describe('validateToken', () => {
     it('should validate an access token and return AuthUser', async () => {
-      const { accessToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { accessToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       const user = await service.validateToken(accessToken);
       expect(user.userId).toBe('admin');
       expect(user.role).toBe('admin');
@@ -100,12 +102,12 @@ describe('AuthService', () => {
     });
 
     it('should reject a refresh token when used as access', async () => {
-      const { refreshToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { refreshToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       await expect(service.validateToken(refreshToken)).rejects.toThrow('Invalid token type');
     });
 
     it('should reject a revoked token', async () => {
-      const { accessToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { accessToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       const user = await service.validateToken(accessToken);
       await service.logout(user.jti!, user.userId, user.exp!);
       await expect(service.validateToken(accessToken)).rejects.toThrow('revoked');
@@ -120,7 +122,7 @@ describe('AuthService', () => {
 
   describe('refresh', () => {
     it('should return new token pair and consume old refresh', async () => {
-      const login = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const login = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       const refreshed = await service.refresh(login.refreshToken);
       expect(refreshed.accessToken).toBeTruthy();
       expect(refreshed.refreshToken).toBeTruthy();
@@ -131,7 +133,7 @@ describe('AuthService', () => {
     });
 
     it('should reject an access token used as refresh', async () => {
-      const { accessToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { accessToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       await expect(service.refresh(accessToken)).rejects.toThrow('Invalid token type');
     });
   });
@@ -140,7 +142,7 @@ describe('AuthService', () => {
 
   describe('logout', () => {
     it('should blacklist the JTI', async () => {
-      const { accessToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { accessToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       const user = await service.validateToken(accessToken);
       await service.logout(user.jti!, user.userId, user.exp!);
       await expect(service.validateToken(accessToken)).rejects.toThrow('revoked');
@@ -213,13 +215,13 @@ describe('AuthService', () => {
 
   describe('rememberMe', () => {
     it('should return extended expiry when rememberMe is true', async () => {
-      const result = await service.login(ADMIN_PASSWORD, '127.0.0.1', true);
+      const result = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1', true);
       // 30 days = 2592000 seconds
       expect(result.expiresIn).toBe(30 * 86400);
     });
 
     it('should return standard expiry when rememberMe is false', async () => {
-      const result = await service.login(ADMIN_PASSWORD, '127.0.0.1', false);
+      const result = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1', false);
       expect(result.expiresIn).toBe(3600);
     });
   });
@@ -229,10 +231,10 @@ describe('AuthService', () => {
   describe('resetPassword', () => {
     it('should reset password with correct current password', async () => {
       const newPass = 'a-brand-new-password-that-is-at-least-32-chars';
-      await service.resetPassword(ADMIN_PASSWORD, newPass);
+      await service.resetPassword(ADMIN_PASSWORD_RAW, newPass);
 
       // Old password no longer works
-      await expect(service.login(ADMIN_PASSWORD, '127.0.0.1')).rejects.toThrow('Invalid credentials');
+      await expect(service.login(ADMIN_PASSWORD_RAW, '127.0.0.1')).rejects.toThrow('Invalid credentials');
 
       // New password works
       const result = await service.login(newPass, '127.0.0.1');
@@ -247,14 +249,14 @@ describe('AuthService', () => {
 
     it('should reject weak new password (< 32 chars)', async () => {
       await expect(
-        service.resetPassword(ADMIN_PASSWORD, 'short')
+        service.resetPassword(ADMIN_PASSWORD_RAW, 'short')
       ).rejects.toThrow('New password must be at least 32 characters');
     });
 
     it('should invalidate existing tokens after reset', async () => {
-      const { accessToken } = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const { accessToken } = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       const newPass = 'a-brand-new-password-that-is-at-least-32-chars';
-      await service.resetPassword(ADMIN_PASSWORD, newPass);
+      await service.resetPassword(ADMIN_PASSWORD_RAW, newPass);
 
       // Old token should fail (secret was rotated)
       await expect(service.validateToken(accessToken)).rejects.toThrow();
@@ -284,7 +286,7 @@ describe('AuthService', () => {
       await service.verifyAndEnableTwoFactor(code, setup.recoveryCodes);
 
       // Login should now return requiresTwoFactor
-      const result = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const result = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       expect(result.requiresTwoFactor).toBe(true);
       expect(result.accessToken).toBe('');
     });
@@ -334,7 +336,7 @@ describe('AuthService', () => {
       expect(service.isTwoFactorEnabled()).toBe(false);
 
       // Login should work without 2FA
-      const result = await service.login(ADMIN_PASSWORD, '127.0.0.1');
+      const result = await service.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
       expect(result.accessToken).toBeTruthy();
       expect(result.requiresTwoFactor).toBeUndefined();
     });

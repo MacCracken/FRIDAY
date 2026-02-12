@@ -19,12 +19,14 @@ import { createAuthHook, createRbacHook } from '../gateway/auth-middleware.js';
 import { registerAuthRoutes } from '../gateway/auth-routes.js';
 import type { SecureLogger } from '../logging/logger.js';
 import type { SecurityConfig } from '@friday/shared';
+import { sha256 } from '../utils/crypto.js';
 
 // ── Constants ──────────────────────────────────────────────────────
 
 export const TEST_SIGNING_KEY = 'a]&3Gk9$mQ#vL7@pR!wZ5*xN2^bT8+dF';
 export const TEST_TOKEN_SECRET = 'test-token-secret-at-least-32chars!!';
 export const TEST_ADMIN_PASSWORD = 'test-admin-password-32chars!!';
+export const TEST_ADMIN_PASSWORD_HASH = sha256(TEST_ADMIN_PASSWORD);
 
 // ── Noop Logger ────────────────────────────────────────────────────
 
@@ -83,7 +85,7 @@ export function createTestStack(): TestStack {
       tokenSecret: TEST_TOKEN_SECRET,
       tokenExpirySeconds: 3600,
       refreshTokenExpirySeconds: 86400,
-      adminPassword: TEST_ADMIN_PASSWORD,
+      adminPassword: TEST_ADMIN_PASSWORD_HASH,
     },
     {
       storage: authStorage,

@@ -7,9 +7,11 @@ import { RBAC } from '../security/rbac.js';
 import { RateLimiter } from '../security/rate-limiter.js';
 import { createAuthHook, createRbacHook } from './auth-middleware.js';
 import type { SecureLogger } from '../logging/logger.js';
+import { sha256 } from '../utils/crypto.js';
 
 const TOKEN_SECRET = 'test-token-secret-at-least-32chars!!';
-const ADMIN_PASSWORD = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD_RAW = 'test-admin-password-32chars!!';
+const ADMIN_PASSWORD = sha256(ADMIN_PASSWORD_RAW);
 const SIGNING_KEY = 'a]&3Gk9$mQ#vL7@pR!wZ5*xN2^bT8+dF';
 
 function noopLogger(): SecureLogger {
@@ -92,7 +94,7 @@ describe('Auth Middleware', () => {
 
   // helper
   async function loginAndGetToken(): Promise<string> {
-    const result = await authService.login(ADMIN_PASSWORD, '127.0.0.1');
+    const result = await authService.login(ADMIN_PASSWORD_RAW, '127.0.0.1');
     return result.accessToken;
   }
 

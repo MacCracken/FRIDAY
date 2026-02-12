@@ -20,6 +20,8 @@ import type {
   ApiKeyCreateResponse,
   SoulConfig,
   IntegrationInfo,
+  ChatResponse,
+  ModelInfoResponse,
 } from '../types.js';
 
 const API_BASE = '/api/v1';
@@ -323,11 +325,37 @@ export async function fetchSecurityEvents(params?: {
 
   const queryString = query.toString();
   try {
-    return await request<{ events: SecurityEvent[]; total: number }>(
+    const raw = await request<{ events: Array<Record<string, unknown>>; total: number }>(
       `/security/events${queryString ? `?${queryString}` : ''}`
     );
+    // Map audit-chain entries to the dashboard SecurityEvent shape
+    const events: SecurityEvent[] = (raw.events ?? []).map((e) => ({
+      id: (e.id as string) ?? '',
+      type: (e.type as string) ?? (e.event as string) ?? 'unknown',
+      severity: mapLevelToSeverity((e.severity as string) ?? (e.level as string)),
+      message: (e.message as string) ?? '',
+      userId: (e.userId as string) ?? (e.metadata as Record<string, unknown>)?.userId as string | undefined,
+      ipAddress: (e.ipAddress as string) ?? (e.metadata as Record<string, unknown>)?.ip as string | undefined,
+      timestamp: (e.timestamp as number) ?? 0,
+      acknowledged: false,
+    }));
+    return { events, total: raw.total };
   } catch {
     return { events: [], total: 0 };
+  }
+}
+
+function mapLevelToSeverity(level: string): SecurityEvent['severity'] {
+  switch (level) {
+    case 'error':
+    case 'fatal':
+      return 'error';
+    case 'warn':
+      return 'warn';
+    case 'security':
+      return 'critical';
+    default:
+      return 'info';
   }
 }
 
@@ -482,7 +510,8 @@ export async function revokeApiKey(id: string): Promise<void> {
 // ─── Soul Config ──────────────────────────────────────────────────────
 
 export async function fetchSoulConfig(): Promise<SoulConfig> {
-  return request('/soul/config');
+  const data = await request<{ config: SoulConfig }>('/soul/config');
+  return data.config;
 }
 
 // ─── Integrations ─────────────────────────────────────────────────────
@@ -567,4 +596,32 @@ export async function fetchAuditStats(): Promise<{
   } catch {
     return { totalEntries: 0, chainValid: false };
   }
+}
+
+// ─── Chat ─────────────────────────────────────────────────────
+
+export async function sendChatMessage(data: {
+  message: string;
+  history?: Array<{ role: string; content: string }>;
+}): Promise<ChatResponse> {
+  return request('/chat', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// ─── Model Info ───────────────────────────────────────────────
+
+export async function fetchModelInfo(): Promise<ModelInfoResponse> {
+  return request('/model/info');
+}
+
+export async function switchModel(data: {
+  provider: string;
+  model: string;
+}): Promise<{ success: boolean; model: string }> {
+  return request('/model/switch', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }

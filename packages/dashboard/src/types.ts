@@ -215,6 +215,47 @@ export interface IntegrationInfo {
   errorMessage?: string;
 }
 
+// ─── Chat Types ─────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  model?: string;
+  provider?: string;
+  tokensUsed?: number;
+}
+
+export interface ChatResponse {
+  role: 'assistant';
+  content: string;
+  model: string;
+  provider: string;
+  tokensUsed?: number;
+}
+
+// ─── Model Types ────────────────────────────────────────────
+
+export interface ModelInfo {
+  provider: string;
+  model: string;
+  inputPer1M: number;
+  outputPer1M: number;
+  cachedInputPer1M?: number;
+}
+
+export interface ModelCurrentConfig {
+  provider: string;
+  model: string;
+  maxTokens: number;
+  temperature: number;
+}
+
+export interface ModelInfoResponse {
+  current: ModelCurrentConfig;
+  available: Record<string, ModelInfo[]>;
+}
+
 // ─── Soul Config Types ──────────────────────────────────────
 
 export interface SoulConfig {

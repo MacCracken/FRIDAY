@@ -27,7 +27,7 @@ services:
       - .:/app
       - dashboard-node-modules:/app/node_modules
     environment:
-      VITE_API_URL: "http://core:18789"
+      VITE_GATEWAY_URL: "http://core:18789"
       VITE_HOST: "0.0.0.0"
     depends_on:
       core:

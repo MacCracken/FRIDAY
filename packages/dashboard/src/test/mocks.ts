@@ -5,6 +5,8 @@ import type {
   IntegrationInfo,
   ApiKey,
   SoulConfig,
+  ChatResponse,
+  ModelInfoResponse,
 } from '../types';
 
 // ── Metrics Snapshot ──────────────────────────────────────────────
@@ -225,6 +227,45 @@ export function createSoulConfig(overrides?: Partial<SoulConfig>): SoulConfig {
     learningMode: ['observe', 'suggest'],
     maxSkills: 50,
     maxPromptTokens: 4096,
+    ...overrides,
+  };
+}
+
+// ── Chat Response ────────────────────────────────────────────────
+
+export function createChatResponse(overrides?: Partial<ChatResponse>): ChatResponse {
+  return {
+    role: 'assistant',
+    content: 'Hello! I am FRIDAY, your AI assistant.',
+    model: 'claude-sonnet-4-20250514',
+    provider: 'anthropic',
+    tokensUsed: 150,
+    ...overrides,
+  };
+}
+
+// ── Model Info Response ──────────────────────────────────────────
+
+export function createModelInfoResponse(overrides?: Partial<ModelInfoResponse>): ModelInfoResponse {
+  return {
+    current: {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      maxTokens: 16384,
+      temperature: 0.7,
+    },
+    available: {
+      anthropic: [
+        { provider: 'anthropic', model: 'claude-sonnet-4-20250514', inputPer1M: 3, outputPer1M: 15, cachedInputPer1M: 0.3 },
+        { provider: 'anthropic', model: 'claude-opus-4-20250514', inputPer1M: 15, outputPer1M: 75, cachedInputPer1M: 1.5 },
+      ],
+      openai: [
+        { provider: 'openai', model: 'gpt-4o', inputPer1M: 2.5, outputPer1M: 10 },
+      ],
+      ollama: [
+        { provider: 'ollama', model: 'local', inputPer1M: 0, outputPer1M: 0 },
+      ],
+    },
     ...overrides,
   };
 }

@@ -28,6 +28,7 @@ import { GatewayServer, createGatewayServer } from './gateway/server.js';
 import { AIClient } from './ai/client.js';
 import { AuthStorage } from './security/auth-storage.js';
 import { AuthService } from './security/auth.js';
+import { sha256 } from './utils/crypto.js';
 import { SoulStorage } from './soul/storage.js';
 import { SoulManager } from './soul/manager.js';
 import { BrainStorage } from './brain/storage.js';
@@ -185,7 +186,8 @@ export class SecureYeoman {
       });
 
       const tokenSecret = requireSecret(this.config.gateway.auth.tokenSecret);
-      const adminPassword = requireSecret(this.config.gateway.auth.adminPasswordEnv);
+      const adminPasswordRaw = requireSecret(this.config.gateway.auth.adminPasswordEnv);
+      const adminPassword = sha256(adminPasswordRaw);
 
       this.authService = new AuthService(
         {
@@ -824,6 +826,62 @@ export class SecureYeoman {
       throw new Error('Integration storage is not available');
     }
     return this.integrationStorage;
+  }
+
+  /**
+   * Switch the AI model at runtime by recreating the AIClient.
+   * The switch is not persisted across restarts.
+   */
+  switchModel(provider: string, model: string): void {
+    this.ensureInitialized();
+
+    const validProviders = ['anthropic', 'openai', 'gemini', 'ollama'];
+    if (!validProviders.includes(provider)) {
+      throw new Error(`Invalid provider: ${provider}. Must be one of: ${validProviders.join(', ')}`);
+    }
+
+    const currentModelConfig = this.config!.model;
+
+    const newModelConfig = {
+      ...currentModelConfig,
+      provider: provider as typeof currentModelConfig.provider,
+      model,
+    };
+
+    try {
+      this.aiClient = new AIClient(
+        {
+          model: newModelConfig,
+          retryConfig: {
+            maxRetries: newModelConfig.maxRetries,
+            baseDelayMs: newModelConfig.retryDelayMs,
+          },
+        },
+        {
+          auditChain: this.auditChain ?? undefined,
+          logger: this.logger?.child({ component: 'AIClient' }),
+        },
+      );
+
+      // Update the in-memory config so getConfig() reflects the change
+      this.config = { ...this.config!, model: newModelConfig };
+
+      this.logger?.info('AI model switched at runtime', { provider, model });
+
+      void this.auditChain?.record({
+        event: 'model_switched',
+        level: 'info',
+        message: `AI model switched to ${provider}/${model}`,
+        metadata: { provider, model },
+      });
+    } catch (error) {
+      this.logger?.error('Failed to switch AI model', {
+        provider,
+        model,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw error;
+    }
   }
 
   /**
