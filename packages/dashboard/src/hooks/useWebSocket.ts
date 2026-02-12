@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { getAccessToken } from '../api/client.js';
 import type { WebSocketMessage } from '../types.js';
 
 interface UseWebSocketReturn {
@@ -36,10 +37,13 @@ export function useWebSocket(path: string): UseWebSocketReturn {
   const messageQueueRef = useRef<unknown[]>([]);
 
   const connect = useCallback(() => {
-    // Build WebSocket URL
+    // Build WebSocket URL with auth token as query param
+    // (browser WebSocket API does not support custom headers)
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const url = `${protocol}//${host}${path}`;
+    const token = getAccessToken();
+    const params = token ? `?token=${encodeURIComponent(token)}` : '';
+    const url = `${protocol}//${host}${path}${params}`;
 
     try {
       const ws = new WebSocket(url);

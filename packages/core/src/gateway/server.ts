@@ -26,6 +26,8 @@ import { registerBrainRoutes } from '../brain/brain-routes.js';
 import { registerSpiritRoutes } from '../spirit/spirit-routes.js';
 import { registerCommsRoutes } from '../comms/comms-routes.js';
 import { registerIntegrationRoutes } from '../integrations/integration-routes.js';
+import { registerChatRoutes } from '../ai/chat-routes.js';
+import { registerModelRoutes } from '../ai/model-routes.js';
 import { formatPrometheusMetrics } from './prometheus.js';
 
 /**
@@ -254,6 +256,12 @@ export class GatewayServer {
       // Integration manager may not be available — skip routes
     }
 
+    // Chat routes
+    registerChatRoutes(this.app, { secureYeoman: this.secureYeoman });
+
+    // Model info + switch routes
+    registerModelRoutes(this.app, { secureYeoman: this.secureYeoman });
+
     // Prometheus metrics endpoint (unauthenticated)
     this.app.get('/metrics', async (_request, reply) => {
       try {
@@ -465,17 +473,32 @@ export class GatewayServer {
       return this.secureYeoman.verifyAuditChain();
     });
     
-    // WebSocket endpoint
-    this.app.get('/ws/metrics', { websocket: true }, (socket, _request) => {
+    // WebSocket endpoint — auth is handled via ?token= query param
+    // (browser WebSocket API does not support custom headers)
+    this.app.get('/ws/metrics', { websocket: true }, (socket, request) => {
+      // Validate token from query string
+      if (this.authService) {
+        const url = new URL(request.url, `http://${request.hostname}`);
+        const token = url.searchParams.get('token');
+        if (!token) {
+          socket.close(4401, 'Missing authentication token');
+          return;
+        }
+        // Fire-and-forget async validation; close on failure
+        void this.authService.validateToken(token).catch(() => {
+          socket.close(4401, 'Invalid authentication token');
+        });
+      }
+
       const clientId = `client_${String(++this.clientIdCounter)}`;
-      
+
       const client: WebSocketClient = {
         ws: socket,
         channels: new Set(),
       };
-      
+
       this.clients.set(clientId, client);
-      
+
       this.getLogger().debug('WebSocket client connected', { clientId });
       
       socket.on('message', (message: Buffer) => {
