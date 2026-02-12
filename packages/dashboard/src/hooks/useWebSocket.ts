@@ -26,8 +26,9 @@ export function useWebSocket(path: string): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 10;
-  const baseReconnectDelay = 1000;
+  const maxReconnectAttempts = 5;
+  const baseReconnectDelay = 2000;
+  const maxReconnectDelay = 30000;
 
   // Track subscribed channels for re-subscription
   const subscribedChannelsRef = useRef<Set<string>>(new Set());
@@ -45,7 +46,7 @@ export function useWebSocket(path: string): UseWebSocketReturn {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.debug('WebSocket connected');
         setConnected(true);
         setReconnecting(false);
         reconnectAttempts.current = 0;
@@ -87,27 +88,30 @@ export function useWebSocket(path: string): UseWebSocketReturn {
       };
 
       ws.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason);
         setConnected(false);
         wsRef.current = null;
 
-        // Attempt to reconnect with exponential backoff
+        // Attempt to reconnect with capped exponential backoff
         if (reconnectAttempts.current < maxReconnectAttempts) {
           setReconnecting(true);
-          const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts.current);
-          console.log(`Reconnecting in ${delay}ms...`);
+          const delay = Math.min(
+            baseReconnectDelay * Math.pow(2, reconnectAttempts.current),
+            maxReconnectDelay,
+          );
+          console.debug(`WebSocket closed (${event.code}), retrying in ${(delay / 1000).toFixed(0)}s (${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
 
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
             connect();
           }, delay);
         } else {
+          console.warn('WebSocket: max reconnect attempts reached, falling back to polling');
           setReconnecting(false);
         }
       };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      ws.onerror = () => {
+        // Suppress noisy console errors — onclose handles reconnection
       };
     } catch (error) {
       console.error('Failed to create WebSocket:', error);

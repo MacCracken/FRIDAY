@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 import ReactFlow, {
   Node,
   Edge,
+  Handle,
   Background,
   Controls,
   MiniMap,
@@ -22,16 +23,18 @@ interface MetricsGraphProps {
   metrics?: MetricsSnapshot;
 }
 
-// Custom node component
+// Custom node component with explicit handles for all four sides
 function SystemNode({ data }: { data: { label: string; value: string | number; icon: React.ReactNode; status: 'ok' | 'warning' | 'error' } }) {
   const statusColor = {
     ok: 'bg-success/20 border-success',
     warning: 'bg-warning/20 border-warning',
     error: 'bg-destructive/20 border-destructive',
   }[data.status];
-  
+
   return (
     <div className={`px-4 py-3 rounded-lg border-2 ${statusColor} min-w-[140px]`}>
+      <Handle type="target" position={Position.Left} style={{ visibility: 'hidden' }} />
+      <Handle type="source" position={Position.Right} style={{ visibility: 'hidden' }} />
       <div className="flex items-center gap-2 mb-1">
         <div className="text-muted-foreground">{data.icon}</div>
         <span className="text-xs font-medium text-muted-foreground">{data.label}</span>
@@ -71,7 +74,6 @@ export function MetricsGraph({ metrics }: MetricsGraphProps) {
           icon: <Activity className="w-4 h-4" />,
           status: (metrics?.tasks?.queueDepth ?? 0) > 10 ? 'warning' : 'ok',
         },
-        sourcePosition: Position.Right,
       },
       // Audit Chain
       {
@@ -84,7 +86,6 @@ export function MetricsGraph({ metrics }: MetricsGraphProps) {
           icon: <Database className="w-4 h-4" />,
           status: metrics?.security?.auditChainValid ? 'ok' : 'error',
         },
-        targetPosition: Position.Left,
       },
       // Resources
       {
@@ -97,7 +98,6 @@ export function MetricsGraph({ metrics }: MetricsGraphProps) {
           icon: <Cpu className="w-4 h-4" />,
           status: (metrics?.resources?.memoryPercent ?? 0) > 80 ? 'warning' : 'ok',
         },
-        sourcePosition: Position.Right,
       },
       // Security
       {
@@ -110,7 +110,6 @@ export function MetricsGraph({ metrics }: MetricsGraphProps) {
           icon: <Network className="w-4 h-4" />,
           status: (metrics?.security?.injectionAttemptsTotal ?? 0) > 0 ? 'warning' : 'ok',
         },
-        targetPosition: Position.Left,
       },
     ];
     
