@@ -102,10 +102,10 @@ Foundation       Security         Infrastructure   Dashboard        Integrations
 - Soul/Personality UI (onboarding wizard, personality editor, skills manager)
 - Login page with JWT auth, automatic token refresh on 401
 - Session timeout warning, ErrorBoundary, ConfirmDialog
-- Responsive mobile layout (hamburger nav, stacked cards, hidden table columns)
+- Responsive mobile layout (hamburger nav, stacked cards, adaptive header/footer spacing)
 - Theme toggle (dark/light with localStorage persistence)
 - Settings page (agent identity, API key management, soul config overview)
-- DashboardLayout, StatusBar, NavigationTabs (memoized, 7 tabs)
+- DashboardLayout, StatusBar (inline reconnecting indicator), NavigationTabs (memoized, 9 tabs with overflow scroll)
 - 57 component tests across 5 files (Vitest + Testing Library + jsdom)
 
 ---

@@ -21,9 +21,12 @@
 ┌─────────────────────────────────────────────────────────┐
 │                   FRIDAY Dashboard                      │
 │            (React + TanStack + ReactFlow)               │
-└─────────────────────────┬───────────────────────────────┘
-                          │ WebSocket + REST
-                          ▼
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐  │
+│  │ Overview │ │   Chat   │ │  Tasks   │ │  Settings │  │
+│  └──────────┘ └────┬─────┘ └──────────┘ └───────────┘  │
+└─────────────────────┼─────────────────────────────────┘
+                      │ WebSocket + REST
+                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │                  SecureYeoman Gateway                   │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐        │
@@ -32,10 +35,13 @@
 │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘        │
 │         └───────────────┼───────────────┘               │
 │                         ▼                               │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Sandboxed Agent Engine              │   │
-│  │       (Anthropic, OpenAI, Gemini, Ollama)        │   │
-│  └──────────────────────────────────────────────────┘   │
+│  ┌──────────┐ ┌──────────────────────────────────────┐  │
+│  │   Chat   │ │         Sandboxed Agent Engine        │  │
+│  │  Routes  │ │   (Anthropic, OpenAI, Gemini, Ollama) │  │
+│  └────┬─────┘ └──────────────────────────────────────┘  │
+│       │  ┌────────────┐ ┌───────────────┐                │
+│       └──│ SoulManager│ │ Model Switch  │                │
+│          └────────────┘ └───────────────┘                │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -53,7 +59,7 @@ friday/
 │   │       └── types/         # TypeScript interfaces
 │   ├── core/                  # Agent engine
 │   │   └── src/
-│   │       ├── ai/            # Multi-provider AI client
+│   │       ├── ai/            # Multi-provider AI client, chat + model routes
 │   │       ├── cli.ts         # CLI entry point
 │   │       ├── config/        # Configuration management
 │   │       ├── gateway/       # Fastify server + auth
@@ -151,10 +157,14 @@ friday/
 - System configuration
 
 **Key Components**:
+- `DashboardLayout` - Responsive shell with adaptive header, nav, and footer
+- `StatusBar` - Inline connection/WebSocket/reconnecting status indicators
+- `NavigationTabs` - 9-tab nav with horizontal overflow scroll and mobile hamburger
 - `MetricsGraph` - ReactFlow visualization
 - `TaskHistory` - Historical task browser
 - `SecurityEvents` - Audit log viewer
 - `ConnectionManager` - Platform integration UI
+- `ChatPage` - Conversational AI interface
 
 ### 5. Brain System
 
