@@ -4,10 +4,14 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { BrainManager } from './manager.js';
+import type { HeartbeatManager } from './heartbeat.js';
+import type { ExternalBrainSync } from './external-sync.js';
 import type { MemoryType, MemoryQuery, KnowledgeQuery } from './types.js';
 
 export interface BrainRoutesOptions {
   brainManager: BrainManager;
+  heartbeatManager?: HeartbeatManager;
+  externalSync?: ExternalBrainSync;
 }
 
 function errorMessage(err: unknown): string {
@@ -18,7 +22,7 @@ export function registerBrainRoutes(
   app: FastifyInstance,
   opts: BrainRoutesOptions,
 ): void {
-  const { brainManager } = opts;
+  const { brainManager, heartbeatManager, externalSync } = opts;
 
   // ── Memories ─────────────────────────────────────────────────
 
@@ -48,7 +52,7 @@ export function registerBrainRoutes(
     try {
       const { type, content, source, context, importance } = request.body;
       const memory = brainManager.remember(type, content, source, context, importance);
-      return reply.code(201).send({ memory });
+      return await reply.code(201).send({ memory });
     } catch (err) {
       return reply.code(400).send({ error: errorMessage(err) });
     }
@@ -93,7 +97,7 @@ export function registerBrainRoutes(
     try {
       const { topic, content, source, confidence } = request.body;
       const entry = brainManager.learn(topic, content, source, confidence);
-      return reply.code(201).send({ knowledge: entry });
+      return await reply.code(201).send({ knowledge: entry });
     } catch (err) {
       return reply.code(400).send({ error: errorMessage(err) });
     }
@@ -111,5 +115,117 @@ export function registerBrainRoutes(
   app.post('/api/v1/brain/maintenance', async () => {
     const result = brainManager.runMaintenance();
     return { result };
+  });
+
+  // ── Heartbeat ──────────────────────────────────────────────
+
+  app.get('/api/v1/brain/heartbeat/status', async (
+    _request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!heartbeatManager) {
+      return reply.code(503).send({ error: 'Heartbeat system not available' });
+    }
+    return heartbeatManager.getStatus();
+  });
+
+  app.post('/api/v1/brain/heartbeat/beat', async (
+    _request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!heartbeatManager) {
+      return reply.code(503).send({ error: 'Heartbeat system not available' });
+    }
+    try {
+      const result = await heartbeatManager.beat();
+      return { result };
+    } catch (err) {
+      return reply.code(500).send({ error: errorMessage(err) });
+    }
+  });
+
+  app.get('/api/v1/brain/heartbeat/history', async (
+    request: FastifyRequest<{ Querystring: { limit?: string } }>,
+    reply: FastifyReply,
+  ) => {
+    if (!heartbeatManager) {
+      return reply.code(503).send({ error: 'Heartbeat system not available' });
+    }
+    const limit = request.query.limit ? Number(request.query.limit) : 10;
+    const memories = brainManager.recall({ source: 'heartbeat', limit });
+    return { history: memories };
+  });
+
+  // ── Audit Logs Bridge ─────────────────────────────────────
+
+  app.get('/api/v1/brain/logs', async (
+    request: FastifyRequest<{
+      Querystring: { level?: string; event?: string; limit?: string; offset?: string; from?: string; to?: string; order?: string }
+    }>,
+    reply: FastifyReply,
+  ) => {
+    try {
+      const q = request.query;
+      const result = await brainManager.queryAuditLogs({
+        level: q.level ? q.level.split(',') : undefined,
+        event: q.event ? q.event.split(',') : undefined,
+        limit: q.limit ? Number(q.limit) : undefined,
+        offset: q.offset ? Number(q.offset) : undefined,
+        from: q.from ? Number(q.from) : undefined,
+        to: q.to ? Number(q.to) : undefined,
+        order: q.order as 'asc' | 'desc' | undefined,
+      });
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) });
+    }
+  });
+
+  app.get('/api/v1/brain/logs/search', async (
+    request: FastifyRequest<{
+      Querystring: { q: string; limit?: string; offset?: string }
+    }>,
+    reply: FastifyReply,
+  ) => {
+    try {
+      const { q, limit, offset } = request.query;
+      if (!q) {
+        return await reply.code(400).send({ error: 'Query parameter "q" is required' });
+      }
+      const result = await brainManager.searchAuditLogs(q, {
+        limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
+      });
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) });
+    }
+  });
+
+  // ── External Brain Sync ───────────────────────────────────
+
+  app.get('/api/v1/brain/sync/status', async (
+    _request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!externalSync) {
+      return reply.code(503).send({ error: 'External brain sync not configured' });
+    }
+    return externalSync.getStatus();
+  });
+
+  app.post('/api/v1/brain/sync', async (
+    _request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (!externalSync) {
+      return reply.code(503).send({ error: 'External brain sync not configured' });
+    }
+    try {
+      const result = await externalSync.sync();
+      return { result };
+    } catch (err) {
+      return reply.code(500).send({ error: errorMessage(err) });
+    }
   });
 }

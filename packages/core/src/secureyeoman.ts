@@ -44,6 +44,9 @@ import { TelegramIntegration } from './integrations/telegram/index.js';
 import { DiscordIntegration } from './integrations/discord/index.js';
 import { SlackIntegration } from './integrations/slack/index.js';
 import { GitHubIntegration } from './integrations/github/index.js';
+import { IMessageIntegration } from './integrations/imessage/index.js';
+import { HeartbeatManager } from './brain/heartbeat.js';
+import { ExternalBrainSync } from './brain/external-sync.js';
 import type { Config, TaskCreate, Task, MetricsSnapshot } from '@friday/shared';
 
 export interface SecureYeomanOptions {
@@ -84,6 +87,8 @@ export class SecureYeoman {
   private rbacStorage: RBACStorage | null = null;
   private brainStorage: BrainStorage | null = null;
   private brainManager: BrainManager | null = null;
+  private heartbeatManager: HeartbeatManager | null = null;
+  private externalBrainSync: ExternalBrainSync | null = null;
   private spiritStorage: SpiritStorage | null = null;
   private spiritManager: SpiritManager | null = null;
   private soulStorage: SoulStorage | null = null;
@@ -302,6 +307,9 @@ export class SecureYeoman {
         {
           auditChain: this.auditChain,
           logger: this.logger.child({ component: 'BrainManager' }),
+          auditStorage: (this.auditStorage && 'query' in this.auditStorage && 'searchFullText' in this.auditStorage)
+            ? this.auditStorage as unknown as import('./brain/types.js').AuditStorage
+            : undefined,
         },
       );
       this.logger.debug('Brain manager initialized');
@@ -442,10 +450,40 @@ export class SecureYeoman {
       this.integrationManager.registerPlatform('discord', () => new DiscordIntegration());
       this.integrationManager.registerPlatform('slack', () => new SlackIntegration());
       this.integrationManager.registerPlatform('github', () => new GitHubIntegration());
+      this.integrationManager.registerPlatform('imessage', () => new IMessageIntegration());
       // Start auto-reconnect health checks
       this.integrationManager.startHealthChecks();
 
       this.logger.debug('Integration manager and message router initialized');
+
+      // Step 6.6: Initialize heartbeat system
+      if (this.config.heartbeat?.enabled !== false) {
+        this.heartbeatManager = new HeartbeatManager(
+          this.brainManager!,
+          this.auditChain,
+          this.logger.child({ component: 'HeartbeatManager' }),
+          this.config.heartbeat,
+          this.integrationManager,
+        );
+        this.heartbeatManager.start();
+        this.logger.debug('Heartbeat manager started', {
+          intervalMs: this.config.heartbeat.intervalMs,
+        });
+      }
+
+      // Step 6.7: Initialize external brain sync (if configured)
+      if (this.config.externalBrain?.enabled && this.config.externalBrain.path) {
+        this.externalBrainSync = new ExternalBrainSync(
+          this.brainManager!,
+          this.config.externalBrain,
+          this.logger.child({ component: 'ExternalBrainSync' }),
+        );
+        this.externalBrainSync.start();
+        this.logger.debug('External brain sync initialized', {
+          provider: this.config.externalBrain.provider,
+          path: this.config.externalBrain.path,
+        });
+      }
 
       // Step 7: Record initialization in audit log
       await this.auditChain.record({
@@ -762,6 +800,22 @@ export class SecureYeoman {
   }
 
   /**
+   * Get the heartbeat manager instance (may be null if heartbeat is disabled)
+   */
+  getHeartbeatManager(): HeartbeatManager | null {
+    this.ensureInitialized();
+    return this.heartbeatManager;
+  }
+
+  /**
+   * Get the external brain sync instance (may be null if not configured)
+   */
+  getExternalBrainSync(): ExternalBrainSync | null {
+    this.ensureInitialized();
+    return this.externalBrainSync;
+  }
+
+  /**
    * Get the integration storage instance
    */
   getIntegrationStorage(): IntegrationStorage {
@@ -922,6 +976,18 @@ export class SecureYeoman {
     if (this.taskStorage) {
       this.taskStorage.close();
       this.taskStorage = null;
+    }
+
+    // Stop external brain sync
+    if (this.externalBrainSync) {
+      this.externalBrainSync.stop();
+      this.externalBrainSync = null;
+    }
+
+    // Stop heartbeat
+    if (this.heartbeatManager) {
+      this.heartbeatManager.stop();
+      this.heartbeatManager = null;
     }
 
     // Close conversation manager

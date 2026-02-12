@@ -13,6 +13,12 @@ export type {
 
 import type { AuditChain } from '../logging/audit-chain.js';
 import type { SecureLogger } from '../logging/logger.js';
+import type { AuditQueryOptions, AuditQueryResult } from '../logging/sqlite-storage.js';
+
+export interface AuditStorage {
+  query(opts: AuditQueryOptions): Promise<AuditQueryResult>;
+  searchFullText(query: string, opts?: { limit?: number; offset?: number }): Promise<AuditQueryResult>;
+}
 
 export interface Memory {
   id: string;
@@ -82,6 +88,7 @@ export interface SkillFilter {
 export interface BrainManagerDeps {
   auditChain: AuditChain;
   logger: SecureLogger;
+  auditStorage?: AuditStorage;
 }
 
 export interface BrainStats {

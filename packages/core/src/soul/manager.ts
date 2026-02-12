@@ -22,6 +22,9 @@ import type {
   Tool,
   SoulManagerDeps,
   SkillFilter,
+  UserProfile,
+  UserProfileCreate,
+  UserProfileUpdate,
 } from './types.js';
 
 export class SoulManager {
@@ -193,6 +196,36 @@ export class SoulManager {
     this.storage.deleteSkill(id);
   }
 
+  // ── Users ──────────────────────────────────────────────────
+
+  getUser(id: string): UserProfile | null {
+    return this.storage.getUser(id);
+  }
+
+  getUserByName(name: string): UserProfile | null {
+    return this.storage.getUserByName(name);
+  }
+
+  getOwner(): UserProfile | null {
+    return this.storage.getOwner();
+  }
+
+  createUser(data: UserProfileCreate): UserProfile {
+    return this.storage.createUser(data);
+  }
+
+  updateUser(id: string, data: UserProfileUpdate): UserProfile {
+    return this.storage.updateUser(id, data);
+  }
+
+  deleteUser(id: string): boolean {
+    return this.storage.deleteUser(id);
+  }
+
+  listUsers(): UserProfile[] {
+    return this.storage.listUsers();
+  }
+
   // ── Learning ────────────────────────────────────────────────
 
   proposeSkill(data: Omit<SkillCreate, 'source' | 'status'>): Skill {
@@ -238,7 +271,7 @@ export class SoulManager {
     const agentName = this.storage.getAgentName();
     const personality = this.storage.getActivePersonality();
 
-    if (agentName && (!personality || personality.name !== agentName)) {
+    if (agentName && personality?.name !== agentName) {
       parts.push(`Your name is ${agentName}.`);
     }
 
@@ -262,6 +295,19 @@ export class SoulManager {
         const traitStr = traitEntries.map(([k, v]) => `${k}: ${v}`).join(', ');
         parts.push(`Traits: ${traitStr}`);
       }
+    }
+
+    // User context injection
+    const owner = this.storage.getOwner();
+    if (owner) {
+      const userParts: string[] = [`Owner: ${owner.name}`];
+      if (owner.nickname) userParts.push(`Nickname: ${owner.nickname}`);
+      if (owner.notes) userParts.push(`Notes: ${owner.notes}`);
+      const prefEntries = Object.entries(owner.preferences);
+      if (prefEntries.length > 0) {
+        userParts.push('Preferences: ' + prefEntries.map(([k, v]) => `${k}: ${v}`).join(', '));
+      }
+      parts.push('## User Context\n' + userParts.join('\n'));
     }
 
     // Spirit context injection (passions, inspirations, pains)

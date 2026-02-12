@@ -8,7 +8,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Personality, PersonalityCreate, PersonalityUpdate, Skill, SkillCreate, SkillUpdate } from './types.js';
+import type { Personality, PersonalityCreate, PersonalityUpdate, Skill, SkillCreate, SkillUpdate, UserProfile, UserProfileCreate, UserProfileUpdate } from './types.js';
 import type { SkillFilter } from './types.js';
 import { uuidv7 } from '../utils/crypto.js';
 
@@ -66,6 +66,30 @@ function rowToPersonality(row: PersonalityRow): Personality {
   };
 }
 
+interface UserRow {
+  id: string;
+  name: string;
+  nickname: string;
+  relationship: string;
+  preferences: string;   // JSON
+  notes: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function rowToUser(row: UserRow): UserProfile {
+  return {
+    id: row.id,
+    name: row.name,
+    nickname: row.nickname,
+    relationship: row.relationship as UserProfile['relationship'],
+    preferences: safeJsonParse<Record<string, string>>(row.preferences, {}),
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function rowToSkill(row: SkillRow): Skill {
   return {
     id: row.id,
@@ -115,6 +139,17 @@ export class SoulStorage {
         voice TEXT NOT NULL DEFAULT '',
         preferred_language TEXT NOT NULL DEFAULT '',
         is_active INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        nickname TEXT NOT NULL DEFAULT '',
+        relationship TEXT NOT NULL DEFAULT 'user',
+        preferences TEXT NOT NULL DEFAULT '{}',
+        notes TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -270,7 +305,7 @@ export class SoulStorage {
         instructions: data.instructions ?? '',
         tools: JSON.stringify(data.tools ?? []),
         trigger_patterns: JSON.stringify(data.triggerPatterns ?? []),
-        enabled: data.enabled !== false ? 1 : 0,
+        enabled: (data.enabled ?? true) ? 1 : 0,
         source: data.source ?? 'user',
         status: data.status ?? 'active',
         created_at: now,
@@ -401,6 +436,101 @@ export class SoulStorage {
          ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = @updated_at`,
       )
       .run({ value: name, updated_at: Date.now() });
+  }
+
+  // ── Users ───────────────────────────────────────────────────
+
+  createUser(data: UserProfileCreate): UserProfile {
+    const now = Date.now();
+    const id = uuidv7();
+
+    this.db
+      .prepare(
+        `INSERT INTO users (id, name, nickname, relationship, preferences, notes, created_at, updated_at)
+         VALUES (@id, @name, @nickname, @relationship, @preferences, @notes, @created_at, @updated_at)`,
+      )
+      .run({
+        id,
+        name: data.name,
+        nickname: data.nickname ?? '',
+        relationship: data.relationship ?? 'user',
+        preferences: JSON.stringify(data.preferences ?? {}),
+        notes: data.notes ?? '',
+        created_at: now,
+        updated_at: now,
+      });
+
+    const result = this.getUser(id);
+    if (!result) throw new Error(`Failed to retrieve user after insert: ${id}`);
+    return result;
+  }
+
+  getUser(id: string): UserProfile | null {
+    const row = this.db
+      .prepare('SELECT * FROM users WHERE id = ?')
+      .get(id) as UserRow | undefined;
+    return row ? rowToUser(row) : null;
+  }
+
+  getUserByName(name: string): UserProfile | null {
+    const row = this.db
+      .prepare('SELECT * FROM users WHERE name = ? COLLATE NOCASE LIMIT 1')
+      .get(name) as UserRow | undefined;
+    return row ? rowToUser(row) : null;
+  }
+
+  getOwner(): UserProfile | null {
+    const row = this.db
+      .prepare("SELECT * FROM users WHERE relationship = 'owner' LIMIT 1")
+      .get() as UserRow | undefined;
+    return row ? rowToUser(row) : null;
+  }
+
+  updateUser(id: string, data: UserProfileUpdate): UserProfile {
+    const existing = this.getUser(id);
+    if (!existing) {
+      throw new Error(`User not found: ${id}`);
+    }
+
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE users SET
+           name = @name,
+           nickname = @nickname,
+           relationship = @relationship,
+           preferences = @preferences,
+           notes = @notes,
+           updated_at = @updated_at
+         WHERE id = @id`,
+      )
+      .run({
+        id,
+        name: data.name ?? existing.name,
+        nickname: data.nickname ?? existing.nickname,
+        relationship: data.relationship ?? existing.relationship,
+        preferences: JSON.stringify(data.preferences ?? existing.preferences),
+        notes: data.notes ?? existing.notes,
+        updated_at: now,
+      });
+
+    const result = this.getUser(id);
+    if (!result) throw new Error(`Failed to retrieve user after update: ${id}`);
+    return result;
+  }
+
+  deleteUser(id: string): boolean {
+    const info = this.db
+      .prepare('DELETE FROM users WHERE id = ?')
+      .run(id);
+    return info.changes > 0;
+  }
+
+  listUsers(): UserProfile[] {
+    const rows = this.db
+      .prepare('SELECT * FROM users ORDER BY created_at DESC')
+      .all() as UserRow[];
+    return rows.map(rowToUser);
   }
 
   close(): void {

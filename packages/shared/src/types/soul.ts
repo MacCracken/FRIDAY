@@ -193,6 +193,93 @@ export type PainCreate = z.infer<typeof PainCreateSchema>;
 export const PainUpdateSchema = PainCreateSchema.partial();
 export type PainUpdate = z.infer<typeof PainUpdateSchema>;
 
+// ─── User Profile ──────────────────────────────────────────
+
+export const UserRelationshipSchema = z.enum(['owner', 'collaborator', 'user', 'guest']);
+export type UserRelationship = z.infer<typeof UserRelationshipSchema>;
+
+export const UserProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(200),
+  nickname: z.string().max(100).default(''),
+  relationship: UserRelationshipSchema.default('user'),
+  preferences: z.record(z.string(), z.string()).default({}),
+  notes: z.string().max(2000).default(''),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export type UserProfile = z.infer<typeof UserProfileSchema>;
+
+export const UserProfileCreateSchema = UserProfileSchema.omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type UserProfileCreate = z.infer<typeof UserProfileCreateSchema>;
+
+export const UserProfileUpdateSchema = UserProfileCreateSchema.partial();
+export type UserProfileUpdate = z.infer<typeof UserProfileUpdateSchema>;
+
+// ─── Heartbeat ─────────────────────────────────────────────
+
+export const HeartbeatCheckTypeSchema = z.enum([
+  'system_health',
+  'memory_status',
+  'log_anomalies',
+  'integration_health',
+  'custom',
+]);
+export type HeartbeatCheckType = z.infer<typeof HeartbeatCheckTypeSchema>;
+
+export const HeartbeatCheckSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: HeartbeatCheckTypeSchema,
+  enabled: z.boolean().default(true),
+  config: z.record(z.string(), z.unknown()).default({}),
+});
+
+export type HeartbeatCheck = z.infer<typeof HeartbeatCheckSchema>;
+
+export const HeartbeatConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  intervalMs: z.number().int().min(5000).max(3_600_000).default(60_000),
+  checks: z.array(HeartbeatCheckSchema).default([
+    { name: 'system_health', type: 'system_health', enabled: true, config: {} },
+    { name: 'memory_status', type: 'memory_status', enabled: true, config: {} },
+    { name: 'log_anomalies', type: 'log_anomalies', enabled: true, config: {} },
+  ]),
+}).default({});
+
+export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
+
+// ─── External Brain Sync ───────────────────────────────────
+
+export const ExternalBrainProviderSchema = z.enum(['obsidian', 'git_repo', 'filesystem']);
+export type ExternalBrainProvider = z.infer<typeof ExternalBrainProviderSchema>;
+
+export const ExternalBrainConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: ExternalBrainProviderSchema.default('obsidian'),
+  /** Absolute path to the vault/repo root directory */
+  path: z.string().default(''),
+  /** Subdirectory within the vault for FRIDAY notes (e.g. "30 - Resources/FRIDAY") */
+  subdir: z.string().default(''),
+  /** Auto-sync interval in ms (0 = manual only) */
+  syncIntervalMs: z.number().int().min(0).max(86_400_000).default(0),
+  /** Which memory types to sync */
+  syncMemories: z.boolean().default(true),
+  /** Which knowledge entries to sync */
+  syncKnowledge: z.boolean().default(true),
+  /** Include frontmatter/metadata in exported markdown */
+  includeFrontmatter: z.boolean().default(true),
+  /** Tag prefix for Obsidian tags (e.g. "friday/" → #friday/memory) */
+  tagPrefix: z.string().max(50).default('friday/'),
+}).default({});
+
+export type ExternalBrainConfig = z.infer<typeof ExternalBrainConfigSchema>;
+
 // ─── Body Config (stub — v2/v3) ────────────────────────────
 
 export const BodyConfigSchema = z.object({

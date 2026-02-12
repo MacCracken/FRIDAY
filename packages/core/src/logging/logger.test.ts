@@ -12,7 +12,7 @@ import {
 const minimalConfig = {
   level: 'trace' as const,
   format: 'json' as const,
-  output: [{ type: 'stdout' as const, format: 'json' as const }],
+  output: [],
   audit: {
     enabled: true,
     signingKeyEnv: 'AUDIT_SIGNING_KEY',

@@ -584,6 +584,68 @@ List skills with filtering.
 }
 ```
 
+#### GET /api/v1/soul/users
+
+List all registered users.
+
+**Response**
+```json
+{
+  "users": [
+    {
+      "id": "user_abc",
+      "name": "Alice",
+      "nickname": "Al",
+      "relationship": "owner",
+      "preferences": { "theme": "dark" },
+      "notes": "Primary operator",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    }
+  ]
+}
+```
+
+#### GET /api/v1/soul/owner
+
+Get the user with `relationship: "owner"`.
+
+**Response**
+```json
+{
+  "owner": { "id": "user_abc", "name": "Alice", "relationship": "owner", "..." : "..." }
+}
+```
+
+#### GET /api/v1/soul/users/:id
+
+Get a specific user by ID.
+
+#### POST /api/v1/soul/users
+
+Create a new user.
+
+**Request Body**
+```json
+{
+  "name": "Alice",
+  "nickname": "Al",
+  "relationship": "owner",
+  "preferences": { "theme": "dark" },
+  "notes": "Primary operator"
+}
+```
+
+Allowed `relationship` values: `owner`, `collaborator`, `user`, `guest`.
+
+#### PUT /api/v1/soul/users/:id
+
+Update an existing user.
+
+#### DELETE /api/v1/soul/users/:id
+
+Delete a user.
+
 ---
 
 ### Brain System
@@ -721,6 +783,105 @@ Run brain maintenance (decay and prune expired memories).
 {
   "decayed": 10,
   "pruned": 3
+}
+```
+
+#### GET /api/v1/brain/heartbeat/status
+
+Get heartbeat system status.
+
+**Response**
+```json
+{
+  "running": true,
+  "enabled": true,
+  "intervalMs": 60000,
+  "beatCount": 42,
+  "lastBeat": {
+    "timestamp": 1700100000000,
+    "durationMs": 15,
+    "checks": [
+      { "name": "system_health", "type": "system_health", "status": "ok", "message": "Memories: 150, Knowledge: 45, Heap: 64/128MB" },
+      { "name": "memory_status", "type": "memory_status", "status": "ok", "message": "Maintenance: 2 decayed, 0 pruned" }
+    ]
+  }
+}
+```
+
+#### POST /api/v1/brain/heartbeat/beat
+
+Trigger a manual heartbeat check.
+
+**Response**
+```json
+{
+  "result": {
+    "timestamp": 1700100000000,
+    "durationMs": 15,
+    "checks": [ "..." ]
+  }
+}
+```
+
+#### GET /api/v1/brain/heartbeat/history
+
+Get recent heartbeat results (stored as episodic memories with `source: "heartbeat"`).
+
+**Query Parameters**
+- `limit` (optional): Number of results (default: 10)
+
+#### GET /api/v1/brain/logs
+
+Query audit logs through the Brain memory-logs bridge.
+
+**Query Parameters**
+- `level` (optional): Comma-separated levels (e.g. `error,warn`)
+- `event` (optional): Comma-separated event types
+- `from` (optional): Start timestamp (Unix ms)
+- `to` (optional): End timestamp (Unix ms)
+- `limit` (optional): Number of results (default: 50)
+- `offset` (optional): Pagination offset
+- `order` (optional): `asc` or `desc`
+
+#### GET /api/v1/brain/logs/search
+
+Full-text search audit logs through the Brain.
+
+**Query Parameters**
+- `q` (required): FTS5 search query (e.g. `"error OR warning"`, `deploy*`)
+- `limit` (optional): Number of results (default: 50)
+- `offset` (optional): Pagination offset
+
+#### GET /api/v1/brain/sync/status
+
+Get external brain sync status (Obsidian/git repo/filesystem).
+
+**Response**
+```json
+{
+  "enabled": true,
+  "provider": "obsidian",
+  "path": "/Users/me/Repos/second-brain",
+  "autoSync": false,
+  "lastSync": { "memoriesWritten": 10, "knowledgeWritten": 5, "durationMs": 200, "..." : "..." }
+}
+```
+
+#### POST /api/v1/brain/sync
+
+Trigger a manual sync of memories and knowledge to the external provider.
+
+**Response**
+```json
+{
+  "result": {
+    "memoriesWritten": 10,
+    "memoriesRemoved": 2,
+    "knowledgeWritten": 5,
+    "knowledgeRemoved": 0,
+    "timestamp": 1700100000000,
+    "durationMs": 200
+  }
 }
 ```
 

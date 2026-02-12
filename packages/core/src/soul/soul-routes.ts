@@ -4,7 +4,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { SoulManager } from './manager.js';
-import type { PersonalityCreate, PersonalityUpdate, SkillCreate, SkillUpdate } from './types.js';
+import type { PersonalityCreate, PersonalityUpdate, SkillCreate, SkillUpdate, UserProfileCreate, UserProfileUpdate } from './types.js';
 
 export interface SoulRoutesOptions {
   soulManager: SoulManager;
@@ -38,7 +38,7 @@ export function registerSoulRoutes(
   ) => {
     try {
       const personality = soulManager.createPersonality(request.body);
-      return reply.code(201).send({ personality });
+      return await reply.code(201).send({ personality });
     } catch (err) {
       return reply.code(400).send({ error: errorMessage(err) });
     }
@@ -97,7 +97,7 @@ export function registerSoulRoutes(
   ) => {
     try {
       const skill = soulManager.createSkill(request.body);
-      return reply.code(201).send({ skill });
+      return await reply.code(201).send({ skill });
     } catch (err) {
       return reply.code(400).send({ error: errorMessage(err) });
     }
@@ -170,6 +170,68 @@ export function registerSoulRoutes(
     try {
       soulManager.rejectSkill(request.params.id);
       return { message: 'Skill rejected' };
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) });
+    }
+  });
+
+  // ── Users ──────────────────────────────────────────────────
+
+  app.get('/api/v1/soul/users', async () => {
+    const users = soulManager.listUsers();
+    return { users };
+  });
+
+  app.get('/api/v1/soul/owner', async () => {
+    const owner = soulManager.getOwner();
+    return { owner };
+  });
+
+  app.get('/api/v1/soul/users/:id', async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) => {
+    const user = soulManager.getUser(request.params.id);
+    if (!user) {
+      return reply.code(404).send({ error: 'User not found' });
+    }
+    return { user };
+  });
+
+  app.post('/api/v1/soul/users', async (
+    request: FastifyRequest<{ Body: UserProfileCreate }>,
+    reply: FastifyReply,
+  ) => {
+    try {
+      const user = soulManager.createUser(request.body);
+      return await reply.code(201).send({ user });
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) });
+    }
+  });
+
+  app.put('/api/v1/soul/users/:id', async (
+    request: FastifyRequest<{ Params: { id: string }; Body: UserProfileUpdate }>,
+    reply: FastifyReply,
+  ) => {
+    try {
+      const user = soulManager.updateUser(request.params.id, request.body);
+      return { user };
+    } catch (err) {
+      return reply.code(404).send({ error: errorMessage(err) });
+    }
+  });
+
+  app.delete('/api/v1/soul/users/:id', async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) => {
+    try {
+      const deleted = soulManager.deleteUser(request.params.id);
+      if (!deleted) {
+        return await reply.code(404).send({ error: 'User not found' });
+      }
+      return { message: 'User deleted' };
     } catch (err) {
       return reply.code(400).send({ error: errorMessage(err) });
     }
@@ -251,7 +313,7 @@ export function registerSoulRoutes(
       const personality = soulManager.createPersonality(data);
       soulManager.setPersonality(personality.id);
 
-      return reply.code(201).send({
+      return await reply.code(201).send({
         agentName: soulManager.getAgentName(),
         personality: soulManager.getActivePersonality(),
       });

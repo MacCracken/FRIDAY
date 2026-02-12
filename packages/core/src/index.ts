@@ -171,6 +171,11 @@ export {
 export {
   BrainStorage,
   BrainManager,
+  HeartbeatManager,
+  ExternalBrainSync,
+  type HeartbeatResult,
+  type HeartbeatCheckResult,
+  type SyncResult,
   type Memory,
   type MemoryType,
   type MemoryCreate,
@@ -180,6 +185,7 @@ export {
   type KnowledgeQuery,
   type BrainManagerDeps,
   type BrainStats,
+  type AuditStorage,
 } from './brain/index.js';
 
 export {

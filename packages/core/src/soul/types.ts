@@ -15,6 +15,15 @@ export type {
   SkillStatus,
   LearningMode,
   SoulConfig,
+  UserProfile,
+  UserProfileCreate,
+  UserProfileUpdate,
+  UserRelationship,
+  HeartbeatConfig,
+  HeartbeatCheck,
+  HeartbeatCheckType,
+  ExternalBrainConfig,
+  ExternalBrainProvider,
 } from '@friday/shared';
 
 export type { Tool } from '@friday/shared';

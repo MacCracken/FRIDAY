@@ -184,6 +184,31 @@ soul:
     - user_authored              # user_authored | ai_proposed | autonomous
   maxSkills: 50                  # max 200
   maxPromptTokens: 4096          # max 32000
+
+heartbeat:
+  enabled: true
+  intervalMs: 60000              # check every 60 seconds
+  checks:
+    - name: system_health
+      type: system_health
+      enabled: true
+    - name: memory_status
+      type: memory_status
+      enabled: true
+    - name: log_anomalies
+      type: log_anomalies
+      enabled: true
+
+externalBrain:
+  enabled: false
+  provider: obsidian             # obsidian | git_repo | filesystem
+  path: ~/Repos/second-brain
+  subdir: "30 - Resources/FRIDAY"
+  syncIntervalMs: 0              # 0 = manual sync only
+  syncMemories: true
+  syncKnowledge: true
+  includeFrontmatter: true
+  tagPrefix: "friday/"
 ```
 
 ---
@@ -281,6 +306,54 @@ Each entry in the `fallbacks` array configures an alternative model to try when 
 | `learningMode` | string[] | `["user_authored"]` | Allowed skill sources |
 | `maxSkills` | number | `50` | Maximum number of skills (max 200) |
 | `maxPromptTokens` | number | `4096` | Token budget for composed system prompt |
+
+### heartbeat
+
+Periodic self-check system that monitors system health, memory status, and log anomalies.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable the heartbeat system |
+| `intervalMs` | number | `60000` | Check interval in milliseconds (min: 5000, max: 3600000) |
+| `checks` | array | *(see below)* | List of checks to run each heartbeat |
+
+#### heartbeat.checks[]
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Display name for the check |
+| `type` | enum | — | `system_health`, `memory_status`, `log_anomalies`, `integration_health`, `custom` |
+| `enabled` | boolean | `true` | Whether this check is active |
+| `config` | object | `{}` | Type-specific configuration |
+
+Default checks: `system_health`, `memory_status`, `log_anomalies`.
+
+### externalBrain
+
+Sync Brain memories and knowledge to an external program (e.g. Obsidian vault, git repo).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable external brain sync |
+| `provider` | enum | `"obsidian"` | `obsidian`, `git_repo`, or `filesystem` |
+| `path` | string | `""` | Absolute path to vault/repo root |
+| `subdir` | string | `""` | Subdirectory for FRIDAY notes (e.g. `"30 - Resources/FRIDAY"`) |
+| `syncIntervalMs` | number | `0` | Auto-sync interval in ms (0 = manual only) |
+| `syncMemories` | boolean | `true` | Export memories as Markdown files |
+| `syncKnowledge` | boolean | `true` | Export knowledge as Markdown files |
+| `includeFrontmatter` | boolean | `true` | Include YAML frontmatter with metadata |
+| `tagPrefix` | string | `"friday/"` | Prefix for Obsidian tags |
+
+Example:
+```yaml
+externalBrain:
+  enabled: true
+  provider: obsidian
+  path: /home/user/Repos/second-brain
+  subdir: "30 - Resources/FRIDAY"
+  syncIntervalMs: 300000  # every 5 minutes
+  tagPrefix: "friday/"
+```
 
 ---
 

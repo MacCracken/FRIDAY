@@ -10,6 +10,7 @@ FRIDAY supports multiple platform integrations for receiving and responding to m
 | Discord  | Stable | Slash commands, embeds, guild messages |
 | Slack    | Stable | Socket mode, slash commands, mentions |
 | GitHub   | Stable | Webhooks, issue comments, PR events |
+| iMessage | Beta   | macOS only, AppleScript send, chat.db polling |
 
 ## Telegram
 
@@ -132,6 +133,43 @@ curl -X POST http://localhost:3000/api/v1/integrations \
 ### Sending Responses
 FRIDAY responds to GitHub events by posting comments. The `chatId` format is:
 `owner/repo/issues/123` or `owner/repo/pulls/456`
+
+## iMessage (macOS)
+
+### Requirements
+- macOS with Messages.app
+- Full Disk Access permission granted to the FRIDAY process (needed to read `~/Library/Messages/chat.db`)
+- `osascript` available in PATH
+
+### Setup
+
+```bash
+curl -X POST http://localhost:3000/api/v1/integrations \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "imessage",
+    "displayName": "FRIDAY iMessage",
+    "enabled": true,
+    "config": {
+      "pollIntervalMs": 5000
+    }
+  }'
+```
+
+### Config Options
+- `pollIntervalMs` (optional, default: 5000) — How often to check for new messages
+- `chatDb` (optional) — Custom path to the Messages database (defaults to `~/Library/Messages/chat.db`)
+
+### How It Works
+- **Inbound**: Polls `chat.db` for new messages at the configured interval
+- **Outbound**: Uses AppleScript (`osascript`) to send messages via Messages.app
+- **chatId**: The recipient's phone number or Apple ID email address
+
+### Limitations
+- macOS only — will not work on Linux or Windows
+- Requires Full Disk Access for the process
+- Rate limited to 5 messages/second to avoid overwhelming Messages.app
 
 ## API Reference
 

@@ -13,12 +13,12 @@ import type {
   MemoryCreate,
   MemoryQuery,
   KnowledgeEntry,
-  KnowledgeCreate,
   KnowledgeQuery,
   SkillFilter,
   BrainManagerDeps,
   BrainStats,
 } from './types.js';
+import type { AuditQueryOptions, AuditQueryResult } from '../logging/sqlite-storage.js';
 import type { Skill, SkillCreate, SkillUpdate, Tool, BrainConfig } from '@friday/shared';
 
 export class BrainManager {
@@ -255,6 +255,26 @@ export class BrainManager {
 
   getEnabledSkills(): Skill[] {
     return this.storage.getEnabledSkills();
+  }
+
+  // ── Audit Log Bridge ─────────────────────────────────────
+
+  async queryAuditLogs(opts: AuditQueryOptions = {}): Promise<AuditQueryResult> {
+    if (!this.deps.auditStorage) {
+      throw new Error('Audit storage is not available in BrainManager');
+    }
+    return this.deps.auditStorage.query(opts);
+  }
+
+  async searchAuditLogs(query: string, opts?: { limit?: number; offset?: number }): Promise<AuditQueryResult> {
+    if (!this.deps.auditStorage) {
+      throw new Error('Audit storage is not available in BrainManager');
+    }
+    return this.deps.auditStorage.searchFullText(query, opts);
+  }
+
+  hasAuditStorage(): boolean {
+    return !!this.deps.auditStorage;
   }
 
   // ── Maintenance ────────────────────────────────────────────
