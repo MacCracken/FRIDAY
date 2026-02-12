@@ -5,17 +5,12 @@ services:
       - "18789:18789"
     volumes:
       - friday-data:/app/data
+    env_file: .env
     environment:
-      SECUREYEOMAN_SIGNING_KEY: "${SECUREYEOMAN_SIGNING_KEY:-change-me-signing-key-at-least-32-characters}"
-      SECUREYEOMAN_TOKEN_SECRET: "${SECUREYEOMAN_TOKEN_SECRET:-change-me-token-secret-at-least-32-characters}"
-      SECUREYEOMAN_ENCRYPTION_KEY: "${SECUREYEOMAN_ENCRYPTION_KEY:-change-me-encryption-key-at-least-32-chars}"
-      SECUREYEOMAN_ADMIN_PASSWORD: "${SECUREYEOMAN_ADMIN_PASSWORD:-change-me-admin-password-at-least-32-chars}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      GOOGLE_GENERATIVE_AI_API_KEY: "${GOOGLE_GENERATIVE_AI_API_KEY:-}"
+      SECUREYEOMAN_HOST: "0.0.0.0"
       NODE_ENV: production
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:18789/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:18789/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -27,12 +22,13 @@ services:
     working_dir: /app
     command: sh -c "npm install && npm run dev:dashboard"
     ports:
-      - "5173:5173"
+      - "3000:3000"
     volumes:
       - .:/app
       - dashboard-node-modules:/app/node_modules
     environment:
       VITE_API_URL: "http://core:18789"
+      VITE_HOST: "0.0.0.0"
     depends_on:
       core:
         condition: service_healthy

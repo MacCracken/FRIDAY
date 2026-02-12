@@ -84,7 +84,7 @@ docker compose up
 
 # Or manual build
 docker build -t friday .
-docker run -p 18789:18789 -p 3000:3000 friday
+docker run --env-file .env -p 18789:18789 friday
 ```
 
 ### Environment Setup

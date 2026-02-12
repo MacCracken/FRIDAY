@@ -47,7 +47,7 @@ Docker Compose starts two services:
 | Service | Port | Description |
 |---------|------|-------------|
 | `core` | 18789 | Gateway API + agent engine |
-| `dashboard` | 5173 | Vite dev server for the React dashboard |
+| `dashboard` | 3000 | Vite dev server for the React dashboard |
 
 The core service runs as a non-root `friday` user with a persistent volume (`friday-data`) for SQLite databases.
 

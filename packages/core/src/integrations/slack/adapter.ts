@@ -5,7 +5,7 @@
  * Normalizes inbound messages to UnifiedMessage with `sl_` prefix.
  */
 
-import { App, type GenericMessageEvent } from '@slack/bolt';
+import { App } from '@slack/bolt';
 import type { IntegrationConfig, UnifiedMessage, Platform } from '@friday/shared';
 import type { Integration, IntegrationDeps, PlatformRateLimit } from '../types.js';
 import type { SecureLogger } from '../../logging/logger.js';
@@ -43,21 +43,22 @@ export class SlackIntegration implements Integration {
     });
 
     // Listen for regular messages
-    this.app.message(async ({ message, say }) => {
-      const msg = message as GenericMessageEvent;
+    this.app.message(async ({ message }) => {
+      const msg = message as Record<string, any>;
       if (msg.subtype) return; // skip edited, deleted, etc.
       if (!msg.text) return;
 
+      const files = (msg.files ?? []) as Array<Record<string, any>>;
       const unified: UnifiedMessage = {
         id: `sl_${msg.ts}`,
         integrationId: config.id,
         platform: 'slack',
         direction: 'inbound',
-        senderId: msg.user ?? '',
-        senderName: msg.user ?? 'Unknown',
-        chatId: msg.channel,
-        text: msg.text,
-        attachments: (msg.files ?? []).map((f) => ({
+        senderId: String(msg.user ?? ''),
+        senderName: String(msg.user ?? 'Unknown'),
+        chatId: String(msg.channel),
+        text: String(msg.text),
+        attachments: files.map((f: Record<string, any>) => ({
           type: 'file' as const,
           url: f.url_private ?? undefined,
           fileName: f.name ?? undefined,
@@ -65,7 +66,7 @@ export class SlackIntegration implements Integration {
           size: f.size ?? undefined,
         })),
         replyToMessageId: msg.thread_ts ?? undefined,
-        platformMessageId: msg.ts,
+        platformMessageId: String(msg.ts),
         metadata: {
           threadTs: msg.thread_ts,
           channelType: msg.channel_type,
@@ -83,8 +84,8 @@ export class SlackIntegration implements Integration {
         integrationId: config.id,
         platform: 'slack',
         direction: 'inbound',
-        senderId: event.user,
-        senderName: event.user,
+        senderId: event.user ?? '',
+        senderName: event.user ?? 'Unknown',
         chatId: event.channel,
         text: event.text,
         attachments: [],

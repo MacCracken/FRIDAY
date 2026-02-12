@@ -31,7 +31,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 # Or: OPENAI_API_KEY, GOOGLE_API_KEY
 
 # Optional: Customization
-export SECUREYEOMAN_GATEWAY_PORT=3000
+export SECUREYEOMAN_GATEWAY_PORT=18789
 export SECUREYEOMAN_ENVIRONMENT=production
 export SECUREYEOMAN_LOG_LEVEL=info
 ```
@@ -94,7 +94,7 @@ docker build -t friday:latest .
 ```bash
 docker run -d \
   --name friday \
-  -p 3000:3000 \
+  -p 18789:18789 \
   -v friday-data:/app/data \
   -e SECUREYEOMAN_TOKEN_SECRET="$(openssl rand -base64 32)" \
   -e SECUREYEOMAN_ADMIN_PASSWORD="your-password" \
@@ -111,7 +111,7 @@ services:
   friday:
     build: .
     ports:
-      - "3000:3000"
+      - "18789:18789"
     volumes:
       - friday-data:/app/data
     env_file: .env
@@ -134,7 +134,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/friday.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:18789;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -143,7 +143,7 @@ server {
 
     # WebSocket support
     location /api/v1/ws {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:18789;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -152,14 +152,14 @@ server {
 
     # GitHub webhooks (no auth required)
     location /api/v1/webhooks/ {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:18789;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     # Prometheus metrics
     location /metrics {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:18789;
         # Optionally restrict to internal networks
         allow 10.0.0.0/8;
         allow 172.16.0.0/12;
@@ -173,7 +173,7 @@ server {
 
 ```
 friday.example.com {
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:18789
 }
 ```
 

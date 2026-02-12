@@ -289,13 +289,18 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
   
   // Validate and apply defaults
   const result = ConfigSchema.safeParse(mergedConfig);
-  
+
   if (!result.success) {
     const errors = result.error.errors.map(e => `  ${e.path.join('.')}: ${e.message}`).join('\n');
     throw new Error(`Invalid configuration:\n${errors}`);
   }
-  
-  return result.data;
+
+  // Expand ~ in core paths so they resolve to the actual home directory
+  const config = result.data;
+  config.core.dataDir = expandPath(config.core.dataDir);
+  config.core.workspace = expandPath(config.core.workspace);
+
+  return config;
 }
 
 /**

@@ -13,13 +13,14 @@ export SECUREYEOMAN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
 ### "EADDRINUSE: address already in use"
-**Cause:** Port 3000 is already in use.
+**Cause:** Port 18789 (gateway) or 3000 (dashboard) is already in use.
 **Fix:** Kill the existing process or change the port:
 ```bash
+lsof -i :18789 | grep LISTEN
 lsof -i :3000 | grep LISTEN
 kill -9 <PID>
-# Or set a different port
-export SECUREYEOMAN_GATEWAY_PORT=3001
+# Or set a different gateway port
+export SECUREYEOMAN_GATEWAY_PORT=18790
 ```
 
 ### "Database is locked"

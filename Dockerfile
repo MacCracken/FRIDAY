@@ -24,7 +24,9 @@ RUN npm run build
 # Stage 2: Runtime
 FROM node:20-alpine
 
-RUN addgroup -S friday && adduser -S friday -G friday
+RUN addgroup -S friday && adduser -S friday -G friday \
+ && mkdir -p /home/friday/.secureyeoman/data /home/friday/.secureyeoman/workspace \
+ && chown -R friday:friday /home/friday
 
 WORKDIR /app
 
@@ -46,7 +48,7 @@ COPY --from=builder /app/packages/dashboard/dist/ packages/dashboard/dist/
 EXPOSE 18789
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:18789/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:18789/health || exit 1
 
 USER friday
 

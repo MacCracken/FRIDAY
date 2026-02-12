@@ -11,8 +11,8 @@ export default defineConfig({
     },
   },
   server: {
-    // LOCAL NETWORK ONLY - Security restriction
-    host: '127.0.0.1', // Only localhost by default
+    // Bind to all interfaces for external access
+    host: process.env.VITE_HOST || '0.0.0.0',
     port: 3000,
     strictPort: true,
     // Proxy API requests to the gateway

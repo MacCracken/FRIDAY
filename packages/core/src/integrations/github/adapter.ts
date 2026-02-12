@@ -51,7 +51,7 @@ export class GitHubIntegration implements WebhookIntegration {
         direction: 'inbound',
         senderId: payload.sender?.login ?? '',
         senderName: payload.sender?.login ?? 'unknown',
-        chatId: `${repo.owner.login}/${repo.name}`,
+        chatId: `${repo.owner?.login ?? ''}/${repo.name}`,
         text: `Push to ${payload.ref}: ${payload.commits?.map((c) => c.message).join(', ') ?? 'no commits'}`,
         attachments: [],
         platformMessageId: id,
@@ -174,7 +174,9 @@ export class GitHubIntegration implements WebhookIntegration {
       throw new Error(`Invalid chatId format: expected "owner/repo/issues|pulls/number", got "${chatId}"`);
     }
 
-    const [owner, repo, , numberStr] = parts;
+    const owner = parts[0]!;
+    const repo = parts[1]!;
+    const numberStr = parts[3]!;
     const issueNumber = parseInt(numberStr, 10);
     if (isNaN(issueNumber)) {
       throw new Error(`Invalid issue/PR number in chatId: ${numberStr}`);

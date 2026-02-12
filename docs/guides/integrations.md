@@ -20,7 +20,7 @@ FRIDAY supports multiple platform integrations for receiving and responding to m
 3. Create an integration via the dashboard or API:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integrations \
+curl -X POST http://localhost:18789/api/v1/integrations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -50,7 +50,7 @@ curl -X POST http://localhost:3000/api/v1/integrations \
 5. Create an integration:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integrations \
+curl -X POST http://localhost:18789/api/v1/integrations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -80,7 +80,7 @@ curl -X POST http://localhost:3000/api/v1/integrations \
 5. Create an integration:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integrations \
+curl -X POST http://localhost:18789/api/v1/integrations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -110,7 +110,7 @@ Register these in your Slack app settings:
 6. Select events: Push, Pull requests, Issues, Issue comments
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integrations \
+curl -X POST http://localhost:18789/api/v1/integrations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -144,7 +144,7 @@ FRIDAY responds to GitHub events by posting comments. The `chatId` format is:
 ### Setup
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/integrations \
+curl -X POST http://localhost:18789/api/v1/integrations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

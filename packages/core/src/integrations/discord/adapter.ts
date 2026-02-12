@@ -7,11 +7,10 @@
 
 import {
   Client,
-  GatewayIntentBits,
-  REST,
-  Routes,
-  EmbedBuilder,
+  Intents,
+  MessageEmbed,
   type Message,
+  type CommandInteraction,
   type Interaction,
   type TextChannel,
 } from 'discord.js';
@@ -64,29 +63,10 @@ export class DiscordIntegration implements Integration {
 
     this.client = new Client({
       intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        Intents.FLAGS.GUILDS,
+        Intents.FLAGS.GUILD_MESSAGES,
       ],
     });
-
-    // Register slash commands
-    const guildId = config.config.guildId as string | undefined;
-    try {
-      const rest = new REST({ version: '10' }).setToken(botToken);
-      const clientId = config.config.clientId as string;
-      if (clientId) {
-        const route = guildId
-          ? Routes.applicationGuildCommands(clientId, guildId)
-          : Routes.applicationCommands(clientId);
-        await rest.put(route, { body: SLASH_COMMANDS });
-        this.logger?.info('Discord slash commands registered');
-      }
-    } catch (err) {
-      this.logger?.warn('Failed to register slash commands (non-fatal)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
 
     // Handle regular messages
     this.client.on('messageCreate', (message: Message) => {
@@ -123,14 +103,15 @@ export class DiscordIntegration implements Integration {
 
     // Handle slash commands
     this.client.on('interactionCreate', (interaction: Interaction) => {
-      if (!interaction.isChatInputCommand()) return;
+      if (!interaction.isCommand()) return;
 
-      const { commandName } = interaction;
+      const cmd = interaction as CommandInteraction;
+      const { commandName } = cmd;
 
       if (commandName === 'help') {
-        void interaction.reply({
+        void cmd.reply({
           embeds: [
-            new EmbedBuilder()
+            new MessageEmbed()
               .setTitle('FRIDAY Help')
               .setDescription(
                 '**Commands:**\n' +
@@ -146,15 +127,13 @@ export class DiscordIntegration implements Integration {
       }
 
       if (commandName === 'status') {
-        void interaction.reply({
+        void cmd.reply({
           embeds: [
-            new EmbedBuilder()
+            new MessageEmbed()
               .setTitle('FRIDAY Status')
-              .addFields(
-                { name: 'Agent', value: config.displayName, inline: true },
-                { name: 'Platform', value: 'Discord', inline: true },
-                { name: 'Status', value: 'Connected', inline: true },
-              )
+              .addField('Agent', config.displayName, true)
+              .addField('Platform', 'Discord', true)
+              .addField('Status', 'Connected', true)
               .setColor(0x57f287),
           ],
         });
@@ -162,26 +141,26 @@ export class DiscordIntegration implements Integration {
       }
 
       if (commandName === 'ask') {
-        const question = interaction.options.getString('question', true);
-        void interaction.deferReply();
+        const question = cmd.options.getString('question', true);
+        void cmd.deferReply();
 
         const unified: UnifiedMessage = {
-          id: `dc_${interaction.id}`,
+          id: `dc_${cmd.id}`,
           integrationId: config.id,
           platform: 'discord',
           direction: 'inbound',
-          senderId: interaction.user.id,
-          senderName: interaction.user.displayName || interaction.user.username,
-          chatId: interaction.channelId ?? '',
+          senderId: cmd.user.id,
+          senderName: cmd.user.username,
+          chatId: cmd.channelId ?? '',
           text: question,
           attachments: [],
-          platformMessageId: interaction.id,
+          platformMessageId: cmd.id,
           metadata: {
             isSlashCommand: true,
             commandName: 'ask',
-            guildId: interaction.guildId,
+            guildId: cmd.guildId,
           },
-          timestamp: interaction.createdTimestamp,
+          timestamp: cmd.createdTimestamp,
         };
 
         void this.deps!.onMessage(unified);
@@ -221,7 +200,7 @@ export class DiscordIntegration implements Integration {
       throw new Error(`Channel ${chatId} not found or not a text channel`);
     }
 
-    const embed = new EmbedBuilder()
+    const embed = new MessageEmbed()
       .setDescription(text)
       .setColor(0x5865f2)
       .setTimestamp();
