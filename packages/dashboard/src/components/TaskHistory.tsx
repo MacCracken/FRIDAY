@@ -617,7 +617,12 @@ export function TaskHistory() {
                           colSpan={7}
                           className="px-2 py-2 text-xs font-medium text-muted-foreground"
                         >
-                          Heartbeat Tasks (Managed by Personality)
+                          Heartbeat Tasks
+                          {heartbeatData.tasks[0]?.personalityName && (
+                            <span className="ml-1 font-normal">
+                              — {heartbeatData.tasks[0].personalityName}
+                            </span>
+                          )}
                         </td>
                       </tr>
                       {heartbeatData.tasks.map((task) => (
@@ -806,7 +811,9 @@ function HeartbeatTaskRow({ task }: { task: HeartbeatTask }) {
         {formatTime(task.lastRunAt)}
       </td>
       <td className="px-2 py-3">
-        <span className="text-xs text-muted-foreground italic">Managed by Personality</span>
+        <span className="text-xs text-muted-foreground italic">
+          {task.personalityName ? `Managed by ${task.personalityName}` : 'Managed by Personality'}
+        </span>
       </td>
     </tr>
   );

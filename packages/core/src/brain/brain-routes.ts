@@ -6,12 +6,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { BrainManager } from './manager.js';
 import type { HeartbeatManager } from '../body/heartbeat.js';
 import type { ExternalBrainSync } from './external-sync.js';
+import type { SoulManager } from '../soul/manager.js';
 import type { MemoryType, MemoryQuery, KnowledgeQuery } from './types.js';
 
 export interface BrainRoutesOptions {
   brainManager: BrainManager;
   heartbeatManager?: HeartbeatManager;
   externalSync?: ExternalBrainSync;
+  soulManager?: SoulManager;
 }
 
 function errorMessage(err: unknown): string {
@@ -19,7 +21,7 @@ function errorMessage(err: unknown): string {
 }
 
 export function registerBrainRoutes(app: FastifyInstance, opts: BrainRoutesOptions): void {
-  const { brainManager, heartbeatManager, externalSync } = opts;
+  const { brainManager, heartbeatManager, externalSync, soulManager } = opts;
 
   // ── Memories ─────────────────────────────────────────────────
 
@@ -203,7 +205,13 @@ export function registerBrainRoutes(app: FastifyInstance, opts: BrainRoutesOptio
         return reply.code(503).send({ error: 'Heartbeat system not available' });
       }
       const status = heartbeatManager.getStatus();
-      return { tasks: status.tasks };
+      const activePersonality = soulManager?.getActivePersonality() ?? null;
+      const tasks = status.tasks.map((t) => ({
+        ...t,
+        personalityId: activePersonality?.id ?? null,
+        personalityName: activePersonality?.name ?? null,
+      }));
+      return { tasks };
     }
   );
 

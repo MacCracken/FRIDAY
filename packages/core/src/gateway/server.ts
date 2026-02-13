@@ -238,7 +238,9 @@ export class GatewayServer {
       const brainManager = this.secureYeoman.getBrainManager();
       const heartbeatManager = this.secureYeoman.getHeartbeatManager() ?? undefined;
       const externalSync = this.secureYeoman.getExternalBrainSync() ?? undefined;
-      registerBrainRoutes(this.app, { brainManager, heartbeatManager, externalSync });
+      let soulManager;
+      try { soulManager = this.secureYeoman.getSoulManager(); } catch { /* may not be available */ }
+      registerBrainRoutes(this.app, { brainManager, heartbeatManager, externalSync, soulManager });
     } catch {
       // Brain manager may not be available — skip routes
     }

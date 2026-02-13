@@ -279,7 +279,7 @@ describe('TaskHistory', () => {
 
   // ── Heartbeat Task Tests ──────────────────────────────────────────
 
-  it('renders heartbeat tasks alongside regular tasks', async () => {
+  it('renders heartbeat tasks alongside regular tasks with personality name', async () => {
     const tasks = createTaskList(2);
     mockFetchTasks.mockResolvedValue({ tasks, total: 2 });
     mockFetchHeartbeatTasks.mockResolvedValue({
@@ -291,6 +291,8 @@ describe('TaskHistory', () => {
           intervalMs: 300000,
           lastRunAt: Date.now() - 60000,
           config: {},
+          personalityId: 'p-1',
+          personalityName: 'Friday',
         },
         {
           name: 'memory_status',
@@ -299,6 +301,8 @@ describe('TaskHistory', () => {
           intervalMs: 600000,
           lastRunAt: null,
           config: {},
+          personalityId: 'p-1',
+          personalityName: 'Friday',
         },
       ],
     });
@@ -307,12 +311,16 @@ describe('TaskHistory', () => {
     // Regular tasks show
     expect(await screen.findByText('Run deployment script')).toBeInTheDocument();
 
-    // Heartbeat section header shows
-    expect(screen.getByText('Heartbeat Tasks (Managed by Personality)')).toBeInTheDocument();
+    // Heartbeat section header shows with personality name
+    expect(screen.getByText('Heartbeat Tasks')).toBeInTheDocument();
+    expect(screen.getAllByText(/Friday/).length).toBeGreaterThanOrEqual(1);
 
     // Heartbeat tasks show (name appears in both name cell and type badge)
     expect(screen.getAllByText('system_health').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('memory_status').length).toBeGreaterThanOrEqual(1);
+
+    // Per-row personality attribution
+    expect(screen.getAllByText(/Managed by Friday/).length).toBe(2);
   });
 
   it('shows heartbeat tasks even when no regular tasks exist', async () => {
@@ -326,6 +334,8 @@ describe('TaskHistory', () => {
           intervalMs: 300000,
           lastRunAt: Date.now() - 60000,
           config: {},
+          personalityId: null,
+          personalityName: null,
         },
       ],
     });
@@ -335,8 +345,11 @@ describe('TaskHistory', () => {
     expect(screen.queryByText('No tasks found')).not.toBeInTheDocument();
 
     // Heartbeat section and task should be visible
-    expect(await screen.findByText('Heartbeat Tasks (Managed by Personality)')).toBeInTheDocument();
+    expect(await screen.findByText('Heartbeat Tasks')).toBeInTheDocument();
     expect(screen.getAllByText('system_health').length).toBeGreaterThanOrEqual(1);
+
+    // Falls back to generic text when no personality is set
+    expect(screen.getByText('Managed by Personality')).toBeInTheDocument();
   });
 
   it('shows "No tasks found" only when no regular AND no heartbeat tasks exist', async () => {

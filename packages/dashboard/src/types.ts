@@ -223,6 +223,8 @@ export interface HeartbeatTask {
   intervalMs?: number;
   lastRunAt: number | null;
   config: Record<string, unknown>;
+  personalityId?: string | null;
+  personalityName?: string | null;
 }
 
 export interface OnboardingStatus {
