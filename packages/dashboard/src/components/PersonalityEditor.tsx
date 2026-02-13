@@ -837,6 +837,7 @@ function BodySection() {
 
   const [enabledCaps, setEnabledCaps] = useState<Record<string, boolean>>({
     vision: false,
+    limb_movement: false,
     auditory: false,
   });
 
@@ -850,7 +851,7 @@ function BodySection() {
       limb_movement: {
         icon: '⌨️',
         description: 'Keyboard/mouse control and system commands',
-        available: false,
+        available: true,
       },
       auditory: {
         icon: '👂',
@@ -876,7 +877,8 @@ function BodySection() {
           {capabilities.map((cap) => {
             const info = capabilityInfo[cap];
             const isEnabled = enabledCaps[cap] ?? false;
-            const isConfigurable = info.available && (cap === 'vision' || cap === 'auditory');
+            const isConfigurable =
+              info.available && (cap === 'vision' || cap === 'auditory' || cap === 'limb_movement');
 
             return (
               <div
