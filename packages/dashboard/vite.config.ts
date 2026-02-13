@@ -12,6 +12,14 @@ export default defineConfig({
       '@': resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    include: ['monaco-editor'],
+    esbuildOptions: {
+      define: {
+        global: 'global',
+      },
+    },
+  },
   server: {
     // Bind to all interfaces for external access
     host: process.env.VITE_HOST || '0.0.0.0',

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import Editor, { type OnMount } from '@monaco-editor/react';
+import Editor, { loader, type OnMount } from '@monaco-editor/react';
 import {
   Send,
   Loader2,
@@ -72,6 +72,7 @@ export function CodePage() {
   const { theme } = useTheme();
   const [filename, setFilename] = useState('untitled.ts');
   const [language, setLanguage] = useState(() => detectLanguage('untitled.ts'));
+  const [editorContent, setEditorContent] = useState('');
   const [filesPanelOpen, setFilesPanelOpen] = useState(false);
   const [cwd, setCwd] = useState('/tmp');
   const files = [{ name: 'untitled.ts', path: `${cwd}/untitled.ts` }];
@@ -97,6 +98,10 @@ export function CodePage() {
     personalityId: effectivePersonalityId,
   });
   const voice = useVoice();
+
+  useEffect(() => {
+    loader.config({ paths: { vs: '/vs' } });
+  }, []);
 
   const terminalMutation = useMutation({
     mutationFn: ({ command, cwd }: { command: string; cwd: string }) =>
@@ -327,9 +332,25 @@ export function CodePage() {
               </div>
             </div>
 
-            {/* Monaco Editor placeholder */}
-            <div className="flex-1 min-h-0 flex items-center justify-center bg-card">
-              <p className="text-muted-foreground">Code editor coming soon...</p>
+            {/* Monaco Editor */}
+            <div className="flex-1 min-h-0">
+              <Editor
+                height="100%"
+                language={language}
+                theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                value={editorContent}
+                onChange={(value) => setEditorContent(value ?? '')}
+                onMount={handleEditorMount}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                  wordWrap: 'on',
+                  automaticLayout: true,
+                  scrollBeyondLastLine: false,
+                  padding: { top: 8 },
+                }}
+              />
             </div>
           </div>
 
