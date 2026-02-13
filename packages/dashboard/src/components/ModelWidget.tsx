@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Check, Loader2, X, Cpu } from 'lucide-react';
 import { fetchModelInfo, switchModel } from '../api/client';
@@ -29,12 +29,16 @@ export function ModelWidget({ onClose }: ModelWidgetProps) {
     queryFn: fetchModelInfo,
   });
 
-  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(() => {
-    if (data?.current.provider) {
-      return new Set([data.current.provider]);
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+
+  // Expand current provider on initial data load
+  const didAutoExpand = useRef(false);
+  useEffect(() => {
+    if (data?.current.provider && !didAutoExpand.current) {
+      didAutoExpand.current = true;
+      setExpandedProviders(new Set([data.current.provider]));
     }
-    return new Set(['anthropic']);
-  });
+  }, [data?.current.provider]);
 
   const switchMutation = useMutation({
     mutationFn: switchModel,
@@ -74,11 +78,6 @@ export function ModelWidget({ onClose }: ModelWidgetProps) {
 
   const currentProvider = data.current.provider;
   const currentModel = data.current.model;
-
-  // Ensure current provider is expanded
-  if (!expandedProviders.has(currentProvider)) {
-    expandedProviders.add(currentProvider);
-  }
 
   return (
     <div className="card w-80 shadow-lg max-h-[500px] overflow-hidden flex flex-col">

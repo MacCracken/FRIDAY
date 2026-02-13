@@ -118,4 +118,105 @@ describe('ModelWidget', () => {
       expect(screen.getByText('Free')).toBeInTheDocument();
     });
   });
+
+  // ── Collapse / Expand ───────────────────────────────────────────
+
+  it('auto-expands current provider and shows its models', async () => {
+    renderComponent();
+
+    // Current provider is anthropic — its models should be visible after load
+    // Use claude-opus which only appears in the expandable list (not in the Current Model header)
+    await waitFor(() => {
+      expect(screen.getByText('claude-opus-4-20250514')).toBeInTheDocument();
+    });
+  });
+
+  it('collapses the current provider when clicked', async () => {
+    const user = userEvent.setup();
+    renderComponent();
+
+    // Wait for models to appear (provider auto-expanded)
+    // Use claude-opus which only appears in the expandable list
+    await waitFor(() => {
+      expect(screen.getByText('claude-opus-4-20250514')).toBeInTheDocument();
+    });
+
+    // Click Anthropic header to collapse
+    const anthropicButtons = screen.getAllByText(/Anthropic/);
+    const providerButton = anthropicButtons.find(
+      (el) => el.closest('button')?.classList.contains('w-full'),
+    )!;
+    await user.click(providerButton);
+
+    // Model list items should no longer be visible
+    await waitFor(() => {
+      expect(screen.queryByText('claude-opus-4-20250514')).not.toBeInTheDocument();
+    });
+  });
+
+  it('expands a collapsed provider when clicked', async () => {
+    const user = userEvent.setup();
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText(/OpenAI/)).toBeInTheDocument();
+    });
+
+    // OpenAI should be collapsed initially — no model visible
+    expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+
+    // Click to expand
+    await user.click(screen.getByText(/OpenAI/));
+
+    await waitFor(() => {
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    });
+  });
+
+  it('collapses an expanded non-current provider when clicked again', async () => {
+    const user = userEvent.setup();
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText(/OpenAI/)).toBeInTheDocument();
+    });
+
+    // Expand OpenAI
+    await user.click(screen.getByText(/OpenAI/));
+    await waitFor(() => {
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    });
+
+    // Collapse OpenAI
+    await user.click(screen.getByText(/OpenAI/));
+    await waitFor(() => {
+      expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+    });
+  });
+
+  it('can re-expand the current provider after collapsing', async () => {
+    const user = userEvent.setup();
+    renderComponent();
+
+    // Wait for auto-expand — use claude-opus which only appears in the list
+    await waitFor(() => {
+      expect(screen.getByText('claude-opus-4-20250514')).toBeInTheDocument();
+    });
+
+    // Collapse
+    const anthropicButtons = screen.getAllByText(/Anthropic/);
+    const providerButton = anthropicButtons.find(
+      (el) => el.closest('button')?.classList.contains('w-full'),
+    )!;
+    await user.click(providerButton);
+    await waitFor(() => {
+      expect(screen.queryByText('claude-opus-4-20250514')).not.toBeInTheDocument();
+    });
+
+    // Re-expand
+    await user.click(providerButton);
+    await waitFor(() => {
+      expect(screen.getByText('claude-opus-4-20250514')).toBeInTheDocument();
+    });
+  });
 });
