@@ -87,7 +87,7 @@ export function TaskHistory() {
   const dateFrom = searchParams.get('from') ?? '';
   const dateTo = searchParams.get('to') ?? '';
   const [page, setPage] = useState(0);
-  const [datePreset, setDatePreset] = useState<string>('Last 24h');
+  const [datePreset, setDatePreset] = useState<string>('');
   const pageSize = 10;
 
   // Create task dialog state
