@@ -46,7 +46,7 @@ Health check endpoint - no authentication required.
 {
   "status": "healthy",
   "timestamp": "2026-02-11T00:00:00.000Z",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "uptime": 3600
 }
 ```
@@ -553,8 +553,42 @@ Create new personality.
 {
   "name": "NewAssistant",
   "description": "Professional assistant",
-  "system_prompt": "You are a professional assistant...",
-  "traits": ["professional", "efficient"]
+  "systemPrompt": "You are a professional assistant...",
+  "traits": { "formality": "formal", "humor": "none" },
+  "sex": "unspecified",
+  "voice": "professional, clear",
+  "preferredLanguage": "English",
+  "defaultModel": { "provider": "anthropic", "model": "claude-sonnet-4-20250514" }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Display name (1-100 chars) |
+| `description` | string | No | Short description (max 1000 chars) |
+| `systemPrompt` | string | No | Custom system prompt (max 8000 chars) |
+| `traits` | object | No | Key-value trait pairs (e.g. formality, humor) |
+| `sex` | string | No | `male`, `female`, `non-binary`, `unspecified` |
+| `voice` | string | No | Voice style description |
+| `preferredLanguage` | string | No | Preferred language for responses |
+| `defaultModel` | object\|null | No | Default model `{ provider, model }` for this personality |
+
+#### GET /api/v1/soul/prompt/preview
+
+Preview the composed system prompt. By default uses the active personality; pass `personalityId` to preview a specific personality's prompt.
+
+**Required Permissions**: `soul.read`
+
+**Query Parameters**
+- `personalityId` (optional): ID of the personality to preview. Falls back to the active personality if omitted.
+
+**Response**
+```json
+{
+  "prompt": "## Soul\nYour Soul is your identity...",
+  "tools": [],
+  "charCount": 1234,
+  "estimatedTokens": 309
 }
 ```
 
@@ -645,6 +679,144 @@ Update an existing user.
 #### DELETE /api/v1/soul/users/:id
 
 Delete a user.
+
+---
+
+### Spirit System
+
+#### GET /api/v1/spirit/passions
+
+List all passions.
+
+**Required Permissions**: `spirit.read`
+
+**Response**
+```json
+{
+  "passions": [
+    {
+      "id": "passion_123",
+      "name": "Open Source",
+      "description": "Building and contributing to open source software",
+      "intensity": 0.9,
+      "isActive": true,
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000
+    }
+  ]
+}
+```
+
+#### POST /api/v1/spirit/passions
+
+Create a new passion.
+
+**Required Permissions**: `spirit.write`
+
+**Request Body**
+```json
+{
+  "name": "Open Source",
+  "description": "Building and contributing to open source software",
+  "intensity": 0.9,
+  "isActive": true
+}
+```
+
+#### PUT /api/v1/spirit/passions/{id}
+
+Update a passion.
+
+**Required Permissions**: `spirit.write`
+
+#### DELETE /api/v1/spirit/passions/{id}
+
+Delete a passion.
+
+**Required Permissions**: `spirit.write`
+
+#### GET /api/v1/spirit/inspirations
+
+List all inspirations.
+
+**Required Permissions**: `spirit.read`
+
+#### POST /api/v1/spirit/inspirations
+
+Create a new inspiration.
+
+**Required Permissions**: `spirit.write`
+
+**Request Body**
+```json
+{
+  "source": "Alan Turing",
+  "description": "Pioneer of computational theory and AI",
+  "impact": 0.95,
+  "isActive": true
+}
+```
+
+#### PUT /api/v1/spirit/inspirations/{id}
+
+Update an inspiration.
+
+**Required Permissions**: `spirit.write`
+
+#### DELETE /api/v1/spirit/inspirations/{id}
+
+Delete an inspiration.
+
+**Required Permissions**: `spirit.write`
+
+#### GET /api/v1/spirit/pains
+
+List all pain points.
+
+**Required Permissions**: `spirit.read`
+
+#### POST /api/v1/spirit/pains
+
+Create a new pain point.
+
+**Required Permissions**: `spirit.write`
+
+**Request Body**
+```json
+{
+  "trigger": "Data Loss",
+  "description": "Losing user data due to system failure",
+  "severity": 0.8,
+  "isActive": true
+}
+```
+
+#### PUT /api/v1/spirit/pains/{id}
+
+Update a pain point.
+
+**Required Permissions**: `spirit.write`
+
+#### DELETE /api/v1/spirit/pains/{id}
+
+Delete a pain point.
+
+**Required Permissions**: `spirit.write`
+
+#### GET /api/v1/spirit/stats
+
+Get spirit system statistics.
+
+**Required Permissions**: `spirit.read`
+
+**Response**
+```json
+{
+  "passions": { "total": 5, "active": 3 },
+  "inspirations": { "total": 4, "active": 4 },
+  "pains": { "total": 3, "active": 2 }
+}
+```
 
 ---
 
@@ -989,7 +1161,7 @@ Query the local message log.
 
 #### POST /api/v1/chat
 
-Send a message to the active personality and receive an AI response.
+Send a message to a personality and receive an AI response. When `personalityId` is provided, the system prompt is composed for that personality; otherwise the active personality is used.
 
 **Required Permissions**: Authenticated
 
@@ -997,12 +1169,19 @@ Send a message to the active personality and receive an AI response.
 ```json
 {
   "message": "Hello, what can you help me with?",
+  "personalityId": "p-custom-id",
   "history": [
     { "role": "user", "content": "Previous message" },
     { "role": "assistant", "content": "Previous response" }
   ]
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | string | Yes | The user message |
+| `personalityId` | string | No | Target personality ID (falls back to active) |
+| `history` | array | No | Previous conversation messages |
 
 **Response**
 ```json
@@ -1021,7 +1200,7 @@ Send a message to the active personality and receive an AI response.
 
 #### GET /api/v1/model/info
 
-Get current model configuration and list of all available models.
+Get current model configuration and list of all available models. Models are dynamically discovered from each provider's API when the provider's API key is configured. Results are cached for 10 minutes.
 
 **Required Permissions**: Authenticated
 

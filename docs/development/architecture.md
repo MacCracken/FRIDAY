@@ -37,7 +37,7 @@
 │                         ▼                               │
 │  ┌──────────┐ ┌──────────────────────────────────────┐  │
 │  │   Chat   │ │         Sandboxed Agent Engine        │  │
-│  │  Routes  │ │   (Anthropic, OpenAI, Gemini, Ollama) │  │
+│  │  Routes  │ │ (Anthropic, OpenAI, Gemini, Ollama, OpenCode) │  │
 │  └────┬─────┘ └──────────────────────────────────────┘  │
 │       │  ┌────────────┐ ┌───────────────┐                │
 │       └──│ SoulManager│ │ Model Switch  │                │
@@ -166,7 +166,40 @@ friday/
 - `ConnectionManager` - Platform integration UI
 - `ChatPage` - Conversational AI interface
 
-### 5. Brain System
+### 5. Soul System
+
+**Location**: `packages/core/src/soul/`
+
+**Responsibilities**:
+- Personality management (create, switch, update active personality)
+- Prompt composition following the "In Our Image" hierarchy (Soul > Spirit > Brain > Body)
+- Sacred archetypes cosmological preamble
+- User profile and owner context injection
+- Skill management (delegated to Brain when available)
+
+The active personality is the sole source of identity in the composed prompt. The agent name is stored separately for display purposes but is not injected into the system prompt — the personality's own `name` and `systemPrompt` fields define the complete identity.
+
+**Key Modules**:
+- `archetypes.ts` - Sacred archetypes constant and `composeArchetypesPreamble()`
+- `storage.ts` - SQLite persistence for personalities, skills, users
+- `manager.ts` - SoulManager with prompt composition orchestrating all four layers
+- `soul-routes.ts` - REST API endpoints
+
+### 6. Spirit System
+
+**Location**: `packages/core/src/spirit/`
+
+**Responsibilities**:
+- Passion, inspiration, and pain point management
+- Emotional prompt composition (`## Spirit` section)
+- Sits between Soul (identity) and Brain (knowledge) in the hierarchy
+
+**Key Modules**:
+- `storage.ts` - SQLite persistence for passions, inspirations, pains
+- `manager.ts` - SpiritManager with `composeSpiritPrompt()`
+- `spirit-routes.ts` - REST API endpoints
+
+### 7. Brain System
 
 **Location**: `packages/core/src/brain/`
 
@@ -174,14 +207,26 @@ friday/
 - Memory storage and retrieval (episodic, semantic, procedural, preference)
 - Knowledge base management with confidence tracking
 - Skill registry (moved from Soul for separation of concerns)
-- Context injection into AI prompts from relevant memories/knowledge
+- Context injection into AI prompts (`## Brain` section) from relevant memories/knowledge
 
 **Key Modules**:
 - `storage.ts` - SQLite persistence for memories, knowledge, and skills
 - `manager.ts` - BrainManager with memory decay, pruning, and context retrieval
 - `brain-routes.ts` - REST API endpoints
 
-### 6. Agent Communication (Comms)
+### 8. Body System
+
+**Location**: `packages/core/src/body/`
+
+**Responsibilities**:
+- Periodic self-checks (system health, memory status, log anomalies, integration health)
+- Heartbeat vital signs recorded as episodic memories
+- Body prompt injection (`## Body` section) into the composed Soul prompt
+
+**Key Modules**:
+- `heartbeat.ts` - HeartbeatManager with configurable checks and intervals
+
+### 9. Agent Communication (Comms)
 
 **Location**: `packages/core/src/comms/`
 
@@ -197,7 +242,7 @@ friday/
 - `agent-comms.ts` - AgentComms orchestrator
 - `comms-routes.ts` - REST API endpoints
 
-### 7. Sandbox System
+### 10. Sandbox System
 
 **Location**: `packages/core/src/sandbox/`
 
@@ -216,7 +261,7 @@ friday/
 - Violation detection and reporting
 - SandboxManager auto-detects platform capabilities and selects the appropriate implementation
 
-### 8. Integration Framework
+### 11. Integration Framework
 
 **Location**: `packages/core/src/integrations/`
 
@@ -236,7 +281,7 @@ friday/
 - `slack/` - Slack Bolt with socket mode
 - `github/` - Octokit REST + webhook handler with signature verification
 
-### 9. Logging & File Writer
+### 12. Logging & File Writer
 
 **Location**: `packages/core/src/logging/`
 
@@ -251,7 +296,7 @@ friday/
 - `file-writer.ts` - AppendOnlyLogWriter (JSONL, O_APPEND)
 - `log-rotation.ts` - LogRotator (size/age-based, gzip compression)
 
-### 10. Monitoring (Prometheus)
+### 13. Monitoring (Prometheus)
 
 **Location**: `packages/core/src/gateway/prometheus.ts`
 

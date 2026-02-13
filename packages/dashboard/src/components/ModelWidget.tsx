@@ -6,6 +6,7 @@ import type { ModelInfo } from '../types';
 
 interface ModelWidgetProps {
   onClose: () => void;
+  onModelSwitch?: () => void;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -21,7 +22,7 @@ function formatPrice(inputPer1M: number, outputPer1M: number): string {
   return `$${inputPer1M} / $${outputPer1M} per 1M tokens`;
 }
 
-export function ModelWidget({ onClose }: ModelWidgetProps) {
+export function ModelWidget({ onClose, onModelSwitch }: ModelWidgetProps) {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -44,6 +45,7 @@ export function ModelWidget({ onClose }: ModelWidgetProps) {
     mutationFn: switchModel,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['model-info'] });
+      onModelSwitch?.();
     },
   });
 
@@ -141,7 +143,7 @@ export function ModelWidget({ onClose }: ModelWidgetProps) {
                       onClick={() => handleSwitch(m.provider, m.model)}
                       disabled={isActive || switchMutation.isPending}
                       className={`w-full text-left px-4 py-2 text-sm hover:bg-muted/50 disabled:opacity-60 ${
-                        isActive ? 'bg-primary/10' : ''
+                        isActive ? 'bg-primary/15 border-l-2 border-primary' : ''
                       }`}
                     >
                       <div className="flex items-center justify-between">

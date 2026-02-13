@@ -123,7 +123,7 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+      <nav className={`flex-1 px-3 py-4 overflow-y-auto ${collapsed ? 'space-y-0.5' : 'space-y-1'}`}>
         {NAV_ITEMS.map(({ to, label, icon, end }) => (
           <NavLink
             key={to}

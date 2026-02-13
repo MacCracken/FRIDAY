@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AnthropicProvider } from './anthropic.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 import { RateLimitError, AuthenticationError, ProviderUnavailableError } from '../errors.js';
@@ -6,6 +6,7 @@ import { RateLimitError, AuthenticationError, ProviderUnavailableError } from '.
 // Mock the Anthropic SDK
 const mockCreate = vi.fn();
 const mockStream = vi.fn();
+const mockFetch = vi.fn();
 
 vi.mock('@anthropic-ai/sdk', () => {
   class APIError extends Error {
@@ -198,6 +199,56 @@ describe('AnthropicProvider', () => {
       mockClient.messages.create.mockRejectedValue(new (APIError as any)(503, 'overloaded'));
 
       await expect(provider.chat(simpleRequest)).rejects.toThrow(ProviderUnavailableError);
+    });
+  });
+
+  describe('fetchAvailableModels', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', mockFetch);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('should return claude-* models only', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'claude-sonnet-4-20250514', display_name: 'Claude Sonnet 4' },
+            { id: 'claude-haiku-3-5-20241022', display_name: 'Claude Haiku 3.5' },
+            { id: 'not-a-claude-model', display_name: 'Other Model' },
+          ],
+        }),
+      });
+
+      const models = await AnthropicProvider.fetchAvailableModels('test-key');
+
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('claude-sonnet-4-20250514');
+      expect(models[0].displayName).toBe('Claude Sonnet 4');
+      expect(models[1].id).toBe('claude-haiku-3-5-20241022');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.anthropic.com/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-api-key': 'test-key' }),
+        }),
+      );
+    });
+
+    it('should return empty array on fetch failure', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 401 });
+
+      const models = await AnthropicProvider.fetchAvailableModels('bad-key');
+      expect(models).toEqual([]);
+    });
+
+    it('should return empty array on network error', async () => {
+      mockFetch.mockRejectedValue(new Error('network error'));
+
+      const models = await AnthropicProvider.fetchAvailableModels('test-key');
+      expect(models).toEqual([]);
     });
   });
 });

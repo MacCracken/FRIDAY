@@ -310,7 +310,7 @@ System health and status events.
 ```json
 {
   "event_type": "startup",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "uptime_seconds": 0,
   "capabilities": {
     "sandbox": true,

@@ -1,27 +1,49 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Send, Loader2, Bot, User } from 'lucide-react';
-import { fetchActivePersonality } from '../api/client';
+import { Send, Loader2, Bot, User, ChevronDown } from 'lucide-react';
+import { fetchPersonalities, switchModel } from '../api/client';
 import { ModelWidget } from './ModelWidget';
 import { VoiceToggle } from './VoiceToggle';
 import { useChat } from '../hooks/useChat';
 import { useVoice } from '../hooks/useVoice';
-import { useState } from 'react';
+import type { Personality } from '../types';
 
 export function ChatPage() {
   const [showModelWidget, setShowModelWidget] = useState(false);
+  const [showPersonalityPicker, setShowPersonalityPicker] = useState(false);
+  const [selectedPersonalityId, setSelectedPersonalityId] = useState<string | null>(null);
+  const [modelOverridden, setModelOverridden] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { data: personalityData } = useQuery({
-    queryKey: ['active-personality'],
-    queryFn: fetchActivePersonality,
+  const { data: personalitiesData } = useQuery({
+    queryKey: ['personalities'],
+    queryFn: fetchPersonalities,
   });
 
-  const personality = personalityData?.personality;
+  const personalities = personalitiesData?.personalities ?? [];
+  const activePersonality = personalities.find((p) => p.isActive);
+  const effectivePersonalityId = selectedPersonalityId ?? activePersonality?.id ?? null;
+  const personality = personalities.find((p) => p.id === effectivePersonalityId) ?? activePersonality ?? null;
 
-  const { messages, input, setInput, handleSend, isPending } = useChat();
+  const { messages, input, setInput, handleSend, isPending } = useChat({
+    personalityId: effectivePersonalityId,
+  });
   const voice = useVoice();
+
+  // Auto-switch model when personality changes (unless user manually overrode)
+  const prevPersonalityId = useRef(effectivePersonalityId);
+  useEffect(() => {
+    if (effectivePersonalityId === prevPersonalityId.current) return;
+    prevPersonalityId.current = effectivePersonalityId;
+    setModelOverridden(false);
+
+    if (personality?.defaultModel && !modelOverridden) {
+      switchModel(personality.defaultModel).catch(() => {
+        // Silently fail — user can switch manually
+      });
+    }
+  }, [effectivePersonalityId, personality?.defaultModel, modelOverridden]);
 
   // Feed voice transcript into input
   useEffect(() => {
@@ -64,38 +86,71 @@ export function ChatPage() {
     <div className="flex flex-col h-[calc(100vh-220px)] max-h-[800px]">
       {/* Header */}
       <div className="flex items-center justify-between pb-4 border-b mb-4">
-        <div className="flex items-center gap-3">
-          <Bot className="w-6 h-6 text-primary" />
-          <div>
-            <h2 className="text-lg font-semibold">
-              Chat{personality ? ` with ${personality.name}` : ''}
-            </h2>
-            {personality && (
-              <p className="text-xs text-muted-foreground">{personality.description}</p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <VoiceToggle
-            voiceEnabled={voice.voiceEnabled}
-            isListening={voice.isListening}
-            isSpeaking={voice.isSpeaking}
-            supported={voice.supported}
-            onToggle={voice.toggleVoice}
-          />
-          <div className="relative">
-            <button
-              onClick={() => setShowModelWidget((v) => !v)}
-              className="btn-ghost text-xs px-3 py-1.5 rounded-full border"
-            >
-              Model
-            </button>
-            {showModelWidget && (
-              <div className="absolute right-0 top-full mt-2 z-50">
-                <ModelWidget onClose={() => setShowModelWidget(false)} />
+        <div className="relative">
+          <button
+            onClick={() => setShowPersonalityPicker((v) => !v)}
+            className="flex items-center gap-3 hover:bg-muted/50 rounded-lg px-2 py-1.5 transition-colors"
+            data-testid="personality-selector"
+          >
+            <Bot className="w-6 h-6 text-primary flex-shrink-0" />
+            <div className="text-left">
+              <div className="flex items-center gap-1.5">
+                <h2 className="text-lg font-semibold">
+                  Chat{personality ? ` with ${personality.name}` : ''}
+                </h2>
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
               </div>
-            )}
-          </div>
+              {personality?.description && (
+                <p className="text-xs text-muted-foreground">{personality.description}</p>
+              )}
+            </div>
+          </button>
+
+          {showPersonalityPicker && personalities.length > 1 && (
+            <div className="absolute left-0 top-full mt-1 z-50 card shadow-lg w-80 max-h-64 overflow-y-auto">
+              {personalities.map((p: Personality) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    setSelectedPersonalityId(p.id);
+                    setShowPersonalityPicker(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 transition-colors ${
+                    p.id === effectivePersonalityId ? 'bg-primary/15 border-l-2 border-primary' : ''
+                  }`}
+                  data-testid={`personality-option-${p.id}`}
+                >
+                  <Bot className="w-5 h-5 text-primary flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium truncate">{p.name}</span>
+                      {p.isActive && <span className="text-xs text-success">(active)</span>}
+                    </div>
+                    {p.description && (
+                      <p className="text-xs text-muted-foreground truncate">{p.description}</p>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setShowModelWidget((v) => !v)}
+            className="btn-ghost text-xs px-3 py-1.5 rounded-full border"
+          >
+            Model
+          </button>
+          {showModelWidget && (
+            <div className="absolute right-0 top-full mt-2 z-50">
+              <ModelWidget
+                onClose={() => setShowModelWidget(false)}
+                onModelSwitch={() => setModelOverridden(true)}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -180,6 +235,13 @@ export function ChatPage() {
             disabled={isPending}
             rows={1}
             className="flex-1 resize-none rounded-lg border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+          />
+          <VoiceToggle
+            voiceEnabled={voice.voiceEnabled}
+            isListening={voice.isListening}
+            isSpeaking={voice.isSpeaking}
+            supported={voice.supported}
+            onToggle={voice.toggleVoice}
           />
           <button
             onClick={handleSend}

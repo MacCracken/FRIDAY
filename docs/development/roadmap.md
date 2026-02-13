@@ -177,6 +177,7 @@ All core modules maintain >80% coverage thresholds.
 | **v1.1.1 Release** | — | **Released 2026-02-12** |
 | **v1.2.0 Release** | — | **Complete** |
 | **v1.3.0 Release** | — | **Complete (released 2026-02-12)** |
+| **v1.3.1 Release** | — | **Complete (released 2026-02-12)** |
 
 ---
 
@@ -204,6 +205,18 @@ All core modules maintain >80% coverage thresholds.
 - ✅ Coding IDE view — Monaco editor with personality-scoped chat sidebar, `useChat` hook extraction
 - ✅ Voice interface — browser-native SpeechRecognition + speechSynthesis, localStorage persistence, graceful degradation
 - ✅ Dashboard improvements — enhanced layout, status bar updates
+
+---
+
+## v1.3.1: Dynamic Model Discovery
+
+**Status**: Complete
+**Released**: 2026-02-12
+
+- ✅ Dynamic model discovery for all providers — `fetchAvailableModels()` on Anthropic, OpenAI, Ollama, OpenCode (matching Gemini's existing pattern)
+- ✅ Parallel provider fetching — `getAvailableModelsAsync()` queries all configured providers simultaneously via `Promise.allSettled`
+- ✅ Dashboard dropdown highlighting — lighter blue highlight with left border on active personality and model selections
+- ✅ Sidebar collapsed spacing — reduced icon spacing when sidebar is collapsed
 
 ---
 

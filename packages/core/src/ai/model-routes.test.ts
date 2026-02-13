@@ -1,9 +1,77 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import { registerModelRoutes } from './model-routes.js';
+import { _clearDynamicCache } from './cost-calculator.js';
 import type { SecureYeoman } from '../secureyeoman.js';
 
-// Set provider env vars so getAvailableModels(true) includes all providers
+// Mock global fetch so getAvailableModelsAsync doesn't make real network calls
+const mockFetch = vi.fn().mockImplementation((url: string) => {
+  // Gemini ListModels
+  if (url.includes('generativelanguage.googleapis.com')) {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        models: [
+          {
+            name: 'models/gemini-2.0-flash',
+            displayName: 'Gemini 2.0 Flash',
+            supportedGenerationMethods: ['generateContent'],
+            inputTokenLimit: 1048576,
+            outputTokenLimit: 8192,
+          },
+        ],
+      }),
+    });
+  }
+  // Anthropic Models
+  if (url.includes('api.anthropic.com')) {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'claude-sonnet-4-20250514', display_name: 'Claude Sonnet 4' },
+        ],
+      }),
+    });
+  }
+  // OpenAI Models
+  if (url.includes('api.openai.com')) {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'gpt-4o', owned_by: 'openai' },
+        ],
+      }),
+    });
+  }
+  // OpenCode Models
+  if (url.includes('opencode.ai')) {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'gpt-5.2', owned_by: 'opencode' },
+        ],
+      }),
+    });
+  }
+  // Ollama Tags
+  if (url.includes('/api/tags')) {
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        models: [
+          { name: 'llama3:latest', size: 4700000000 },
+        ],
+      }),
+    });
+  }
+  return Promise.resolve({ ok: false });
+});
+vi.stubGlobal('fetch', mockFetch);
+
+// Set provider env vars so getAvailableModelsAsync(true) includes all providers
 const ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'OPENCODE_API_KEY', 'OLLAMA_HOST'];
 const savedEnv: Record<string, string | undefined> = {};
 for (const key of ENV_KEYS) {
@@ -15,6 +83,7 @@ afterAll(() => {
     if (savedEnv[key] === undefined) delete process.env[key];
     else process.env[key] = savedEnv[key];
   }
+  vi.unstubAllGlobals();
 });
 
 function createMockSecureYeoman(overrides: Partial<{
@@ -42,6 +111,7 @@ describe('Model Routes', () => {
 
   beforeEach(() => {
     app = Fastify();
+    _clearDynamicCache();
   });
 
   it('GET /api/v1/model/info returns current config and available models', async () => {

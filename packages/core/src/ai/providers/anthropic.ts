@@ -27,6 +27,11 @@ import {
 } from '../errors.js';
 import type { SecureLogger } from '../../logging/logger.js';
 
+export interface AnthropicModelInfo {
+  id: string;
+  displayName: string;
+}
+
 export class AnthropicProvider extends BaseProvider {
   readonly name: AIProviderName = 'anthropic';
   private readonly client: Anthropic;
@@ -37,6 +42,31 @@ export class AnthropicProvider extends BaseProvider {
       apiKey: this.apiKey,
       timeout: this.modelConfig.requestTimeoutMs,
     });
+  }
+
+  /**
+   * Fetch available models from Anthropic's Models API.
+   * Filters to claude-* models only.
+   */
+  static async fetchAvailableModels(apiKey: string): Promise<AnthropicModelInfo[]> {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/models', {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> };
+      return (data.data ?? [])
+        .filter((m) => m.id.startsWith('claude-'))
+        .map((m) => ({
+          id: m.id,
+          displayName: m.display_name ?? m.id,
+        }));
+    } catch {
+      return [];
+    }
   }
 
   protected async doChat(request: AIRequest): Promise<AIResponse> {

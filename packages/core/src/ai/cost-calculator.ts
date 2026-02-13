@@ -7,6 +7,11 @@
  */
 
 import type { TokenUsage, AIProviderName } from '@friday/shared';
+import { GeminiProvider } from './providers/gemini.js';
+import { AnthropicProvider } from './providers/anthropic.js';
+import { OpenAIProvider } from './providers/openai.js';
+import { OllamaProvider } from './providers/ollama.js';
+import { OpenCodeProvider } from './providers/opencode.js';
 
 interface ModelPricing {
   inputPer1M: number;
@@ -29,10 +34,8 @@ const PRICING: Record<string, ModelPricing> = {
   'o1-mini': { inputPer1M: 3, outputPer1M: 12 },
   'o3-mini': { inputPer1M: 1.1, outputPer1M: 4.4 },
 
-  // Google Gemini
+  // Google Gemini (static fallback — dynamic models fetched via getAvailableModelsAsync)
   'gemini-2.0-flash': { inputPer1M: 0.1, outputPer1M: 0.4 },
-  'gemini-1.5-pro': { inputPer1M: 1.25, outputPer1M: 5 },
-  'gemini-1.5-flash': { inputPer1M: 0.075, outputPer1M: 0.3 },
 
   // OpenCode Zen
   'gpt-5.2': { inputPer1M: 1.75, outputPer1M: 14 },
@@ -71,8 +74,6 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   'o1-mini': 'openai',
   'o3-mini': 'openai',
   'gemini-2.0-flash': 'gemini',
-  'gemini-1.5-pro': 'gemini',
-  'gemini-1.5-flash': 'gemini',
   'gpt-5.2': 'opencode',
   'claude-sonnet-4-5': 'opencode',
   'claude-haiku-4-5': 'opencode',
@@ -136,6 +137,161 @@ export function getAvailableModels(onlyAvailable = false): Record<string, Availa
   }
 
   return grouped;
+}
+
+// ── Dynamic model discovery (cached) ─────────────────────────────────
+
+let _dynamicCache: { result: Record<string, AvailableModel[]>; ts: number } | null = null;
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Returns models grouped by provider, dynamically fetching models
+ * from all provider APIs when their respective API keys are set.
+ * Results are cached for 10 minutes to avoid repeated API calls.
+ */
+export async function getAvailableModelsAsync(onlyAvailable = false): Promise<Record<string, AvailableModel[]>> {
+  const now = Date.now();
+
+  if (_dynamicCache && now - _dynamicCache.ts < CACHE_TTL_MS) {
+    return filterByAvailability(_dynamicCache.result, onlyAvailable);
+  }
+
+  // Start with the static table
+  const grouped = getAvailableModels(false);
+
+  // Build dynamic fetch tasks for each provider with credentials set
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const openaiKey = process.env['OPENAI_API_KEY'];
+  const geminiKey = process.env['GOOGLE_GENERATIVE_AI_API_KEY'];
+  const opencodeKey = process.env['OPENCODE_API_KEY'];
+  const ollamaHost = process.env['OLLAMA_HOST'];
+
+  const tasks: Array<{ provider: string; promise: Promise<AvailableModel[]> }> = [];
+
+  if (anthropicKey) {
+    tasks.push({
+      provider: 'anthropic',
+      promise: AnthropicProvider.fetchAvailableModels(anthropicKey).then((models) =>
+        models.map((m) => {
+          const knownPricing = PRICING[m.id];
+          const fallback = FALLBACK_PRICING['anthropic']!;
+          return {
+            provider: 'anthropic',
+            model: m.id,
+            inputPer1M: knownPricing?.inputPer1M ?? fallback.inputPer1M,
+            outputPer1M: knownPricing?.outputPer1M ?? fallback.outputPer1M,
+            cachedInputPer1M: knownPricing?.cachedInputPer1M,
+          };
+        }),
+      ),
+    });
+  }
+
+  if (openaiKey) {
+    tasks.push({
+      provider: 'openai',
+      promise: OpenAIProvider.fetchAvailableModels(openaiKey).then((models) =>
+        models.map((m) => {
+          const knownPricing = PRICING[m.id];
+          const fallback = FALLBACK_PRICING['openai']!;
+          return {
+            provider: 'openai',
+            model: m.id,
+            inputPer1M: knownPricing?.inputPer1M ?? fallback.inputPer1M,
+            outputPer1M: knownPricing?.outputPer1M ?? fallback.outputPer1M,
+            cachedInputPer1M: knownPricing?.cachedInputPer1M,
+          };
+        }),
+      ),
+    });
+  }
+
+  if (geminiKey) {
+    tasks.push({
+      provider: 'gemini',
+      promise: GeminiProvider.fetchAvailableModels(geminiKey).then((models) =>
+        models.map((m) => {
+          const knownPricing = PRICING[m.id];
+          const fallback = FALLBACK_PRICING['gemini']!;
+          return {
+            provider: 'gemini',
+            model: m.id,
+            inputPer1M: knownPricing?.inputPer1M ?? fallback.inputPer1M,
+            outputPer1M: knownPricing?.outputPer1M ?? fallback.outputPer1M,
+            cachedInputPer1M: knownPricing?.cachedInputPer1M,
+          };
+        }),
+      ),
+    });
+  }
+
+  if (opencodeKey) {
+    tasks.push({
+      provider: 'opencode',
+      promise: OpenCodeProvider.fetchAvailableModels(opencodeKey).then((models) =>
+        models.map((m) => {
+          const knownPricing = PRICING[m.id];
+          const fallback = FALLBACK_PRICING['opencode']!;
+          return {
+            provider: 'opencode',
+            model: m.id,
+            inputPer1M: knownPricing?.inputPer1M ?? fallback.inputPer1M,
+            outputPer1M: knownPricing?.outputPer1M ?? fallback.outputPer1M,
+            cachedInputPer1M: knownPricing?.cachedInputPer1M,
+          };
+        }),
+      ),
+    });
+  }
+
+  if (ollamaHost) {
+    tasks.push({
+      provider: 'ollama',
+      promise: OllamaProvider.fetchAvailableModels(ollamaHost).then((models) =>
+        models.map((m) => ({
+          provider: 'ollama',
+          model: m.id,
+          inputPer1M: 0,
+          outputPer1M: 0,
+        })),
+      ),
+    });
+  }
+
+  // Fetch all in parallel
+  const results = await Promise.allSettled(tasks.map((t) => t.promise));
+
+  for (let i = 0; i < tasks.length; i++) {
+    const result = results[i];
+    const { provider } = tasks[i];
+    if (result.status === 'fulfilled' && result.value.length > 0) {
+      grouped[provider] = result.value;
+    }
+    // On failure or empty result, keep the static models
+  }
+
+  _dynamicCache = { result: grouped, ts: now };
+  return filterByAvailability(grouped, onlyAvailable);
+}
+
+function filterByAvailability(
+  grouped: Record<string, AvailableModel[]>,
+  onlyAvailable: boolean,
+): Record<string, AvailableModel[]> {
+  if (!onlyAvailable) return grouped;
+
+  const filtered: Record<string, AvailableModel[]> = {};
+  for (const [provider, models] of Object.entries(grouped)) {
+    const keyEnv = PROVIDER_KEY_ENV[provider];
+    if (keyEnv && !process.env[keyEnv]) continue;
+    filtered[provider] = models;
+  }
+  return filtered;
+}
+
+/** @internal — exposed for testing */
+export function _clearDynamicCache(): void {
+  _dynamicCache = null;
 }
 
 export class CostCalculator {

@@ -29,6 +29,11 @@ import type { SecureLogger } from '../../logging/logger.js';
 
 const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
 
+export interface OpenCodeModelInfo {
+  id: string;
+  ownedBy: string;
+}
+
 export class OpenCodeProvider extends BaseProvider {
   readonly name: AIProviderName = 'opencode';
   private readonly client: OpenAI;
@@ -40,6 +45,25 @@ export class OpenCodeProvider extends BaseProvider {
       timeout: this.modelConfig.requestTimeoutMs,
       baseURL: this.modelConfig.baseUrl ?? OPENCODE_BASE_URL,
     });
+  }
+
+  /**
+   * Fetch available models from OpenCode's OpenAI-compatible models endpoint.
+   */
+  static async fetchAvailableModels(apiKey: string, baseUrl = OPENCODE_BASE_URL): Promise<OpenCodeModelInfo[]> {
+    try {
+      const res = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { data?: Array<{ id: string; owned_by: string }> };
+      return (data.data ?? []).map((m) => ({
+        id: m.id,
+        ownedBy: m.owned_by,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   protected async doChat(request: AIRequest): Promise<AIResponse> {

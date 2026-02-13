@@ -98,7 +98,7 @@ SecureYeoman embodies the **Yeoman Philosophy** from F.R.I.D.A.Y.:
 
 ```yaml
 name: SecureYeoman
-version: 1.3.0
+version: 1.3.1
 parent_system: F.R.I.D.A.Y.
 role: Secure Autonomous Agent
 classification: Enterprise Security Module
@@ -1537,7 +1537,7 @@ OTLP_ENDPOINT=...
 openapi: 3.0.0
 info:
   title: SecureYeoman API
-  version: 1.3.0
+  version: 1.3.1
 
 paths:
   # Health

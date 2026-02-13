@@ -4,6 +4,12 @@
 
 ---
 
+## v1.3.1 — Completed (2026-02-12)
+
+- **Dynamic model discovery** — `fetchAvailableModels()` on all providers (Anthropic, OpenAI, Ollama, OpenCode); parallel fetching in `getAvailableModelsAsync()`
+- **Dashboard dropdown highlighting** — lighter blue highlight with left border on active personality and model selections
+- **Sidebar collapsed spacing** — reduced icon spacing when sidebar is collapsed
+
 ## v1.3.0 — Completed (2026-02-12)
 
 - **Coding IDE View** — Monaco editor at `/code` with personality-scoped chat sidebar, `useChat` hook, "Send to Chat" and "Insert at Cursor" actions

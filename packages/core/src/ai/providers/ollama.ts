@@ -50,6 +50,11 @@ interface OllamaTool {
   };
 }
 
+export interface OllamaModelInfo {
+  id: string;
+  size: number;
+}
+
 export class OllamaProvider extends BaseProvider {
   readonly name: AIProviderName = 'ollama';
   private readonly baseUrl: string;
@@ -57,6 +62,23 @@ export class OllamaProvider extends BaseProvider {
   constructor(config: ProviderConfig, logger?: SecureLogger) {
     super(config, logger);
     this.baseUrl = config.model.baseUrl ?? DEFAULT_BASE_URL;
+  }
+
+  /**
+   * Fetch locally downloaded models from Ollama's tags API.
+   */
+  static async fetchAvailableModels(baseUrl = DEFAULT_BASE_URL): Promise<OllamaModelInfo[]> {
+    try {
+      const res = await fetch(`${baseUrl}/api/tags`);
+      if (!res.ok) return [];
+      const data = (await res.json()) as { models?: Array<{ name: string; size: number }> };
+      return (data.models ?? []).map((m) => ({
+        id: m.name,
+        size: m.size,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   protected async doChat(request: AIRequest): Promise<AIResponse> {

@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] — 2026-02-12
+
+### Dynamic Model Discovery
+- **All-provider dynamic fetch** — Added `fetchAvailableModels()` static methods to `AnthropicProvider`, `OpenAIProvider`, `OllamaProvider`, and `OpenCodeProvider`, matching Gemini's existing pattern; each uses raw `fetch` against the provider's models/tags API
+- **Parallel provider fetching** — `getAvailableModelsAsync()` now queries all configured providers simultaneously via `Promise.allSettled`; models from APIs replace static lists while static entries remain as fallback on failure
+- **Anthropic** — Filters to `claude-*` models via `GET /v1/models` with `x-api-key` + `anthropic-version` headers
+- **OpenAI** — Filters to models owned by `openai` or `system` (skips fine-tuned/third-party) via `GET /v1/models`
+- **Ollama** — Lists locally downloaded models via `GET /api/tags`; returns model name and size
+- **OpenCode** — Lists models from OpenAI-compatible `GET /models` endpoint with Bearer auth
+
+### Dashboard
+- **Dropdown highlighting** — Active personality and model selection items now show a lighter blue background (`bg-primary/15`) with a left blue border indicator for clearer visual feedback
+- **Sidebar collapsed spacing** — Reduced spacing between navigation icons when sidebar is collapsed for a more compact layout
+
+---
+
 ## [1.3.0] — 2026-02-12
 
 ### Coding IDE View

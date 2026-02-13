@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenAIProvider } from './openai.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 import { RateLimitError, AuthenticationError } from '../errors.js';
 
 const mockCreate = vi.fn();
+const mockFetch = vi.fn();
 
 vi.mock('openai', () => {
   class APIError extends Error {
@@ -137,6 +138,56 @@ describe('OpenAIProvider', () => {
       const { APIError } = await import('openai');
       mockClient.chat.completions.create.mockRejectedValue(new (APIError as any)(401, 'invalid key'));
       await expect(provider.chat(simpleRequest)).rejects.toThrow(AuthenticationError);
+    });
+  });
+
+  describe('fetchAvailableModels', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', mockFetch);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('should return models owned by openai or system only', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-4o', owned_by: 'openai' },
+            { id: 'gpt-4o-mini', owned_by: 'system' },
+            { id: 'ft:gpt-4o:custom:2024', owned_by: 'user-abc123' },
+          ],
+        }),
+      });
+
+      const models = await OpenAIProvider.fetchAvailableModels('test-key');
+
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('gpt-4o');
+      expect(models[0].ownedBy).toBe('openai');
+      expect(models[1].id).toBe('gpt-4o-mini');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+        }),
+      );
+    });
+
+    it('should return empty array on fetch failure', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 401 });
+
+      const models = await OpenAIProvider.fetchAvailableModels('bad-key');
+      expect(models).toEqual([]);
+    });
+
+    it('should return empty array on network error', async () => {
+      mockFetch.mockRejectedValue(new Error('network error'));
+
+      const models = await OpenAIProvider.fetchAvailableModels('test-key');
+      expect(models).toEqual([]);
     });
   });
 });

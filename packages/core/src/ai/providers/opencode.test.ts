@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenCodeProvider } from './opencode.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
 import { RateLimitError, AuthenticationError } from '../errors.js';
 
 const mockCreate = vi.fn();
+const mockFetch = vi.fn();
 
 vi.mock('openai', () => {
   class APIError extends Error {
@@ -137,6 +138,68 @@ describe('OpenCodeProvider', () => {
       const { APIError } = await import('openai');
       mockClient.chat.completions.create.mockRejectedValue(new (APIError as any)(401, 'invalid key'));
       await expect(provider.chat(simpleRequest)).rejects.toThrow(AuthenticationError);
+    });
+  });
+
+  describe('fetchAvailableModels', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', mockFetch);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('should return all models from OpenCode endpoint', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-5.2', owned_by: 'opencode' },
+            { id: 'claude-sonnet-4-5', owned_by: 'opencode' },
+          ],
+        }),
+      });
+
+      const models = await OpenCodeProvider.fetchAvailableModels('test-key');
+
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('gpt-5.2');
+      expect(models[1].id).toBe('claude-sonnet-4-5');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://opencode.ai/zen/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+        }),
+      );
+    });
+
+    it('should use custom base URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [] }),
+      });
+
+      await OpenCodeProvider.fetchAvailableModels('test-key', 'https://custom.api.com/v1');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://custom.api.com/v1/models',
+        expect.anything(),
+      );
+    });
+
+    it('should return empty array on fetch failure', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+      const models = await OpenCodeProvider.fetchAvailableModels('bad-key');
+      expect(models).toEqual([]);
+    });
+
+    it('should return empty array on network error', async () => {
+      mockFetch.mockRejectedValue(new Error('network error'));
+
+      const models = await OpenCodeProvider.fetchAvailableModels('test-key');
+      expect(models).toEqual([]);
     });
   });
 });

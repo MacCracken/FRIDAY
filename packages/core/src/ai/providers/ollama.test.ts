@@ -125,6 +125,43 @@ describe('OllamaProvider', () => {
     });
   });
 
+  describe('fetchAvailableModels', () => {
+    it('should return all locally downloaded models', async () => {
+      const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({
+          models: [
+            { name: 'llama3:latest', size: 4700000000 },
+            { name: 'codellama:7b', size: 3800000000 },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+
+      const models = await OllamaProvider.fetchAvailableModels('http://localhost:11434');
+
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('llama3:latest');
+      expect(models[0].size).toBe(4700000000);
+      expect(models[1].id).toBe('codellama:7b');
+      expect(fetchSpy).toHaveBeenCalledWith('http://localhost:11434/api/tags');
+    });
+
+    it('should return empty array when Ollama is not running', async () => {
+      vi.spyOn(global, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
+      const models = await OllamaProvider.fetchAvailableModels();
+      expect(models).toEqual([]);
+    });
+
+    it('should return empty array on non-ok response', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        new Response('error', { status: 500 }),
+      );
+
+      const models = await OllamaProvider.fetchAvailableModels();
+      expect(models).toEqual([]);
+    });
+  });
+
   describe('streaming', () => {
     it('should parse NDJSON stream', async () => {
       const chunks = [

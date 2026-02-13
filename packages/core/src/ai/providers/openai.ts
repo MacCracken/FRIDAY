@@ -26,6 +26,11 @@ import {
 } from '../errors.js';
 import type { SecureLogger } from '../../logging/logger.js';
 
+export interface OpenAIModelInfo {
+  id: string;
+  ownedBy: string;
+}
+
 export class OpenAIProvider extends BaseProvider {
   readonly name: AIProviderName = 'openai';
   private readonly client: OpenAI;
@@ -37,6 +42,28 @@ export class OpenAIProvider extends BaseProvider {
       timeout: this.modelConfig.requestTimeoutMs,
       ...(this.modelConfig.baseUrl ? { baseURL: this.modelConfig.baseUrl } : {}),
     });
+  }
+
+  /**
+   * Fetch available models from OpenAI's Models API.
+   * Filters to models owned by 'openai' or 'system' (skips fine-tuned/third-party).
+   */
+  static async fetchAvailableModels(apiKey: string): Promise<OpenAIModelInfo[]> {
+    try {
+      const res = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { data?: Array<{ id: string; owned_by: string }> };
+      return (data.data ?? [])
+        .filter((m) => m.owned_by === 'openai' || m.owned_by === 'system')
+        .map((m) => ({
+          id: m.id,
+          ownedBy: m.owned_by,
+        }));
+    } catch {
+      return [];
+    }
   }
 
   protected async doChat(request: AIRequest): Promise<AIResponse> {
