@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Settings, Key, Plus, Trash2, Copy, Check, Shield, Bot } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Settings, Key, Plus, Trash2, Copy, Check, Shield, Bot, Blocks } from 'lucide-react';
 import {
   fetchAgentName,
   updateAgentName,
@@ -8,6 +9,7 @@ import {
   createApiKey,
   revokeApiKey,
   fetchSoulConfig,
+  fetchMcpServers,
 } from '../api/client';
 import { ConfirmDialog } from './common/ConfirmDialog';
 import { NotificationSettings } from './NotificationSettings';
@@ -25,6 +27,7 @@ const ROLE_OPTIONS = ['admin', 'operator', 'auditor', 'viewer'] as const;
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   // ── Agent Name ──────────────────────────────────────────────
   const [editingName, setEditingName] = useState(false);
@@ -80,6 +83,11 @@ export function SettingsPage() {
   const { data: soulConfig } = useQuery({
     queryKey: ['soulConfig'],
     queryFn: fetchSoulConfig,
+  });
+
+  const { data: mcpData } = useQuery({
+    queryKey: ['mcpServers'],
+    queryFn: fetchMcpServers,
   });
 
   const copyToClipboard = (text: string) => {
@@ -334,6 +342,32 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* MCP Servers */}
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-sm flex items-center gap-2">
+            <Blocks className="w-4 h-4" />
+            MCP Servers
+          </h3>
+          <button
+            className="text-xs text-primary hover:text-primary/80"
+            onClick={() => navigate('/mcp')}
+          >
+            Manage
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <span className="text-xs text-muted-foreground block">Configured</span>
+            <span>{mcpData?.total ?? 0} servers</span>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Enabled</span>
+            <span>{mcpData?.servers?.filter((s) => s.enabled).length ?? 0} servers</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -33,7 +33,7 @@ export function registerModelRoutes(
           maxTokens: modelConfig.maxTokens,
           temperature: modelConfig.temperature,
         },
-        available: getAvailableModels(),
+        available: getAvailableModels(true),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

@@ -112,7 +112,7 @@ export function NotificationBell() {
     <div ref={dropdownRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="btn-ghost p-2 relative"
+        className="btn-ghost p-2 relative rounded-md border border-transparent hover:border-border"
         aria-label="Notifications"
         aria-expanded={open}
       >

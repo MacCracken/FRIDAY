@@ -1,13 +1,14 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useRef, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Send, Loader2, Bot, User } from 'lucide-react';
-import { fetchActivePersonality, sendChatMessage } from '../api/client';
+import { fetchActivePersonality } from '../api/client';
 import { ModelWidget } from './ModelWidget';
-import type { ChatMessage } from '../types';
+import { VoiceToggle } from './VoiceToggle';
+import { useChat } from '../hooks/useChat';
+import { useVoice } from '../hooks/useVoice';
+import { useState } from 'react';
 
 export function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
   const [showModelWidget, setShowModelWidget] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -19,64 +20,35 @@ export function ChatPage() {
 
   const personality = personalityData?.personality;
 
-  const chatMutation = useMutation({
-    mutationFn: sendChatMessage,
-    onSuccess: (response) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: response.content,
-          timestamp: Date.now(),
-          model: response.model,
-          provider: response.provider,
-          tokensUsed: response.tokensUsed,
-        },
-      ]);
-    },
-    onError: (error: Error) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `Error: ${error.message}`,
-          timestamp: Date.now(),
-        },
-      ]);
-    },
-  });
+  const { messages, input, setInput, handleSend, isPending } = useChat();
+  const voice = useVoice();
+
+  // Feed voice transcript into input
+  useEffect(() => {
+    if (voice.transcript) {
+      setInput((prev: string) => prev + voice.transcript);
+      voice.clearTranscript();
+    }
+  }, [voice.transcript, setInput, voice.clearTranscript]);
+
+  // Speak assistant messages when voice is enabled
+  const lastMsgCount = useRef(0);
+  useEffect(() => {
+    if (messages.length > lastMsgCount.current) {
+      const latest = messages[messages.length - 1];
+      if (latest.role === 'assistant' && voice.voiceEnabled) {
+        voice.speak(latest.content);
+      }
+    }
+    lastMsgCount.current = messages.length;
+  }, [messages.length, voice.voiceEnabled, voice.speak, messages]);
 
   // Auto-scroll on new messages
   useEffect(() => {
     if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === 'function') {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages.length, chatMutation.isPending]);
-
-  const handleSend = useCallback(() => {
-    const trimmed = input.trim();
-    if (!trimmed || chatMutation.isPending) return;
-
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: trimmed,
-      timestamp: Date.now(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-
-    // Build history from all prior messages (excluding the one we just added)
-    const history = [...messages, userMessage].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    chatMutation.mutate({
-      message: trimmed,
-      history: history.slice(0, -1), // exclude last since it's the new message
-    });
-  }, [input, messages, chatMutation]);
+  }, [messages.length, isPending]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -103,18 +75,27 @@ export function ChatPage() {
             )}
           </div>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setShowModelWidget((v) => !v)}
-            className="btn-ghost text-xs px-3 py-1.5 rounded-full border"
-          >
-            Model Info
-          </button>
-          {showModelWidget && (
-            <div className="absolute right-0 top-full mt-2 z-50">
-              <ModelWidget onClose={() => setShowModelWidget(false)} />
-            </div>
-          )}
+        <div className="flex items-center gap-2">
+          <VoiceToggle
+            voiceEnabled={voice.voiceEnabled}
+            isListening={voice.isListening}
+            isSpeaking={voice.isSpeaking}
+            supported={voice.supported}
+            onToggle={voice.toggleVoice}
+          />
+          <div className="relative">
+            <button
+              onClick={() => setShowModelWidget((v) => !v)}
+              className="btn-ghost text-xs px-3 py-1.5 rounded-full border"
+            >
+              Model Info
+            </button>
+            {showModelWidget && (
+              <div className="absolute right-0 top-full mt-2 z-50">
+                <ModelWidget onClose={() => setShowModelWidget(false)} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -168,7 +149,7 @@ export function ChatPage() {
         ))}
 
         {/* Typing indicator */}
-        {chatMutation.isPending && (
+        {isPending && (
           <div className="flex justify-start">
             <div className="bg-muted rounded-lg px-4 py-3">
               <div className="flex items-center gap-2">
@@ -196,16 +177,16 @@ export function ChatPage() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={`Message ${personality?.name ?? 'the assistant'}...`}
-            disabled={chatMutation.isPending}
+            disabled={isPending}
             rows={1}
             className="flex-1 resize-none rounded-lg border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || chatMutation.isPending}
+            disabled={!input.trim() || isPending}
             className="btn-primary px-4 py-3 rounded-lg disabled:opacity-50"
           >
-            {chatMutation.isPending ? (
+            {isPending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Send className="w-4 h-4" />

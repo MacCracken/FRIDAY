@@ -234,6 +234,18 @@ export interface ChatResponse {
   tokensUsed?: number;
 }
 
+// ─── Code Session Types ─────────────────────────────────────
+
+export interface CodeSession {
+  id: string;
+  filename: string;
+  language: string;
+  content: string;
+  personalityId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Model Types ────────────────────────────────────────────
 
 export interface ModelInfo {
@@ -254,6 +266,39 @@ export interface ModelCurrentConfig {
 export interface ModelInfoResponse {
   current: ModelCurrentConfig;
   available: Record<string, ModelInfo[]>;
+}
+
+// ─── MCP Types ──────────────────────────────────────────────
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  description: string;
+  transport: 'stdio' | 'sse' | 'streamable-http';
+  command: string | null;
+  args: string[];
+  url: string | null;
+  env: Record<string, string>;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface McpToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  serverId: string;
+  serverName: string;
+}
+
+export interface McpResourceDef {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+  serverId: string;
+  serverName: string;
 }
 
 // ─── Soul Config Types ──────────────────────────────────────

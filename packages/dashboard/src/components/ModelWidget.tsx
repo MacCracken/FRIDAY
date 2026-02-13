@@ -17,7 +17,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 function formatPrice(inputPer1M: number, outputPer1M: number): string {
-  if (inputPer1M === 0 && outputPer1M === 0) return 'Free (local)';
+  if (inputPer1M === 0 && outputPer1M === 0) return 'Free';
   return `$${inputPer1M} / $${outputPer1M} per 1M tokens`;
 }
 

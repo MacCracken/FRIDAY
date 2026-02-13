@@ -9,12 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-02-12
+
+### Coding IDE View
+- **Code editor page** — New `/code` route with Monaco editor (65% width) + embedded chat sidebar (35%); language auto-detect from filename extension; editor theme follows dashboard dark/light mode
+- **Personality-scoped chat** — Sidebar personality selector (dropdown populated from existing personalities); selected personality scopes the chat system prompt locally without changing the global active personality
+- **Send to Chat / Insert at Cursor** — Toolbar button sends selected editor text (or full buffer) as a code block to the chat sidebar; assistant messages include "Insert at Cursor" to inject code-fenced content back into the editor
+- **Shared chat hook** — Extracted `useChat()` hook from `ChatPage.tsx` for reuse across Chat and Code pages; accepts optional `personalityId` for personality-scoped conversations
+
+### Voice Interface
+- **Speech-to-text** — Browser-native `SpeechRecognition` API with auto-restart loop for hands-free input; transcript feeds into chat input field
+- **Text-to-speech** — Browser-native `speechSynthesis` reads assistant responses aloud when voice is enabled
+- **Voice toggle button** — `VoiceToggle.tsx` component with listening (pulsing ring), speaking (pulse), and unsupported (disabled) states; available in both `/chat` and `/code` pages
+- **Voice persistence** — `voiceEnabled` stored in `localStorage` key `friday-voice-enabled`; graceful fallback when browser lacks speech APIs
+
 ### In Our Image: The Sacred Hierarchy of Life
 - **Sacred Archetypes** — Cosmological foundation (No-Thing-Ness → The One → The Plurality) baked into Soul prompt composition; every AI prompt now begins with the archetypal preamble grounding the "In Our Image" hierarchy
 - **Heartbeat moved to Body** — `HeartbeatManager` relocated from `brain/` to `body/`, making Body the owner of the agent's vital signs; Brain retains memory/knowledge, Body now owns periodic self-checks (system health, memory status, log anomalies, integration health)
 
 ### Added
 - **OpenCode Zen provider** — 5th AI provider using OpenCode.ai's OpenAI-compatible gateway (`https://opencode.ai/zen/v1`); supports GPT 5.2, Claude Sonnet 4.5, Claude Haiku 4.5, Gemini 3 Flash, Qwen3 Coder, and Big Pickle (free); pricing, cost calculator entries, dashboard label, and unit tests included
+- **Provider-aware model selector** — Dashboard model widget only shows providers with configured API keys; `getAvailableModels(onlyAvailable)` filters by env var presence
+
+### Dashboard
+- **Sidebar restructure** — User profile moved into sidebar with theme toggle and sign out; connection/live status indicators at sidebar bottom; refresh button beside title
+- **Header cleanup** — Notification bell and search bar centered in header with improved spacing
 
 ---
 
@@ -95,7 +116,7 @@ Adds the **Spirit** module — the agent's emotional core (passions, inspiration
 
 ### MVP Release
 
-F.R.I.D.A.Y. v1.0.0 marks the first stable release of the **Fully Responsive Integrated Digital Assistant Yeoman** — a secure, local-first AI assistant with enterprise-grade protection and comprehensive observability.
+F.R.I.D.A.Y. v1.0.0 marks the first stable release of the **Fully Responsive Integrated Digitally Adaptable Yeoman** — a secure, local-first AI assistant with enterprise-grade protection and comprehensive observability.
 
 **Highlights:**
 
@@ -274,4 +295,4 @@ All features from the pre-release development phases below are included in this 
 
 ---
 
-*Last updated: February 11, 2026*
+*Last updated: February 12, 2026*

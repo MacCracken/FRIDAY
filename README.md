@@ -1,8 +1,8 @@
 # F.R.I.D.A.Y.
 
-> **F**ully **R**esponsive **I**ntegrated **D**igital **A**ssistant **Y**eoman
+> **F**ully **R**esponsive **I**ntegrated **D**igitally **A**daptable **Y**eoman
 
-[![Version](https://img.shields.io/badge/Version-1.0.1-blue.svg)](https://github.com/MacCracken/FRIDAY/releases/tag/v1.0.1)
+[![Version](https://img.shields.io/badge/Version-1.3.0-blue.svg)](https://github.com/MacCracken/FRIDAY/releases/tag/v1.3.0)
 [![CI](https://github.com/MacCracken/FRIDAY/actions/workflows/ci.yml/badge.svg)](https://github.com/MacCracken/FRIDAY/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Security: Enterprise-Grade](https://img.shields.io/badge/Security-Enterprise--Grade-green.svg)]()

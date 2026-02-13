@@ -82,9 +82,23 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
 };
 
 /**
- * Returns all known models grouped by provider.
+ * Default environment variable name for each provider's API key.
+ * Ollama requires no key (local inference).
  */
-export function getAvailableModels(): Record<string, AvailableModel[]> {
+export const PROVIDER_KEY_ENV: Record<string, string | null> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  gemini: 'GOOGLE_API_KEY',
+  opencode: 'OPENCODE_API_KEY',
+  ollama: null, // no key needed
+};
+
+/**
+ * Returns all known models grouped by provider.
+ * When `onlyAvailable` is true, providers whose API key env var is not set
+ * are excluded (Ollama is always included since it needs no key).
+ */
+export function getAvailableModels(onlyAvailable = false): Record<string, AvailableModel[]> {
   const grouped: Record<string, AvailableModel[]> = {};
 
   for (const [model, pricing] of Object.entries(PRICING)) {
@@ -109,6 +123,16 @@ export function getAvailableModels(): Record<string, AvailableModel[]> {
       inputPer1M: 0,
       outputPer1M: 0,
     }];
+  }
+
+  if (onlyAvailable) {
+    for (const provider of Object.keys(grouped)) {
+      const keyEnv = PROVIDER_KEY_ENV[provider];
+      // If the provider requires a key and it's not set, remove it
+      if (keyEnv !== null && keyEnv !== undefined && !process.env[keyEnv]) {
+        delete grouped[provider];
+      }
+    }
   }
 
   return grouped;

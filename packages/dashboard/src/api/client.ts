@@ -22,6 +22,9 @@ import type {
   IntegrationInfo,
   ChatResponse,
   ModelInfoResponse,
+  McpServerConfig,
+  McpToolDef,
+  McpResourceDef,
 } from '../types.js';
 
 const API_BASE = '/api/v1';
@@ -624,4 +627,50 @@ export async function switchModel(data: {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// ─── MCP Servers ──────────────────────────────────────────────
+
+export async function fetchMcpServers(): Promise<{ servers: McpServerConfig[]; total: number }> {
+  try {
+    return await request('/mcp/servers');
+  } catch {
+    return { servers: [], total: 0 };
+  }
+}
+
+export async function addMcpServer(data: {
+  name: string;
+  description?: string;
+  transport?: 'stdio' | 'sse' | 'streamable-http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  enabled?: boolean;
+}): Promise<{ server: McpServerConfig }> {
+  return request('/mcp/servers', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteMcpServer(id: string): Promise<void> {
+  await request(`/mcp/servers/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchMcpTools(): Promise<{ tools: McpToolDef[]; total: number }> {
+  try {
+    return await request('/mcp/tools');
+  } catch {
+    return { tools: [], total: 0 };
+  }
+}
+
+export async function fetchMcpResources(): Promise<{ resources: McpResourceDef[] }> {
+  try {
+    return await request('/mcp/resources');
+  } catch {
+    return { resources: [] };
+  }
 }

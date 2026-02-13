@@ -22,7 +22,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [agentName, setAgentName] = useState('FRIDAY');
   const [personality, setPersonality] = useState<PersonalityCreate>({
     name: 'FRIDAY',
-    description: 'Friendly, Reliable, Intelligent Digital Assistant Yeoman',
+    description: 'Friendly, Reliable, Intelligent Digitally Adaptable Yeoman',
     systemPrompt: '',
     traits: { formality: 'balanced', humor: 'subtle', verbosity: 'concise' },
     sex: 'unspecified',

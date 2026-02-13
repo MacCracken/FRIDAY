@@ -17,7 +17,6 @@ import { useSidebar } from '../hooks/useSidebar';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { fetchMetrics, fetchHealth, fetchOnboardingStatus } from '../api/client';
 import { Sidebar } from './Sidebar';
-import { StatusBar } from './StatusBar';
 import { SearchBar } from './SearchBar';
 import { NotificationBell } from './NotificationBell';
 import { ErrorBoundary } from './common/ErrorBoundary';
@@ -33,6 +32,8 @@ const ResourceMonitor = lazy(() => import('./ResourceMonitor').then(m => ({ defa
 const PersonalityEditor = lazy(() => import('./PersonalityEditor').then(m => ({ default: m.PersonalityEditor })));
 const SkillsManager = lazy(() => import('./SkillsManager').then(m => ({ default: m.SkillsManager })));
 const ConnectionManager = lazy(() => import('./ConnectionManager').then(m => ({ default: m.ConnectionManager })));
+const McpManager = lazy(() => import('./McpManager').then(m => ({ default: m.McpManager })));
+const CodePage = lazy(() => import('./CodePage').then(m => ({ default: m.CodePage })));
 const SettingsPage = lazy(() => import('./SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SecuritySettings = lazy(() => import('./SecuritySettings').then(m => ({ default: m.SecuritySettings })));
 const ChatPage = lazy(() => import('./ChatPage').then(m => ({ default: m.ChatPage })));
@@ -102,7 +103,13 @@ export function DashboardLayout() {
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
-      <Sidebar />
+      <Sidebar
+        isConnected={isConnected}
+        wsConnected={connected}
+        reconnecting={reconnecting}
+        onRefresh={() => refetchMetrics()}
+        onLogout={() => void logout()}
+      />
 
       {/* Main content column */}
       <div
@@ -130,34 +137,30 @@ export function DashboardLayout() {
           <header className="border-b bg-card sticky top-0 z-20">
             <div className="px-4 py-3 sm:py-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                  {/* Mobile hamburger */}
+                {/* Mobile: hamburger + logo */}
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0 md:hidden">
                   <button
-                    className="md:hidden btn-ghost p-2"
+                    className="btn-ghost p-2"
                     onClick={() => setMobileOpen(true)}
                     aria-label="Open navigation menu"
                   >
                     <Menu className="w-5 h-5" />
                   </button>
-                  {/* Mobile-only logo */}
-                  <Shield className="w-7 h-7 text-primary flex-shrink-0 md:hidden" />
-                  <div className="min-w-0 md:hidden">
+                  <Shield className="w-7 h-7 text-primary flex-shrink-0" />
+                  <div className="min-w-0">
                     <h1 className="text-lg font-bold truncate">SecureYeoman</h1>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 sm:gap-4">
+                {/* Desktop: spacer so items center-right */}
+                <div className="hidden md:block" />
+
+                {/* Notification bell + search */}
+                <div className="flex items-center gap-3">
+                  <NotificationBell />
                   <div className="hidden md:block">
                     <SearchBar />
                   </div>
-                  <NotificationBell />
-                  <StatusBar
-                    isConnected={isConnected}
-                    wsConnected={connected}
-                    reconnecting={reconnecting}
-                    onRefresh={() => refetchMetrics()}
-                    onLogout={() => void logout()}
-                  />
                 </div>
               </div>
             </div>
@@ -170,11 +173,13 @@ export function DashboardLayout() {
                 <Routes>
                   <Route path="/" element={<OverviewPage metrics={metrics} />} />
                   <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/code" element={<CodePage />} />
                   <Route path="/tasks" element={<TaskHistory />} />
                   <Route path="/security" element={<SecurityEvents metrics={metrics} />} />
                   <Route path="/personality" element={<PersonalityEditor />} />
                   <Route path="/skills" element={<SkillsManager />} />
                   <Route path="/connections" element={<ConnectionManager />} />
+                  <Route path="/mcp" element={<McpManager />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/experiments" element={<ExperimentsPage />} />
                   <Route path="/marketplace" element={<MarketplacePage />} />
@@ -190,7 +195,7 @@ export function DashboardLayout() {
           <footer className="border-t bg-card">
             <div className="px-3 sm:px-4 py-3 sm:py-4">
               <div className="flex items-center justify-between text-xs sm:text-sm text-muted-foreground">
-                <span>SecureYeoman v1.2.0</span>
+                <span>SecureYeoman v1.3.0</span>
                 <span className="hidden sm:inline">Local Network Only</span>
               </div>
             </div>

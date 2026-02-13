@@ -46,7 +46,7 @@ Health check endpoint - no authentication required.
 {
   "status": "healthy",
   "timestamp": "2026-02-11T00:00:00.000Z",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "uptime": 3600
 }
 ```

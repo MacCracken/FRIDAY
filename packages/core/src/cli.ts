@@ -103,7 +103,7 @@ function printBanner(host: string, port: number, tls = false): void {
   const scheme = tls ? 'https' : 'http';
   console.log(`
   ╔═══════════════════════════════════════════╗
-  ║          SecureYeoman v0.1.0              ║
+  ║          SecureYeoman v1.3.0              ║
   ║   Secure Autonomous Agent Framework       ║
   ╚═══════════════════════════════════════════╝
 
@@ -125,7 +125,7 @@ async function main(): Promise<void> {
   }
 
   if (args.version) {
-    console.log('secureyeoman v0.1.0');
+    console.log('secureyeoman v1.3.0');
     process.exit(0);
   }
 

@@ -291,7 +291,7 @@ export function registerSoulRoutes(
 
       const defaults = {
         name: agentName,
-        description: 'Friendly, Reliable, Intelligent Digital Assistant Yeoman',
+        description: 'Friendly, Reliable, Intelligent Digitally Adaptable Yeoman',
         systemPrompt:
           `You are ${agentName}, a helpful and security-conscious AI assistant. You are direct, technically precise, and proactive about identifying risks.`,
         traits: { formality: 'balanced', humor: 'subtle', verbosity: 'concise' },

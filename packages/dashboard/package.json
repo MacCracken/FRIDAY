@@ -1,6 +1,6 @@
 {
   "name": "@friday/dashboard",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "SecureYeoman Performance Metrics Dashboard",
   "type": "module",
   "private": true,
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@friday/shared": "^1.0.0",
+    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.56.2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.441.0",
