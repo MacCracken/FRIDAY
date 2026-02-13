@@ -74,7 +74,13 @@ function parseJwtRole(): string {
   }
 }
 
-export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onLogout }: SidebarProps) {
+export function Sidebar({
+  isConnected,
+  wsConnected,
+  reconnecting,
+  onRefresh,
+  onLogout,
+}: SidebarProps) {
   const { collapsed, toggleCollapse, mobileOpen, setMobileOpen } = useSidebar();
   const { theme, toggle: toggleTheme } = useTheme();
   const location = useLocation();
@@ -123,7 +129,9 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
       </div>
 
       {/* Navigation */}
-      <nav className={`flex-1 px-3 py-4 overflow-y-auto ${collapsed ? 'space-y-0.5' : 'space-y-1'}`}>
+      <nav
+        className={`flex-1 px-3 py-4 overflow-y-auto ${collapsed ? 'space-y-0.5' : 'space-y-1'}`}
+      >
         {NAV_ITEMS.map(({ to, label, icon, end }) => (
           <NavLink
             key={to}
@@ -140,17 +148,35 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
               {label}
             </span>
             {/* Collapsed tooltip */}
-            {collapsed && (
-              <span className="sidebar-tooltip">
-                {label}
-              </span>
-            )}
+            {collapsed && <span className="sidebar-tooltip">{label}</span>}
           </NavLink>
         ))}
       </nav>
 
+      {/* Live & Connected status - above collapse */}
+      <div
+        className={`py-2 border-t border-border flex items-center gap-3 ${collapsed ? 'px-3 justify-center' : 'px-5 justify-between'}`}
+      >
+        <div className={`flex items-center gap-1.5 ${collapsed ? '' : 'pl-2'}`}>
+          <Activity
+            className={`w-3.5 h-3.5 ${wsConnected ? 'text-success' : 'text-muted-foreground'}`}
+          />
+          <span className={`text-xs text-muted-foreground ${collapsed ? 'hidden' : ''}`}>
+            {reconnecting ? 'Reconnecting...' : 'Live'}
+          </span>
+        </div>
+        <div className={`flex items-center gap-1.5 ${collapsed ? '' : 'pr-2'}`}>
+          <div
+            className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-destructive'}`}
+          />
+          <span className={`text-xs text-muted-foreground ${collapsed ? 'hidden' : ''}`}>
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+      </div>
+
       {/* Toggle button */}
-      <div className="px-3 py-2 border-t border-border">
+      <div className={`border-t border-border ${collapsed ? 'px-3 py-2' : 'px-5 py-2'}`}>
         <button
           onClick={toggleCollapse}
           className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ${
@@ -170,7 +196,10 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
       </div>
 
       {/* User profile */}
-      <div ref={profileRef} className="relative px-3 pt-2 pb-0 border-t border-border">
+      <div
+        ref={profileRef}
+        className={`relative border-t border-border ${collapsed ? 'px-3 py-2' : 'px-5 py-2'}`}
+      >
         <button
           onClick={() => setProfileOpen((v) => !v)}
           className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ${
@@ -189,7 +218,9 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
             Admin
           </span>
           {!collapsed && (
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform ${profileOpen ? 'rotate-180' : ''}`}
+            />
           )}
         </button>
 
@@ -208,7 +239,10 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
 
             {/* Theme toggle */}
             <button
-              onClick={() => { toggleTheme(); setProfileOpen(false); }}
+              onClick={() => {
+                toggleTheme();
+                setProfileOpen(false);
+              }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center gap-2 transition-colors"
               role="menuitem"
             >
@@ -218,7 +252,10 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
 
             {/* Logout */}
             <button
-              onClick={() => { setProfileOpen(false); onLogout(); }}
+              onClick={() => {
+                setProfileOpen(false);
+                onLogout();
+              }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 flex items-center gap-2 transition-colors text-destructive"
               role="menuitem"
             >
@@ -227,49 +264,6 @@ export function Sidebar({ isConnected, wsConnected, reconnecting, onRefresh, onL
             </button>
           </div>
         )}
-      </div>
-
-      {/* Connection & Live status */}
-      <div className={`px-3 pb-3 pt-1 space-y-1 ${collapsed ? '' : ''}`}>
-        {/* Connection Status */}
-        <div
-          className={`flex items-center gap-3 px-3 py-1.5 ${collapsed ? 'justify-center' : ''}`}
-          role="status"
-          aria-label="Server connection status"
-        >
-          <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-destructive'}`} />
-          </div>
-          <span
-            className={`text-xs text-muted-foreground whitespace-nowrap transition-opacity duration-200 ${
-              collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-            }`}
-          >
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </span>
-        </div>
-
-        {/* WebSocket Status */}
-        <div
-          className={`flex items-center gap-3 px-3 py-1.5 ${collapsed ? 'justify-center' : ''}`}
-          role="status"
-          aria-label="Live updates status"
-        >
-          <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-            {reconnecting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-warning" />
-            ) : (
-              <Activity className={`w-3.5 h-3.5 ${wsConnected ? 'text-success' : 'text-muted-foreground'}`} />
-            )}
-          </div>
-          <span
-            className={`text-xs text-muted-foreground whitespace-nowrap transition-opacity duration-200 ${
-              collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-            }`}
-          >
-            {reconnecting ? 'Reconnecting...' : wsConnected ? 'Live' : 'Polling'}
-          </span>
-        </div>
       </div>
     </div>
   );
