@@ -623,6 +623,7 @@ export async function sendChatMessage(data: {
   message: string;
   history?: Array<{ role: string; content: string }>;
   personalityId?: string;
+  editorContent?: string;
 }): Promise<ChatResponse> {
   return request('/chat', {
     method: 'POST',

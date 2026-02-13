@@ -274,25 +274,9 @@ export function CodePage() {
               </button>
             </div>
 
-            {/* Monaco Editor */}
-            <div className="flex-1 min-h-0">
-              <Editor
-                height="100%"
-                language={language}
-                theme={theme === 'dark' ? 'vs-dark' : 'light'}
-                value={editorContent}
-                onChange={(value) => setEditorContent(value ?? '')}
-                onMount={handleEditorMount}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  lineNumbers: 'on',
-                  wordWrap: 'on',
-                  automaticLayout: true,
-                  scrollBeyondLastLine: false,
-                  padding: { top: 8 },
-                }}
-              />
+            {/* Monaco Editor placeholder */}
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-card">
+              <p className="text-muted-foreground">Code editor coming soon...</p>
             </div>
           </div>
 

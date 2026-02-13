@@ -5,6 +5,7 @@ import type { ChatMessage } from '../types';
 
 export interface UseChatOptions {
   personalityId?: string | null;
+  editorContent?: string;
 }
 
 export interface UseChatReturn {
@@ -68,9 +69,10 @@ export function useChat(options?: UseChatOptions): UseChatReturn {
     chatMutation.mutate({
       message: trimmed,
       history: history.slice(0, -1),
+      editorContent: options?.editorContent,
       ...(options?.personalityId ? { personalityId: options.personalityId } : {}),
     });
-  }, [input, messages, chatMutation, options?.personalityId]);
+  }, [input, messages, chatMutation, options]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
