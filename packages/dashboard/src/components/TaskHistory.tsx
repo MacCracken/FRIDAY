@@ -129,7 +129,8 @@ export function TaskHistory() {
         limit: pageSize,
         offset: page * pageSize,
       }),
-    refetchInterval: 5000,
+    staleTime: 5000,
+    refetchInterval: false,
   });
 
   const createTaskMutation = useMutation({
