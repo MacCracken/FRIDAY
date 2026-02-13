@@ -340,6 +340,12 @@ export async function createTask(data: {
   });
 }
 
+export async function deleteTask(id: string): Promise<void> {
+  await request(`/tasks/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 // ── Security ──────────────────────────────────────────────────────────
 
 export async function fetchSecurityEvents(params?: {

@@ -20,8 +20,10 @@ import {
   Calendar,
   Plus,
   X,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
-import { fetchTasks, createTask } from '../api/client';
+import { fetchTasks, createTask, deleteTask } from '../api/client';
 import { ConfirmDialog } from './common/ConfirmDialog';
 import type { Task } from '../types';
 
@@ -139,6 +141,15 @@ export function TaskHistory() {
       setNewTask({ name: '', type: 'execute', description: '', input: '' });
     },
   });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (id: string) => deleteTask(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  const [editTask, setEditTask] = useState<Task | null>(null);
 
   // Handle query params for quick create from sidebar
   useEffect(() => {
@@ -442,30 +453,48 @@ export function TaskHistory() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium">ID</th>
-                <th className="px-4 py-3 text-left font-medium">Name</th>
-                <th className="px-4 py-3 text-left font-medium hidden sm:table-cell">Type</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-left font-medium hidden md:table-cell">Duration</th>
-                <th className="px-4 py-3 text-left font-medium hidden sm:table-cell">Created</th>
+                <th className="px-2 py-2 text-left font-medium text-xs hidden sm:table-cell">ID</th>
+                <th className="px-2 py-2 text-left font-medium text-xs">Name</th>
+                <th className="px-2 py-2 text-left font-medium text-xs hidden md:table-cell">
+                  Type
+                </th>
+                <th className="px-2 py-2 text-left font-medium text-xs">Status</th>
+                <th className="px-2 py-2 text-left font-medium text-xs hidden lg:table-cell">
+                  Duration
+                </th>
+                <th className="px-2 py-2 text-left font-medium text-xs hidden sm:table-cell">
+                  Created
+                </th>
+                <th className="px-2 py-2 text-left font-medium text-xs w-20">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-2 py-8 text-center text-muted-foreground">
                     <Loader2 className="w-6 h-6 mx-auto animate-spin" />
                     <p className="mt-2">Loading tasks...</p>
                   </td>
                 </tr>
               ) : tasks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-2 py-8 text-center text-muted-foreground">
                     No tasks found
                   </td>
                 </tr>
               ) : (
-                tasks.map((task) => <TaskRow key={task.id} task={task} />)
+                tasks.map((task) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    onEdit={setEditTask}
+                    onDelete={(t) => {
+                      if (confirm(`Delete task "${t.name}"?`)) {
+                        deleteTaskMutation.mutate(t.id);
+                      }
+                    }}
+                  />
+                ))
               )}
             </tbody>
           </table>
@@ -505,7 +534,15 @@ export function TaskHistory() {
   );
 }
 
-function TaskRow({ task }: { task: Task }) {
+function TaskRow({
+  task,
+  onEdit,
+  onDelete,
+}: {
+  task: Task;
+  onEdit?: (task: Task) => void;
+  onDelete?: (task: Task) => void;
+}) {
   const formatDuration = (ms?: number) => {
     if (!ms) return '-';
     if (ms < 1000) return `${ms}ms`;
@@ -526,30 +563,56 @@ function TaskRow({ task }: { task: Task }) {
 
   return (
     <tr className="hover:bg-muted/30 transition-colors">
-      <td className="px-4 py-3 font-mono text-xs">{task.id.slice(0, 8)}...</td>
-      <td className="px-4 py-3">
-        <div className="font-medium">{task.name}</div>
+      <td className="px-2 py-3 font-mono text-xs hidden sm:table-cell">{task.id.slice(0, 8)}...</td>
+      <td className="px-2 py-3">
+        <div className="font-medium text-sm">{task.name}</div>
         {task.description && (
-          <div className="text-xs text-muted-foreground truncate max-w-xs">{task.description}</div>
+          <div className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-xs">
+            {task.description}
+          </div>
         )}
       </td>
-      <td className="px-4 py-3 hidden sm:table-cell">
-        <span className="px-2 py-1 text-xs bg-muted rounded">{task.type}</span>
+      <td className="px-2 py-3 hidden md:table-cell">
+        <span className="px-1.5 py-0.5 text-xs bg-muted rounded">{task.type}</span>
       </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2">
+      <td className="px-2 py-3">
+        <div className="flex items-center gap-1.5">
           {STATUS_ICONS[task.status]}
-          <span className={STATUS_COLORS[task.status]}>{task.status}</span>
+          <span className={`text-xs ${STATUS_COLORS[task.status]}`}>{task.status}</span>
         </div>
         {task.result?.error && (
-          <div className="text-xs text-destructive mt-1">{task.result.error.message}</div>
+          <div className="text-xs text-destructive mt-1 truncate max-w-[100px]">
+            {task.result.error.message}
+          </div>
         )}
       </td>
-      <td className="px-4 py-3 font-mono text-xs hidden md:table-cell">
+      <td className="px-2 py-3 font-mono text-xs hidden lg:table-cell">
         {formatDuration(task.durationMs)}
       </td>
-      <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">
+      <td className="px-2 py-3 text-muted-foreground text-xs hidden sm:table-cell">
         {formatTime(task.createdAt)}
+      </td>
+      <td className="px-2 py-3">
+        <div className="flex items-center gap-1">
+          {onEdit && (
+            <button
+              onClick={() => onEdit(task)}
+              className="btn-ghost p-1.5 rounded"
+              title="Edit task"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={() => onDelete(task)}
+              className="btn-ghost p-1.5 rounded text-destructive hover:text-destructive"
+              title="Delete task"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
