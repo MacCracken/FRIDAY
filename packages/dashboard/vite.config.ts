@@ -37,8 +37,9 @@ export default defineConfig({
         },
       },
       '/terminal': {
-        target: GATEWAY_URL,
+        target: `${GATEWAY_URL}/api/v1/terminal`,
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/terminal/, ''),
       },
       '/health': {
         target: GATEWAY_URL,

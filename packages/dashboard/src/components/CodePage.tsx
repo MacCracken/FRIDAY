@@ -73,7 +73,7 @@ export function CodePage() {
   const [filename, setFilename] = useState('untitled.ts');
   const [language, setLanguage] = useState(() => detectLanguage('untitled.ts'));
   const [filesPanelOpen, setFilesPanelOpen] = useState(false);
-  const [cwd, setCwd] = useState('/home/user');
+  const [cwd, setCwd] = useState('/tmp');
   const files = [{ name: 'untitled.ts', path: `${cwd}/untitled.ts` }];
   const [selectedPersonalityId, setSelectedPersonalityId] = useState<string | null>(null);
   const [terminalInput, setTerminalInput] = useState('');
@@ -535,13 +535,13 @@ export function CodePage() {
               <span className="text-blue-400">{cwd}</span>
               <span className="text-white">$</span>
               <input
+                ref={terminalInputRef}
                 type="text"
                 value={terminalInput}
                 onChange={(e) => setTerminalInput(e.target.value)}
                 onKeyDown={handleTerminalKeyDown}
                 placeholder="Type command..."
                 disabled={terminalMutation.isPending}
-                autoFocus
                 className="flex-1 bg-transparent border-none px-0 py-0 text-xs font-mono focus:outline-none text-white placeholder:text-gray-500 disabled:opacity-50"
               />
             </div>
