@@ -641,6 +641,12 @@ export class GatewayServer {
       return this.secureYeoman.verifyAuditChain();
     });
 
+    // Audit stats
+    this.app.get('/api/v1/audit/stats', async () => {
+      const stats = await this.secureYeoman.getAuditStats();
+      return stats;
+    });
+
     // WebSocket endpoint — auth is handled via ?token= query param
     // (browser WebSocket API does not support custom headers)
     this.app.get('/ws/metrics', { websocket: true }, (socket, request) => {

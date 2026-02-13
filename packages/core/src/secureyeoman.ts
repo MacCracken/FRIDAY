@@ -821,6 +821,24 @@ export class SecureYeoman {
   }
 
   /**
+   * Get audit statistics
+   */
+  async getAuditStats(): Promise<{
+    totalEntries: number;
+    chainValid: boolean;
+    lastVerification?: number;
+    dbSizeEstimateMb?: number;
+  }> {
+    this.ensureInitialized();
+    const stats = await this.auditChain!.getStats();
+    return {
+      totalEntries: stats.entriesCount,
+      chainValid: stats.chainValid,
+      lastVerification: stats.lastVerification,
+    };
+  }
+
+  /**
    * Get the rate limiter instance
    */
   getRateLimiter(): RateLimiterLike {
