@@ -239,8 +239,11 @@ export function registerSoulRoutes(
 
   // ── Prompt Preview ──────────────────────────────────────────
 
-  app.get('/api/v1/soul/prompt/preview', async () => {
-    const prompt = soulManager.composeSoulPrompt();
+  app.get('/api/v1/soul/prompt/preview', async (
+    request: FastifyRequest<{ Querystring: { personalityId?: string } }>,
+  ) => {
+    const { personalityId } = request.query;
+    const prompt = soulManager.composeSoulPrompt(undefined, personalityId);
     const tools = soulManager.getActiveTools();
     return { prompt, tools, charCount: prompt.length, estimatedTokens: Math.ceil(prompt.length / 4) };
   });
@@ -308,6 +311,7 @@ export function registerSoulRoutes(
         sex: request.body?.sex ?? defaults.sex,
         voice: request.body?.voice ?? defaults.voice,
         preferredLanguage: request.body?.preferredLanguage ?? defaults.preferredLanguage,
+        defaultModel: request.body?.defaultModel ?? null,
       };
 
       const personality = soulManager.createPersonality(data);

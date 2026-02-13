@@ -114,9 +114,12 @@ async function request<T>(
   const token = getAccessToken();
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) ?? {}),
   };
+
+  if (options.body) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token && !skipAuth) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -489,8 +492,9 @@ export async function rejectSkill(id: string): Promise<void> {
   await request(`/soul/skills/${id}/reject`, { method: 'POST' });
 }
 
-export async function fetchPromptPreview(): Promise<PromptPreview> {
-  return request('/soul/prompt/preview');
+export async function fetchPromptPreview(personalityId?: string): Promise<PromptPreview> {
+  const query = personalityId ? `?personalityId=${personalityId}` : '';
+  return request(`/soul/prompt/preview${query}`);
 }
 
 // ─── API Keys ─────────────────────────────────────────────────────────
@@ -606,6 +610,7 @@ export async function fetchAuditStats(): Promise<{
 export async function sendChatMessage(data: {
   message: string;
   history?: Array<{ role: string; content: string }>;
+  personalityId?: string;
 }): Promise<ChatResponse> {
   return request('/chat', {
     method: 'POST',

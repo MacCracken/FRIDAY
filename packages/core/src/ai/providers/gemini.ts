@@ -26,6 +26,13 @@ import {
 } from '../errors.js';
 import type { SecureLogger } from '../../logging/logger.js';
 
+export interface GeminiModelInfo {
+  id: string;
+  displayName: string;
+  inputTokenLimit: number;
+  outputTokenLimit: number;
+}
+
 export class GeminiProvider extends BaseProvider {
   readonly name: AIProviderName = 'gemini';
   private readonly genAI: GoogleGenerativeAI;
@@ -33,6 +40,27 @@ export class GeminiProvider extends BaseProvider {
   constructor(config: ProviderConfig, logger?: SecureLogger) {
     super(config, logger);
     this.genAI = new GoogleGenerativeAI(this.apiKey ?? '');
+  }
+
+  /**
+   * Fetch available models from Google's ListModels REST API.
+   * Filters to models that support `generateContent` (the method FRIDAY uses).
+   */
+  static async fetchAvailableModels(apiKey: string): Promise<GeminiModelInfo[]> {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { models?: Record<string, unknown>[] };
+    return (data.models ?? [])
+      .filter((m: Record<string, unknown>) =>
+        (m.supportedGenerationMethods as string[] | undefined)?.includes('generateContent'),
+      )
+      .map((m: Record<string, unknown>) => ({
+        id: (m.name as string).replace('models/', ''),
+        displayName: m.displayName as string,
+        inputTokenLimit: m.inputTokenLimit as number,
+        outputTokenLimit: m.outputTokenLimit as number,
+      }));
   }
 
   protected async doChat(request: AIRequest): Promise<AIResponse> {

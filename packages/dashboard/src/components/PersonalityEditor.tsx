@@ -1,15 +1,14 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { User, Plus, Edit2, Trash2, Check, X, Star, Eye } from 'lucide-react';
+import { User, Plus, Edit2, Trash2, X, CheckCircle2, Eye } from 'lucide-react';
 import {
   fetchPersonalities,
   createPersonality,
   updatePersonality,
   deletePersonality,
   activatePersonality,
-  fetchAgentName,
-  updateAgentName,
   fetchPromptPreview,
+  fetchModelInfo,
 } from '../api/client';
 import { ConfirmDialog } from './common/ConfirmDialog';
 import type { Personality, PersonalityCreate, PromptPreview } from '../types';
@@ -32,10 +31,11 @@ function formatDate(ts: number): string {
 export function PersonalityEditor() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
-  const [editAgentName, setEditAgentName] = useState(false);
-  const [agentNameInput, setAgentNameInput] = useState('');
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Personality | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [activateError, setActivateError] = useState<string | null>(null);
+  const [setActiveOnSave, setSetActiveOnSave] = useState(false);
   const [form, setForm] = useState<PersonalityCreate>({
     name: '',
     description: '',
@@ -44,6 +44,7 @@ export function PersonalityEditor() {
     sex: 'unspecified',
     voice: '',
     preferredLanguage: '',
+    defaultModel: null,
   });
 
   const { data: personalitiesData, isLoading } = useQuery({
@@ -51,15 +52,15 @@ export function PersonalityEditor() {
     queryFn: fetchPersonalities,
   });
 
-  const { data: agentNameData } = useQuery({
-    queryKey: ['agentName'],
-    queryFn: fetchAgentName,
+  const { data: preview } = useQuery({
+    queryKey: ['promptPreview', previewId],
+    queryFn: () => fetchPromptPreview(previewId!),
+    enabled: !!previewId,
   });
 
-  const { data: preview } = useQuery({
-    queryKey: ['promptPreview'],
-    queryFn: fetchPromptPreview,
-    enabled: showPreview,
+  const { data: modelData } = useQuery({
+    queryKey: ['modelInfo'],
+    queryFn: fetchModelInfo,
   });
 
   const personalities = personalitiesData?.personalities ?? [];
@@ -75,9 +76,13 @@ export function PersonalityEditor() {
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<PersonalityCreate> }) =>
       updatePersonality(id, data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: ['personalities'] });
+      if (setActiveOnSave && variables.id) {
+        activateMut.mutate(variables.id);
+      }
       setEditing(null);
+      setSetActiveOnSave(false);
     },
   });
 
@@ -87,18 +92,19 @@ export function PersonalityEditor() {
   });
 
   const activateMut = useMutation({
-    mutationFn: (id: string) => activatePersonality(id),
+    mutationFn: (id: string) => {
+      setActivatingId(id);
+      setActivateError(null);
+      return activatePersonality(id);
+    },
     onSuccess: () => {
+      setActivatingId(null);
       void queryClient.invalidateQueries({ queryKey: ['personalities'] });
       void queryClient.invalidateQueries({ queryKey: ['promptPreview'] });
     },
-  });
-
-  const agentNameMut = useMutation({
-    mutationFn: (name: string) => updateAgentName(name),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['agentName'] });
-      setEditAgentName(false);
+    onError: (err: Error) => {
+      setActivatingId(null);
+      setActivateError(err.message || 'Failed to activate personality');
     },
   });
 
@@ -111,7 +117,9 @@ export function PersonalityEditor() {
       sex: p.sex,
       voice: p.voice,
       preferredLanguage: p.preferredLanguage,
+      defaultModel: p.defaultModel,
     });
+    setSetActiveOnSave(false);
     setEditing(p.id);
   };
 
@@ -124,7 +132,9 @@ export function PersonalityEditor() {
       sex: 'unspecified',
       voice: '',
       preferredLanguage: '',
+      defaultModel: null,
     });
+    setSetActiveOnSave(false);
     setEditing('new');
   };
 
@@ -143,6 +153,11 @@ export function PersonalityEditor() {
     }
   }, [deleteTarget, deleteMut]);
 
+  const editingPersonality = editing && editing !== 'new'
+    ? personalities.find(p => p.id === editing)
+    : null;
+  const showActivateToggle = editing !== 'new' && editingPersonality && !editingPersonality.isActive;
+
   return (
     <div className="space-y-6">
       {/* Delete confirmation */}
@@ -156,66 +171,6 @@ export function PersonalityEditor() {
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Agent Name */}
-      <div className="card p-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <p className="text-sm text-muted-foreground">Agent Name</p>
-            {editAgentName ? (
-              <div className="flex items-center gap-2 mt-1">
-                <input
-                  type="text"
-                  value={agentNameInput}
-                  onChange={e => setAgentNameInput(e.target.value)}
-                  className="px-2 py-1 rounded border bg-background text-foreground text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary"
-                  maxLength={50}
-                />
-                <button onClick={() => agentNameMut.mutate(agentNameInput)} className="btn-ghost p-1 text-success" aria-label="Save agent name">
-                  <Check className="w-4 h-4" />
-                </button>
-                <button onClick={() => setEditAgentName(false)} className="btn-ghost p-1 text-muted-foreground" aria-label="Cancel editing">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <p className="text-lg font-bold">{agentNameData?.agentName ?? 'FRIDAY'}</p>
-                <button
-                  onClick={() => { setAgentNameInput(agentNameData?.agentName ?? ''); setEditAgentName(true); }}
-                  className="btn-ghost p-1 text-muted-foreground hover:text-foreground"
-                  aria-label="Edit agent name"
-                >
-                  <Edit2 className="w-3 h-3" />
-                </button>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={() => setShowPreview(!showPreview)}
-            className={`btn ${showPreview ? 'btn-primary' : 'btn-secondary'} flex items-center gap-1`}
-          >
-            <Eye className="w-4 h-4" /> Prompt Preview
-          </button>
-        </div>
-      </div>
-
-      {/* Prompt Preview */}
-      {showPreview && preview && (
-        <div className="card p-4">
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-            <h3 className="font-medium">Composed System Prompt</h3>
-            <div className="flex gap-3 text-xs text-muted-foreground">
-              <span>{preview.charCount.toLocaleString()} chars</span>
-              <span>~{preview.estimatedTokens.toLocaleString()} tokens</span>
-              {preview.tools.length > 0 && <span>{preview.tools.length} tools</span>}
-            </div>
-          </div>
-          <pre className="text-xs bg-muted p-3 rounded overflow-auto max-h-64 whitespace-pre-wrap">
-            {preview.prompt}
-          </pre>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Personalities</h2>
@@ -223,6 +178,13 @@ export function PersonalityEditor() {
           <Plus className="w-4 h-4" /> New Personality
         </button>
       </div>
+
+      {activateError && (
+        <div className="card p-3 border-destructive bg-destructive/10 text-destructive text-sm flex items-center justify-between">
+          <span>{activateError}</span>
+          <button onClick={() => setActivateError(null)} className="btn-ghost p-1"><X className="w-3 h-3" /></button>
+        </div>
+      )}
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading...</p>}
 
@@ -328,6 +290,46 @@ export function PersonalityEditor() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium mb-1">Default Model</label>
+            <select
+              value={form.defaultModel ? `${form.defaultModel.provider}/${form.defaultModel.model}` : ''}
+              onChange={(e) => {
+                if (!e.target.value) {
+                  setForm(f => ({ ...f, defaultModel: null }));
+                } else {
+                  const [provider, ...rest] = e.target.value.split('/');
+                  setForm(f => ({ ...f, defaultModel: { provider, model: rest.join('/') } }));
+                }
+              }}
+              className="w-full px-3 py-2 rounded border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">Use system default</option>
+              {modelData?.available && Object.entries(modelData.available).map(([provider, models]) =>
+                models.map((m) => (
+                  <option key={`${provider}/${m.model}`} value={`${provider}/${m.model}`}>
+                    {provider}/{m.model}
+                  </option>
+                ))
+              )}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Model to use when chatting with this personality. Can be overridden per-session.
+            </p>
+          </div>
+
+          {showActivateToggle && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={setActiveOnSave}
+                onChange={e => setSetActiveOnSave(e.target.checked)}
+                className="rounded border-muted-foreground"
+              />
+              <span className="text-sm">Set as active personality on save</span>
+            </label>
+          )}
+
           <div className="flex gap-2 justify-end">
             <button onClick={() => setEditing(null)} className="btn btn-ghost">Cancel</button>
             <button
@@ -344,58 +346,97 @@ export function PersonalityEditor() {
       {/* Personality List */}
       <div className="space-y-3">
         {personalities.map(p => (
-          <div key={p.id} className={`card p-4 ${p.isActive ? 'border-primary' : ''}`}>
-            <div className="flex items-start justify-between">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                  <h3 className="font-medium truncate">{p.name}</h3>
-                  {p.isActive && <span className="badge badge-success">Active</span>}
-                </div>
-                {p.description && (
-                  <p className="text-sm text-muted-foreground mt-1 truncate">{p.description}</p>
-                )}
-                <div className="flex gap-2 mt-2 flex-wrap">
-                  {Object.entries(p.traits).map(([k, v]) => (
-                    <span key={k} className="text-xs bg-muted px-2 py-0.5 rounded">{k}: {v}</span>
-                  ))}
-                  {p.sex !== 'unspecified' && (
-                    <span className="text-xs bg-muted px-2 py-0.5 rounded">{p.sex}</span>
+          <div key={p.id}>
+            <div className={`card p-4 ${p.isActive ? 'border-primary' : ''}`}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                    <h3 className="font-medium truncate">{p.name}</h3>
+                    {p.isActive && <span className="badge badge-success">Active</span>}
+                  </div>
+                  {p.description && (
+                    <p className="text-sm text-muted-foreground mt-1 truncate">{p.description}</p>
                   )}
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    {Object.entries(p.traits).map(([k, v]) => (
+                      <span key={k} className="text-xs bg-muted px-2 py-0.5 rounded">{k}: {v}</span>
+                    ))}
+                    {p.sex !== 'unspecified' && (
+                      <span className="text-xs bg-muted px-2 py-0.5 rounded">{p.sex}</span>
+                    )}
+                  </div>
+                  {p.defaultModel && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Model: {p.defaultModel.provider}/{p.defaultModel.model}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Created {formatDate(p.createdAt)}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Created {formatDate(p.createdAt)}
-                </p>
-              </div>
 
-              <div className="flex items-center gap-1 ml-4 flex-shrink-0">
-                {!p.isActive && (
+                <div className="flex items-center gap-1 ml-4 flex-shrink-0">
                   <button
-                    onClick={() => activateMut.mutate(p.id)}
-                    disabled={activateMut.isPending}
-                    className="btn-ghost p-2 text-muted-foreground hover:text-success"
-                    aria-label={`Activate personality ${p.name}`}
+                    onClick={() => setPreviewId(previewId === p.id ? null : p.id)}
+                    className={`btn-ghost p-2 ${previewId === p.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                    title={`Preview prompt for ${p.name}`}
+                    aria-label={`Preview prompt for ${p.name}`}
                   >
-                    <Star className="w-4 h-4" />
+                    <Eye className="w-4 h-4" />
                   </button>
-                )}
-                <button
-                  onClick={() => startEdit(p)}
-                  className="btn-ghost p-2 text-muted-foreground hover:text-foreground"
-                  aria-label={`Edit personality ${p.name}`}
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setDeleteTarget(p)}
-                  disabled={p.isActive || deleteMut.isPending}
-                  className="btn-ghost p-2 text-muted-foreground hover:text-destructive disabled:opacity-30"
-                  aria-label={p.isActive ? 'Cannot delete active personality' : `Delete personality ${p.name}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                  {p.isActive ? (
+                    <span className="p-2 text-success" title="Active personality">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => activateMut.mutate(p.id)}
+                      disabled={activatingId === p.id}
+                      className="btn-ghost p-2 text-muted-foreground hover:text-success"
+                      title={`Activate ${p.name}`}
+                      aria-label={`Activate personality ${p.name}`}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => startEdit(p)}
+                    className="btn-ghost p-2 text-muted-foreground hover:text-foreground"
+                    title={`Edit ${p.name}`}
+                    aria-label={`Edit personality ${p.name}`}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeleteTarget(p)}
+                    disabled={p.isActive || deleteMut.isPending}
+                    className="btn-ghost p-2 text-muted-foreground hover:text-destructive disabled:opacity-30"
+                    title={p.isActive ? 'Switch to another personality before deleting' : `Delete ${p.name}`}
+                    aria-label={p.isActive ? 'Cannot delete active personality — switch first' : `Delete personality ${p.name}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
+
+            {/* Per-personality Prompt Preview */}
+            {previewId === p.id && preview && (
+              <div className="card p-4 mt-1 border-muted">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <h3 className="font-medium">Composed System Prompt</h3>
+                  <div className="flex gap-3 text-xs text-muted-foreground">
+                    <span>{preview.charCount.toLocaleString()} chars</span>
+                    <span>~{preview.estimatedTokens.toLocaleString()} tokens</span>
+                    {preview.tools.length > 0 && <span>{preview.tools.length} tools</span>}
+                  </div>
+                </div>
+                <pre className="text-xs bg-muted p-3 rounded overflow-auto max-h-64 whitespace-pre-wrap">
+                  {preview.prompt}
+                </pre>
+              </div>
+            )}
           </div>
         ))}
 

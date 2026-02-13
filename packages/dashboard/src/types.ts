@@ -112,6 +112,11 @@ export interface WebSocketMessage {
 
 // ─── Soul Types ──────────────────────────────────────────────
 
+export interface DefaultModel {
+  provider: string;
+  model: string;
+}
+
 export interface Personality {
   id: string;
   name: string;
@@ -121,6 +126,7 @@ export interface Personality {
   sex: 'male' | 'female' | 'non-binary' | 'unspecified';
   voice: string;
   preferredLanguage: string;
+  defaultModel: DefaultModel | null;
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
@@ -134,6 +140,7 @@ export interface PersonalityCreate {
   sex?: 'male' | 'female' | 'non-binary' | 'unspecified';
   voice?: string;
   preferredLanguage?: string;
+  defaultModel?: DefaultModel | null;
 }
 
 export interface Skill {

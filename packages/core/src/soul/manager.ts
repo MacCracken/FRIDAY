@@ -16,6 +16,7 @@ import { composeArchetypesPreamble } from './archetypes.js';
 import type { SoulStorage } from './storage.js';
 import type { BrainManager } from '../brain/manager.js';
 import type { SpiritManager } from '../spirit/manager.js';
+import type { HeartbeatManager } from '../body/heartbeat.js';
 import type {
   Personality,
   PersonalityCreate,
@@ -38,6 +39,7 @@ export class SoulManager {
   private readonly spirit: SpiritManager | null;
   private readonly config: SoulConfig;
   private readonly deps: SoulManagerDeps;
+  private heartbeat: HeartbeatManager | null = null;
 
   constructor(storage: SoulStorage, config: SoulConfig, deps: SoulManagerDeps, brain?: BrainManager, spirit?: SpiritManager) {
     this.storage = storage;
@@ -78,6 +80,7 @@ export class SoulManager {
       sex: 'unspecified',
       voice: '',
       preferredLanguage: '',
+      defaultModel: null,
     });
 
     this.storage.setActivePersonality(personality.id);
@@ -85,6 +88,10 @@ export class SoulManager {
   }
 
   // ── Personality ─────────────────────────────────────────────
+
+  getPersonality(id: string): Personality | null {
+    return this.storage.getPersonality(id);
+  }
 
   getActivePersonality(): Personality | null {
     return this.storage.getActivePersonality();
@@ -265,9 +272,37 @@ export class SoulManager {
     this.storage.incrementUsage(skillId);
   }
 
+  // ── Body (Heartbeat) ──────────────────────────────────────────
+
+  setHeartbeat(hb: HeartbeatManager): void {
+    this.heartbeat = hb;
+  }
+
+  private composeBodyPrompt(): string {
+    if (!this.heartbeat) return '';
+
+    const status = this.heartbeat.getStatus();
+    const lastBeat = status.lastBeat;
+    if (!lastBeat) return '';
+
+    const lines: string[] = [
+      '## Body',
+      'Your Body is your form — the vessel through which you act in the world. These are your vital signs.',
+      '',
+      `Heartbeat #${status.beatCount} at ${new Date(lastBeat.timestamp).toISOString()} (${lastBeat.durationMs}ms):`,
+    ];
+
+    for (const check of lastBeat.checks) {
+      const tag = check.status === 'ok' ? 'ok' : check.status === 'warning' ? 'WARN' : 'ERR';
+      lines.push(`- ${check.name}: [${tag}] ${check.message}`);
+    }
+
+    return lines.join('\n');
+  }
+
   // ── Composition ─────────────────────────────────────────────
 
-  composeSoulPrompt(input?: string): string {
+  composeSoulPrompt(input?: string, personalityId?: string): string {
     if (!this.config.enabled) {
       return '';
     }
@@ -277,33 +312,38 @@ export class SoulManager {
     // Sacred archetypes — cosmological foundation
     parts.push(composeArchetypesPreamble());
 
-    const agentName = this.storage.getAgentName();
-    const personality = this.storage.getActivePersonality();
+    const personality = personalityId
+      ? this.storage.getPersonality(personalityId) ?? this.storage.getActivePersonality()
+      : this.storage.getActivePersonality();
 
-    if (agentName && personality?.name !== agentName) {
-      parts.push(`Your name is ${agentName}.`);
-    }
-
+    // Soul section — identity (personality is the sole source of identity)
     if (personality) {
-      parts.push(`You are ${personality.name}. ${personality.systemPrompt}`.trim());
+      const soulLines: string[] = [
+        '## Soul',
+        'Your Soul is your identity — the unchanging essence that persists across every conversation.',
+        '',
+        `You are ${personality.name}. ${personality.systemPrompt}`.trim(),
+      ];
 
       if (personality.sex !== 'unspecified') {
-        parts.push(`Sex: ${personality.sex}`);
+        soulLines.push(`Sex: ${personality.sex}`);
       }
 
       if (personality.voice) {
-        parts.push(`Voice style: ${personality.voice}`);
+        soulLines.push(`Voice style: ${personality.voice}`);
       }
 
       if (personality.preferredLanguage) {
-        parts.push(`Preferred language: ${personality.preferredLanguage}`);
+        soulLines.push(`Preferred language: ${personality.preferredLanguage}`);
       }
 
       const traitEntries = Object.entries(personality.traits);
       if (traitEntries.length > 0) {
         const traitStr = traitEntries.map(([k, v]) => `${k}: ${v}`).join(', ');
-        parts.push(`Traits: ${traitStr}`);
+        soulLines.push(`Traits: ${traitStr}`);
       }
+
+      parts.push(soulLines.join('\n'));
     }
 
     // User context injection
@@ -331,8 +371,14 @@ export class SoulManager {
     if (this.brain && input) {
       const context = this.brain.getRelevantContext(input);
       if (context) {
-        parts.push('## Relevant Context\n' + context);
+        parts.push(context);
       }
+    }
+
+    // Body vital signs injection
+    const bodyPrompt = this.composeBodyPrompt();
+    if (bodyPrompt) {
+      parts.push(bodyPrompt);
     }
 
     // Skills from Brain or Soul storage

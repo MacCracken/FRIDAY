@@ -70,7 +70,7 @@ describe('Chat Routes', () => {
       payload: { message: 'Hi there' },
     });
 
-    expect(mockSoulManager.composeSoulPrompt).toHaveBeenCalledWith('Hi there');
+    expect(mockSoulManager.composeSoulPrompt).toHaveBeenCalledWith('Hi there', undefined);
     const chatCall = mockAiClient.chat.mock.calls[0][0];
     expect(chatCall.messages[0]).toEqual({ role: 'system', content: 'You are FRIDAY.' });
     expect(chatCall.messages[1]).toEqual({ role: 'user', content: 'Hi there' });
@@ -138,6 +138,32 @@ describe('Chat Routes', () => {
     });
 
     expect(res.statusCode).toBe(503);
+  });
+
+  it('POST /api/v1/chat passes personalityId to composeSoulPrompt', async () => {
+    const { mock, mockSoulManager } = createMockSecureYeoman();
+    registerChatRoutes(app, { secureYeoman: mock });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/chat',
+      payload: { message: 'Hello!', personalityId: 'p-custom' },
+    });
+
+    expect(mockSoulManager.composeSoulPrompt).toHaveBeenCalledWith('Hello!', 'p-custom');
+  });
+
+  it('POST /api/v1/chat omits personalityId when not provided', async () => {
+    const { mock, mockSoulManager } = createMockSecureYeoman();
+    registerChatRoutes(app, { secureYeoman: mock });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/chat',
+      payload: { message: 'Hello!' },
+    });
+
+    expect(mockSoulManager.composeSoulPrompt).toHaveBeenCalledWith('Hello!', undefined);
   });
 
   it('POST /api/v1/chat returns 502 on AI error', async () => {

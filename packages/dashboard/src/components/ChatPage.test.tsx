@@ -8,7 +8,7 @@ import { createChatResponse } from '../test/mocks';
 
 // ── Mock API client ──────────────────────────────────────────────
 vi.mock('../api/client', () => ({
-  fetchActivePersonality: vi.fn(),
+  fetchPersonalities: vi.fn(),
   sendChatMessage: vi.fn(),
   fetchModelInfo: vi.fn(),
   switchModel: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('./ModelWidget', () => ({
 
 import * as api from '../api/client';
 
-const mockFetchActivePersonality = vi.mocked(api.fetchActivePersonality);
+const mockFetchPersonalities = vi.mocked(api.fetchPersonalities);
 const mockSendChatMessage = vi.mocked(api.sendChatMessage);
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -52,8 +52,8 @@ function renderComponent() {
 describe('ChatPage', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockFetchActivePersonality.mockResolvedValue({
-      personality: {
+    mockFetchPersonalities.mockResolvedValue({
+      personalities: [{
         id: 'p-1',
         name: 'FRIDAY',
         description: 'Friendly AI assistant',
@@ -62,10 +62,11 @@ describe('ChatPage', () => {
         sex: 'unspecified',
         voice: '',
         preferredLanguage: '',
+        defaultModel: null,
         isActive: true,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      },
+      }],
     });
     mockSendChatMessage.mockResolvedValue(createChatResponse());
   });
@@ -163,5 +164,50 @@ describe('ChatPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Error: Network error/)).toBeInTheDocument();
     });
+  });
+
+  it('switches personality and sends correct personalityId', async () => {
+    mockFetchPersonalities.mockResolvedValue({
+      personalities: [
+        {
+          id: 'p-1', name: 'FRIDAY', description: 'Friendly AI',
+          systemPrompt: '', traits: {}, sex: 'unspecified' as const,
+          voice: '', preferredLanguage: '', defaultModel: null,
+          isActive: true, createdAt: Date.now(), updatedAt: Date.now(),
+        },
+        {
+          id: 'p-2', name: 'JARVIS', description: 'Snarky butler',
+          systemPrompt: '', traits: {}, sex: 'male' as const,
+          voice: '', preferredLanguage: '', defaultModel: null,
+          isActive: false, createdAt: Date.now(), updatedAt: Date.now(),
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderComponent();
+
+    // Wait for personalities to load
+    await waitFor(() => {
+      expect(screen.getByText(/Chat with FRIDAY/)).toBeInTheDocument();
+    });
+
+    // Open personality picker and select JARVIS
+    await user.click(screen.getByTestId('personality-selector'));
+    await user.click(screen.getByTestId('personality-option-p-2'));
+
+    // Verify heading updated
+    expect(screen.getByText(/Chat with JARVIS/)).toBeInTheDocument();
+
+    // Send a message and verify it goes with p-2
+    const textarea = screen.getByPlaceholderText(/Message JARVIS/);
+    await user.type(textarea, 'Hello JARVIS!{enter}');
+
+    await waitFor(() => {
+      expect(mockSendChatMessage).toHaveBeenCalled();
+    });
+
+    const call = mockSendChatMessage.mock.calls[0][0];
+    expect(call.personalityId).toBe('p-2');
   });
 });

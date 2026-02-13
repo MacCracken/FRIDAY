@@ -491,6 +491,9 @@ describe('BrainManager', () => {
       manager.learn('frontend', 'React 18 framework', 'docs');
 
       const context = manager.getRelevantContext('React');
+      expect(context).toContain('## Brain');
+      expect(context).toContain('Your Brain is your mind');
+      expect(context).toContain('### Memories');
       expect(context).toContain('React');
     });
 

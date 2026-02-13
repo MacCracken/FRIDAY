@@ -138,7 +138,7 @@ export class BrainManager {
     }
 
     const maxItems = limit ?? this.config.contextWindowMemories;
-    const parts: string[] = [];
+    const contentParts: string[] = [];
 
     // Search memories relevant to the input
     const memories = this.storage.queryMemories({
@@ -149,10 +149,11 @@ export class BrainManager {
     if (memories.length > 0) {
       // Batch-touch all memories in a single query instead of N individual updates
       this.storage.touchMemories(memories.map(m => m.id));
-      parts.push('### Memories');
+      const memLines = ['### Memories'];
       for (const memory of memories) {
-        parts.push(`- [${memory.type}] ${memory.content}`);
+        memLines.push(`- [${memory.type}] ${memory.content}`);
       }
+      contentParts.push(memLines.join('\n'));
     }
 
     // Search knowledge relevant to the input
@@ -162,13 +163,19 @@ export class BrainManager {
     });
 
     if (knowledge.length > 0) {
-      parts.push('### Knowledge');
+      const knowLines = ['### Knowledge'];
       for (const entry of knowledge) {
-        parts.push(`- [${entry.topic}] ${entry.content}`);
+        knowLines.push(`- [${entry.topic}] ${entry.content}`);
       }
+      contentParts.push(knowLines.join('\n'));
     }
 
-    return parts.join('\n');
+    if (contentParts.length === 0) {
+      return '';
+    }
+
+    const header = '## Brain\nYour Brain is your mind — the accumulated memories and learned knowledge that inform your understanding. Draw on what is relevant; let the rest rest.\n';
+    return header + '\n' + contentParts.join('\n\n');
   }
 
   // ── Skill Operations (moved from SoulManager) ──────────────

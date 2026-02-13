@@ -10,6 +10,13 @@ import { ToolSchema } from './ai.js';
 
 // ─── Personality ──────────────────────────────────────────────
 
+export const DefaultModelSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+}).nullable().default(null);
+
+export type DefaultModel = z.infer<typeof DefaultModelSchema>;
+
 export const PersonalitySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(100),
@@ -19,6 +26,7 @@ export const PersonalitySchema = z.object({
   sex: z.enum(['male', 'female', 'non-binary', 'unspecified']).default('unspecified'),
   voice: z.string().max(200).default(''),
   preferredLanguage: z.string().max(100).default(''),
+  defaultModel: DefaultModelSchema,
   isActive: z.boolean().default(false),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),

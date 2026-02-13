@@ -1,5 +1,8 @@
 /**
- * Chat Routes — Direct conversation with the active personality via the dashboard.
+ * Chat Routes — Conversation with any personality via the dashboard.
+ *
+ * Accepts an optional `personalityId` to target a specific personality;
+ * falls back to the active personality when omitted.
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -13,6 +16,7 @@ export interface ChatRoutesOptions {
 interface ChatRequestBody {
   message: string;
   history?: Array<{ role: string; content: string }>;
+  personalityId?: string;
 }
 
 export function registerChatRoutes(
@@ -25,7 +29,7 @@ export function registerChatRoutes(
     request: FastifyRequest<{ Body: ChatRequestBody }>,
     reply: FastifyReply,
   ) => {
-    const { message, history } = request.body;
+    const { message, history, personalityId } = request.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return reply.code(400).send({ error: 'Message is required' });
@@ -41,7 +45,7 @@ export function registerChatRoutes(
     }
 
     const soulManager = secureYeoman.getSoulManager();
-    const systemPrompt = soulManager.composeSoulPrompt(message);
+    const systemPrompt = soulManager.composeSoulPrompt(message, personalityId);
 
     const messages: AIRequest['messages'] = [];
 

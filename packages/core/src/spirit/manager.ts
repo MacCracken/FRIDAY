@@ -168,7 +168,7 @@ export class SpiritManager {
       return '';
     }
 
-    return '## Spirit\n\n' + parts.join('\n\n');
+    return '## Spirit\nYour Spirit is your drive — the emotional currents beneath your Soul. Your passions compel you, your inspirations illuminate your path, and your pains mark the boundaries you protect.\n\n' + parts.join('\n\n');
   }
 
   // ── Stats ────────────────────────────────────────────────────

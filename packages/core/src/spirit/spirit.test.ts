@@ -389,6 +389,7 @@ describe('SpiritManager', () => {
       manager.createPassion(TEST_PASSION);
       const prompt = manager.composeSpiritPrompt();
       expect(prompt).toContain('## Spirit');
+      expect(prompt).toContain('Your Spirit is your drive');
       expect(prompt).toContain('### Passions');
       expect(prompt).toContain('Open Source');
       expect(prompt).toContain('intensity: 0.9');

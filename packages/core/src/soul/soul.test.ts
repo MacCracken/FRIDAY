@@ -44,6 +44,7 @@ const TEST_PERSONALITY: PersonalityCreate = {
   sex: 'unspecified',
   voice: '',
   preferredLanguage: '',
+  defaultModel: null,
 };
 
 const TEST_SKILL: SkillCreate = {
@@ -476,30 +477,21 @@ describe('SoulManager', () => {
       expect(prompt).not.toContain('Your name is');
     });
 
-    it('should include agent name when different from personality name', () => {
+    it('should not inject agent name separately from personality', () => {
       manager.setAgentName('JARVIS');
       const p = manager.createPersonality({ ...TEST_PERSONALITY, name: 'TestBot' });
       manager.setPersonality(p.id);
 
       const prompt = manager.composeSoulPrompt();
-      expect(prompt).toContain('Your name is JARVIS.');
+      expect(prompt).not.toContain('Your name is JARVIS.');
       expect(prompt).toContain('You are TestBot');
     });
 
-    it('should not duplicate agent name when it matches personality name', () => {
-      manager.setAgentName('TestBot');
-      const p = manager.createPersonality({ ...TEST_PERSONALITY, name: 'TestBot' });
-      manager.setPersonality(p.id);
-
-      const prompt = manager.composeSoulPrompt();
-      expect(prompt).not.toContain('Your name is TestBot.');
-      expect(prompt).toContain('You are TestBot');
-    });
-
-    it('should include agent name even without a personality', () => {
+    it('should not inject agent name when no personality is set', () => {
       manager.setAgentName('JARVIS');
       const prompt = manager.composeSoulPrompt();
-      expect(prompt).toContain('Your name is JARVIS.');
+      expect(prompt).not.toContain('Your name is JARVIS.');
+      expect(prompt).not.toContain('## Soul');
     });
 
     it('should compose personality into prompt', () => {
@@ -583,16 +575,81 @@ describe('SoulManager', () => {
       expect(prompt).not.toContain('code-review');
     });
 
+    it('should compose prompt for a specific personalityId', () => {
+      const p1 = manager.createPersonality(TEST_PERSONALITY);
+      manager.setPersonality(p1.id);
+
+      const p2 = manager.createPersonality({
+        ...TEST_PERSONALITY,
+        name: 'AlternateBot',
+        systemPrompt: 'You are an alternate bot.',
+      });
+
+      const prompt = manager.composeSoulPrompt(undefined, p2.id);
+      expect(prompt).toContain('You are AlternateBot');
+      expect(prompt).not.toContain('You are TestBot');
+    });
+
+    it('should fall back to active personality for invalid personalityId', () => {
+      const p = manager.createPersonality(TEST_PERSONALITY);
+      manager.setPersonality(p.id);
+
+      const prompt = manager.composeSoulPrompt(undefined, 'nonexistent');
+      expect(prompt).toContain('You are TestBot');
+    });
+
+    it('should include ## Soul header when personality is set', () => {
+      const p = manager.createPersonality(TEST_PERSONALITY);
+      manager.setPersonality(p.id);
+
+      const prompt = manager.composeSoulPrompt();
+      expect(prompt).toContain('## Soul');
+      expect(prompt).toContain('Your Soul is your identity');
+    });
+
+    it('should include ## Body when heartbeat has fired', () => {
+      const mockHeartbeat = {
+        getStatus: () => ({
+          running: true,
+          enabled: true,
+          intervalMs: 60000,
+          beatCount: 1,
+          lastBeat: {
+            timestamp: 1700000000000,
+            durationMs: 15,
+            checks: [
+              { name: 'system_health', type: 'system_health', status: 'ok' as const, message: 'All good' },
+            ],
+          },
+        }),
+        getLastBeat: () => null,
+        start: () => {},
+        stop: () => {},
+        beat: async () => ({ timestamp: 0, durationMs: 0, checks: [] }),
+      };
+      manager.setHeartbeat(mockHeartbeat as never);
+
+      const prompt = manager.composeSoulPrompt();
+      expect(prompt).toContain('## Body');
+      expect(prompt).toContain('Your Body is your form');
+      expect(prompt).toContain('system_health: [ok] All good');
+    });
+
+    it('should omit ## Body when no heartbeat is set', () => {
+      const prompt = manager.composeSoulPrompt();
+      expect(prompt).not.toContain('## Body');
+    });
+
     it('should truncate when exceeding max prompt tokens', () => {
-      const mgr = new SoulManager(storage, defaultConfig({ maxPromptTokens: 10 }), deps); // 40 chars max
+      const mgr = new SoulManager(storage, defaultConfig({ maxPromptTokens: 200 }), deps); // 800 chars max
       const p = mgr.createPersonality({
         ...TEST_PERSONALITY,
-        systemPrompt: 'A'.repeat(200),
+        systemPrompt: 'A'.repeat(2000),
       });
       mgr.setPersonality(p.id);
 
       const prompt = mgr.composeSoulPrompt();
-      expect(prompt.length).toBeLessThanOrEqual(40);
+      expect(prompt.length).toBeLessThanOrEqual(800);
     });
   });
 

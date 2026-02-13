@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GeminiProvider } from './gemini.js';
 import type { AIRequest, ModelConfig } from '@friday/shared';
+
+const mockFetch = vi.fn();
 
 const mockGenerateContent = vi.fn();
 const mockGenerateContentStream = vi.fn();
@@ -122,6 +124,64 @@ describe('GeminiProvider', () => {
       const callArgs = mockGenerateContent.mock.calls[0][0];
       expect(callArgs.systemInstruction).toBeDefined();
       expect(callArgs.contents).toHaveLength(1); // Only user message, system extracted
+    });
+  });
+
+  describe('fetchAvailableModels', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', mockFetch);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('should return models that support generateContent', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            {
+              name: 'models/gemini-2.0-flash',
+              displayName: 'Gemini 2.0 Flash',
+              supportedGenerationMethods: ['generateContent', 'countTokens'],
+              inputTokenLimit: 1048576,
+              outputTokenLimit: 8192,
+            },
+            {
+              name: 'models/text-embedding-004',
+              displayName: 'Text Embedding 004',
+              supportedGenerationMethods: ['embedContent'],
+              inputTokenLimit: 2048,
+              outputTokenLimit: 0,
+            },
+            {
+              name: 'models/gemini-2.5-pro-preview',
+              displayName: 'Gemini 2.5 Pro Preview',
+              supportedGenerationMethods: ['generateContent'],
+              inputTokenLimit: 1048576,
+              outputTokenLimit: 65536,
+            },
+          ],
+        }),
+      });
+
+      const models = await GeminiProvider.fetchAvailableModels('test-key');
+
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('gemini-2.0-flash');
+      expect(models[0].displayName).toBe('Gemini 2.0 Flash');
+      expect(models[1].id).toBe('gemini-2.5-pro-preview');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('key=test-key'),
+      );
+    });
+
+    it('should return empty array on fetch failure', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 403 });
+
+      const models = await GeminiProvider.fetchAvailableModels('bad-key');
+      expect(models).toEqual([]);
     });
   });
 });

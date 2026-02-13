@@ -17,11 +17,12 @@ interface PersonalityRow {
   name: string;
   description: string;
   system_prompt: string;
-  traits: string;       // JSON
+  traits: string;           // JSON
   sex: string;
   voice: string;
   preferred_language: string;
-  is_active: number;    // 0 | 1
+  default_model: string;    // JSON | ''
+  is_active: number;        // 0 | 1
   created_at: number;
   updated_at: number;
 }
@@ -60,6 +61,7 @@ function rowToPersonality(row: PersonalityRow): Personality {
     sex: row.sex as Personality['sex'],
     voice: row.voice,
     preferredLanguage: row.preferred_language,
+    defaultModel: row.default_model ? safeJsonParse<Personality['defaultModel']>(row.default_model, null) : null,
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -138,6 +140,7 @@ export class SoulStorage {
         sex TEXT NOT NULL DEFAULT 'unspecified',
         voice TEXT NOT NULL DEFAULT '',
         preferred_language TEXT NOT NULL DEFAULT '',
+        default_model TEXT NOT NULL DEFAULT '',
         is_active INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -170,6 +173,13 @@ export class SoulStorage {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    // Migration: add default_model column for existing DBs (v1.4+)
+    try {
+      this.db.exec(`ALTER TABLE personalities ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      // Column already exists
+    }
   }
 
   // ── Personalities ─────────────────────────────────────────────
@@ -180,8 +190,8 @@ export class SoulStorage {
 
     this.db
       .prepare(
-        `INSERT INTO personalities (id, name, description, system_prompt, traits, sex, voice, preferred_language, is_active, created_at, updated_at)
-         VALUES (@id, @name, @description, @system_prompt, @traits, @sex, @voice, @preferred_language, @is_active, @created_at, @updated_at)`,
+        `INSERT INTO personalities (id, name, description, system_prompt, traits, sex, voice, preferred_language, default_model, is_active, created_at, updated_at)
+         VALUES (@id, @name, @description, @system_prompt, @traits, @sex, @voice, @preferred_language, @default_model, @is_active, @created_at, @updated_at)`,
       )
       .run({
         id,
@@ -192,6 +202,7 @@ export class SoulStorage {
         sex: data.sex ?? 'unspecified',
         voice: data.voice ?? '',
         preferred_language: data.preferredLanguage ?? '',
+        default_model: data.defaultModel ? JSON.stringify(data.defaultModel) : '',
         is_active: 0,
         created_at: now,
         updated_at: now,
@@ -246,6 +257,7 @@ export class SoulStorage {
            sex = @sex,
            voice = @voice,
            preferred_language = @preferred_language,
+           default_model = @default_model,
            updated_at = @updated_at
          WHERE id = @id`,
       )
@@ -258,6 +270,9 @@ export class SoulStorage {
         sex: data.sex ?? existing.sex,
         voice: data.voice ?? existing.voice,
         preferred_language: data.preferredLanguage ?? existing.preferredLanguage,
+        default_model: data.defaultModel !== undefined
+          ? (data.defaultModel ? JSON.stringify(data.defaultModel) : '')
+          : (existing.defaultModel ? JSON.stringify(existing.defaultModel) : ''),
         updated_at: now,
       });
 

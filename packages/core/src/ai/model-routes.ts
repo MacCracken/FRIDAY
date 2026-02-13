@@ -4,7 +4,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { SecureYeoman } from '../secureyeoman.js';
-import { getAvailableModels } from './cost-calculator.js';
+import { getAvailableModelsAsync } from './cost-calculator.js';
 
 export interface ModelRoutesOptions {
   secureYeoman: SecureYeoman;
@@ -33,7 +33,7 @@ export function registerModelRoutes(
           maxTokens: modelConfig.maxTokens,
           temperature: modelConfig.temperature,
         },
-        available: getAvailableModels(true),
+        available: await getAvailableModelsAsync(true),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

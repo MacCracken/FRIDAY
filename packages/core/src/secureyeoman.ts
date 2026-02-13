@@ -494,6 +494,7 @@ export class SecureYeoman {
           this.config.heartbeat,
           this.integrationManager,
         );
+        this.soulManager!.setHeartbeat(this.heartbeatManager);
         this.heartbeatManager.start();
         this.logger.debug('Heartbeat manager started', {
           intervalMs: this.config.heartbeat.intervalMs,
