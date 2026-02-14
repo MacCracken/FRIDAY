@@ -320,13 +320,13 @@ export function SkillsManager() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Wrench className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                   <h3 className="font-medium">{s.name}</h3>
-                  <span className={`badge ${STATUS_BADGES[s.status] ?? 'badge-info'}`}>
-                    {s.status.replace('_', ' ')}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {SOURCE_LABELS[s.source] ?? s.source}
+                  <span className={`badge ${s.enabled ? (STATUS_BADGES[s.status] ?? 'badge-info') : 'badge-error'}`}>
+                    {s.enabled ? s.status.replace('_', ' ') : 'disabled'}
                   </span>
                 </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {SOURCE_LABELS[s.source] ?? s.source}
+                </p>
                 {s.description && (
                   <p className="text-sm text-muted-foreground mt-1">{s.description}</p>
                 )}
