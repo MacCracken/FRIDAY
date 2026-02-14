@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { ToolSchema } from './ai.js';
 
 export const MarketplaceSkillSchema = z.object({
   id: z.string().min(1),
@@ -15,7 +16,7 @@ export const MarketplaceSkillSchema = z.object({
   downloadCount: z.number().int().nonnegative().default(0),
   rating: z.number().min(0).max(5).default(0),
   instructions: z.string().max(8000).default(''),
-  tools: z.array(z.record(z.string(), z.unknown())).default([]),
+  tools: z.array(ToolSchema).default([]),
   installed: z.boolean().default(false),
   publishedAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),

@@ -171,7 +171,7 @@ describe('e2e integration', () => {
   it('health endpoint should include transport info', async () => {
     const res = await mcpServer.getApp().inject({ method: 'GET', url: '/health' });
     expect(res.json().transport).toBe('streamable-http');
-    expect(res.json().version).toBe('1.4.0');
+    expect(res.json().version).toBe('1.5.0');
   });
 
   it('core client should be accessible from server', () => {

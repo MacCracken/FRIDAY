@@ -108,6 +108,21 @@ export class McpClientManager {
   }
 
   /**
+   * Restore tools from persistent storage into the in-memory cache.
+   * Unlike discoverTools, this skips the server.enabled guard — the caller
+   * is responsible for ensuring the server is (about to be) enabled.
+   * Used by the toggle route where updateServer(enabled:true) has already run.
+   */
+  restoreTools(serverId: string): McpToolDef[] {
+    const persisted = this.storage.loadTools(serverId);
+    if (persisted.length > 0) {
+      this.discoveredTools.set(serverId, persisted);
+      this.logger.info('Restored tools from storage for MCP server', { serverId, count: persisted.length });
+    }
+    return persisted;
+  }
+
+  /**
    * Clear in-memory tools for a server (e.g. on disable).
    * Persisted tools are retained so they can be restored on re-enable.
    */

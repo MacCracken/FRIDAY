@@ -207,6 +207,46 @@ describe('McpClientManager', () => {
     expect(client.getAllTools()).toHaveLength(2);
   });
 
+  it('should restore tools after full toggle cycle (disable in DB then re-enable)', async () => {
+    const server = storage.addServer({ name: 'Full Toggle', enabled: true });
+    client.registerTools(server.id, 'Full Toggle', [
+      { name: 'knowledge_search', description: 'Search' },
+      { name: 'task_list', description: 'List tasks' },
+    ]);
+    expect(client.getAllTools()).toHaveLength(2);
+
+    // Simulate PATCH { enabled: false } — exact route behavior
+    storage.updateServer(server.id, { enabled: false });
+    client.clearTools(server.id);
+    expect(client.getAllTools()).toHaveLength(0);
+
+    // Simulate PATCH { enabled: true } — exact route behavior using restoreTools
+    storage.updateServer(server.id, { enabled: true });
+    const restored = client.restoreTools(server.id);
+    expect(restored).toHaveLength(2);
+    expect(restored[0].name).toBe('knowledge_search');
+    expect(restored[1].name).toBe('task_list');
+    expect(client.getAllTools()).toHaveLength(2);
+  });
+
+  it('should restore tools via restoreTools even when server is still disabled in DB', () => {
+    const server = storage.addServer({ name: 'Restore Test', enabled: true });
+    client.registerTools(server.id, 'Restore Test', [
+      { name: 'tool_a', description: 'A' },
+    ]);
+
+    // Disable in DB and clear memory
+    storage.updateServer(server.id, { enabled: false });
+    client.clearTools(server.id);
+    expect(client.getAllTools()).toHaveLength(0);
+
+    // restoreTools works regardless of enabled flag (caller controls timing)
+    const restored = client.restoreTools(server.id);
+    expect(restored).toHaveLength(1);
+    expect(restored[0].name).toBe('tool_a');
+    expect(client.getAllTools()).toHaveLength(1);
+  });
+
   it('should refresh all servers', async () => {
     storage.addServer({ name: 'Enabled Server', enabled: true });
     await client.refreshAll();

@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
     const mcpServer = new McpServer({
       name: 'friday-mcp',
-      version: '1.4.0',
+      version: '1.5.0',
     });
 
     const rateLimiter = createRateLimiter(config.rateLimitPerTool);

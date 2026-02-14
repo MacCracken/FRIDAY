@@ -196,6 +196,7 @@ All core modules maintain >80% coverage thresholds.
 | **v1.3.3 Release** | — | **Complete (released 2026-02-13)** |
 | **v1.4.0 Release** | — | **Complete (released 2026-02-13)** |
 | **v1.4.1 Release** | — | **Complete (released 2026-02-13)** |
+| **v1.5.0 Release** | — | **Complete (released 2026-02-13)** |
 
 ---
 
@@ -263,6 +264,19 @@ All core modules maintain >80% coverage thresholds.
 - ✅ Log retention settings — editable policy with backend enforcement
 - ✅ Audit log JSON export/download
 - ✅ MCP tool persistence (SQLite-backed; toggle off/on restores tools)
+
+---
+
+## v1.5.0: Marketplace & MCP Reliability
+
+**Status**: Complete
+**Released**: 2026-02-13
+
+- ✅ Universal Script Assistant — builtin marketplace skill (screenwriting consultant with 4 modes)
+- ✅ Marketplace dashboard auth fix — switched from wrong localStorage key to shared `request()` with proper auth
+- ✅ Marketplace type alignment — `MarketplaceSkill.tools` uses `ToolSchema`; `createSkill` uses `SkillCreateSchema.parse()`
+- ✅ MCP robust tool restore — `restoreTools()` bypasses `server.enabled` guard on toggle re-enable
+- ✅ Anomaly detection test flakiness fix (time-of-day dependent)
 
 ---
 

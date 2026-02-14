@@ -963,6 +963,23 @@ export async function fetchMcpResources(): Promise<{ resources: McpResourceDef[]
   }
 }
 
+// ─── Marketplace API ────────────────────────────────────────────
+
+export async function fetchMarketplaceSkills(query?: string): Promise<{ skills: any[]; total: number }> {
+  const params = new URLSearchParams();
+  if (query) params.set('query', query);
+  const qs = params.toString();
+  return request(`/marketplace${qs ? `?${qs}` : ''}`);
+}
+
+export async function installMarketplaceSkill(id: string): Promise<{ message: string }> {
+  return request(`/marketplace/${id}/install`, { method: 'POST' });
+}
+
+export async function uninstallMarketplaceSkill(id: string): Promise<{ message: string }> {
+  return request(`/marketplace/${id}/uninstall`, { method: 'POST' });
+}
+
 // ─── Terminal API ───────────────────────────────────────────────
 
 export interface TerminalCommandResult {

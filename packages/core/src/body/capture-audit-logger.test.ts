@@ -347,14 +347,16 @@ describe('CaptureAuditLogger', () => {
     });
 
     it('should detect high frequency', async () => {
-      // Log 6 events quickly
+      // Log 6 events quickly (threshold is maxRequestsPerHour: 5)
       for (let i = 0; i < 6; i++) {
         await logger.logCaptureEvent(baseEvent);
       }
 
       expect(alertCallback).toHaveBeenCalled();
-      const [, anomalies] = alertCallback.mock.calls[0];
-      const highFreqAnomaly = anomalies.find((a: Anomaly) => a.type === 'high_frequency');
+      // Find the call that contains a high_frequency anomaly — earlier calls
+      // may only contain after_hours anomalies depending on when the test runs.
+      const allAnomalies = alertCallback.mock.calls.flatMap(([, a]: [unknown, Anomaly[]]) => a);
+      const highFreqAnomaly = allAnomalies.find((a: Anomaly) => a.type === 'high_frequency');
       expect(highFreqAnomaly).toBeDefined();
     });
   });

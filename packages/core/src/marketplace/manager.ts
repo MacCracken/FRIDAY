@@ -3,6 +3,7 @@
  */
 
 import type { MarketplaceSkill } from '@friday/shared';
+import { SkillCreateSchema } from '@friday/shared';
 import type { SecureLogger } from '../logging/logger.js';
 import type { BrainManager } from '../brain/manager.js';
 import { MarketplaceStorage } from './storage.js';
@@ -38,14 +39,14 @@ export class MarketplaceManager {
       this.logger.info('Marketplace skill installed', { id });
       if (this.brainManager) {
         try {
-          this.brainManager.createSkill({
+          this.brainManager.createSkill(SkillCreateSchema.parse({
             name: skill.name,
             description: skill.description,
             instructions: skill.instructions,
             tools: skill.tools,
             source: 'marketplace',
             enabled: true,
-          });
+          }));
           this.logger.info('Brain skill created from marketplace', { id, name: skill.name });
         } catch (err) {
           this.logger.error('Failed to create brain skill from marketplace', {

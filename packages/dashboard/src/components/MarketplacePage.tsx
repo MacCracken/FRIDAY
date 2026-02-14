@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Store, Download, Trash2, Loader2, Search } from 'lucide-react';
+import {
+  fetchMarketplaceSkills,
+  installMarketplaceSkill,
+  uninstallMarketplaceSkill,
+} from '../api/client';
 
 interface MarketplaceSkill {
   id: string;
@@ -9,44 +14,23 @@ interface MarketplaceSkill {
   version: string;
   author: string;
   category: string;
-  downloads: number;
+  downloadCount: number;
   installed: boolean;
-  createdAt: number;
-}
-
-const API_HEADERS = () => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${localStorage.getItem('friday_token')}`,
-});
-
-async function searchMarketplace(query?: string): Promise<{ skills: MarketplaceSkill[]; total: number }> {
-  const params = new URLSearchParams();
-  if (query) params.set('query', query);
-  const res = await fetch(`/api/v1/marketplace?${params}`, { headers: API_HEADERS() });
-  if (!res.ok) throw new Error('Failed to search marketplace');
-  return res.json();
-}
-
-async function installSkill(id: string): Promise<void> {
-  const res = await fetch(`/api/v1/marketplace/${id}/install`, { method: 'POST', headers: API_HEADERS() });
-  if (!res.ok) throw new Error('Failed to install skill');
-}
-
-async function uninstallSkill(id: string): Promise<void> {
-  const res = await fetch(`/api/v1/marketplace/${id}/uninstall`, { method: 'POST', headers: API_HEADERS() });
-  if (!res.ok) throw new Error('Failed to uninstall skill');
 }
 
 export function MarketplacePage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
-  const { data, isLoading } = useQuery({ queryKey: ['marketplace', query], queryFn: () => searchMarketplace(query || undefined) });
+  const { data, isLoading } = useQuery({
+    queryKey: ['marketplace', query],
+    queryFn: () => fetchMarketplaceSkills(query || undefined),
+  });
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['marketplace'] });
     void queryClient.invalidateQueries({ queryKey: ['skills'] });
   };
-  const installMut = useMutation({ mutationFn: installSkill, onSuccess: invalidate });
-  const uninstallMut = useMutation({ mutationFn: uninstallSkill, onSuccess: invalidate });
+  const installMut = useMutation({ mutationFn: installMarketplaceSkill, onSuccess: invalidate });
+  const uninstallMut = useMutation({ mutationFn: uninstallMarketplaceSkill, onSuccess: invalidate });
 
   return (
     <div className="space-y-6">
@@ -85,7 +69,7 @@ export function MarketplacePage() {
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                   <span>{skill.author}</span>
                   <span>{skill.category}</span>
-                  <span>{skill.downloads} installs</span>
+                  <span>{skill.downloadCount} installs</span>
                 </div>
               </div>
               <div className="mt-3 pt-3 border-t border-border">

@@ -4,23 +4,31 @@
 
 ---
 
-## v1.3.1 — Completed (2026-02-12)
+## v1.5.0 — Completed (2026-02-13)
 
-- **Dynamic model discovery** — `fetchAvailableModels()` on all providers (Anthropic, OpenAI, Ollama, OpenCode); parallel fetching in `getAvailableModelsAsync()`
-- **Dashboard dropdown highlighting** — lighter blue highlight with left border on active personality and model selections
-- **Sidebar collapsed spacing** — reduced icon spacing when sidebar is collapsed
+- **Universal Script Assistant** — Builtin marketplace skill: elite script consultant with Brainstorm, Architect, Draft, and Roast modes
+- **Marketplace dashboard auth fix** — Switched from wrong localStorage key to shared `request()` with proper auth and token refresh
+- **Marketplace type alignment** — `MarketplaceSkill.tools` uses `ToolSchema`; `createSkill` wrapped with `SkillCreateSchema.parse()`
+- **MCP robust tool restore** — `restoreTools()` bypasses `server.enabled` guard on toggle re-enable
+- **Anomaly detection test fix** — High-frequency test no longer flaky outside business hours
 
-## v1.3.0 — Completed (2026-02-12)
+## v1.4.1 — Completed (2026-02-13)
 
-- **Coding IDE View** — Monaco editor at `/code` with personality-scoped chat sidebar, `useChat` hook, "Send to Chat" and "Insert at Cursor" actions
-- **Voice Interface** — browser-native SpeechRecognition + speechSynthesis, `useVoice` hook, VoiceToggle component on Chat and Code pages, localStorage persistence
-- **Dashboard improvements** — enhanced layout, status bar updates
+- **Marketplace install → Brain skills** — Install/uninstall syncs with BrainStorage
+- **Dashboard repairs** — Notification toggle, log retention settings, audit export
+- **MCP tool persistence** — Toggle off/on restores tools from SQLite
+
+## v1.4.0 — Completed (2026-02-13)
+
+- **Gateway security hardening** — HTTP headers, CORS fix, WebSocket RBAC, heartbeat
+- **MCP service** — `@friday/mcp` package with 22+ tools, 7 resources, 4 prompts
+- **Integrations** — CLI, Webhook, Google Chat adapters
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 ---
 
-## v1.4.0 — Planned
+## Next — Planned
 
 - [ ] Storybook for component development
 - [ ] Test connection button for integrations (requires backend endpoint)

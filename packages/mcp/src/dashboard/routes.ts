@@ -35,7 +35,7 @@ export function registerDashboardRoutes(
   app.get('/dashboard', async () => {
     return {
       service: 'friday-mcp',
-      version: '1.4.0',
+      version: '1.5.0',
       status: 'running',
       tools: listMcpCapabilities(mcpServer, 'tools'),
       resources: listMcpCapabilities(mcpServer, 'resources'),

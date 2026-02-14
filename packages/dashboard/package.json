@@ -1,6 +1,6 @@
 {
   "name": "@friday/dashboard",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "SecureYeoman Performance Metrics Dashboard",
   "type": "module",
   "private": true,

@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] — 2026-02-13
+
+### Marketplace
+- **Universal Script Assistant** — New builtin marketplace skill: elite script consultant and developmental editor with four operational modes (Brainstorm, Architect, Draft, Roast), standard screenplay formatting, and subtext-driven dialogue guidance
+- **Marketplace auth fix** — Dashboard Marketplace page was using wrong localStorage key (`friday_token` instead of `accessToken`) for API auth, causing all marketplace API calls to fail silently with 401; switched to shared `request()` function with correct auth handling and automatic token refresh
+- **Marketplace API client** — Added `fetchMarketplaceSkills`, `installMarketplaceSkill`, and `uninstallMarketplaceSkill` functions to the shared dashboard API client
+- **Type alignment** — `MarketplaceSkill.tools` now uses `ToolSchema` (matching `SkillCreate.tools`) instead of `Record<string, unknown>[]`; `createSkill` call wrapped with `SkillCreateSchema.parse()` to apply Zod defaults for required fields
+
+### MCP
+- **Robust tool restore on toggle** — Added `McpClientManager.restoreTools()` method that loads tools from SQLite without checking `server.enabled`, eliminating a potential race between DB update and read-back; PATCH toggle route now uses `restoreTools()` instead of `discoverTools()` on re-enable
+- **Toggle response includes tools** — PATCH `/api/v1/mcp/servers/:id` response now includes the restored tools for the toggled server
+
+### Fixed
+- **Anomaly detection test flakiness** — High-frequency anomaly test no longer fails when run outside business hours (9–17); the test now searches all alert callback invocations instead of only the first (which could contain only `after_hours` anomalies)
+
+### Tests
+- Full toggle cycle test — new test simulates exact PATCH route behavior (disable in DB + clear memory, then re-enable + restore)
+- `restoreTools` bypass test — verifies tools restore from DB regardless of server enabled state
+- 1486 tests across 88 test files
+
+---
+
 ## [1.4.1] — 2026-02-13
 
 ### Marketplace

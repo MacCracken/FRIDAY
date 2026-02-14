@@ -62,7 +62,7 @@ describe('dashboard routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().service).toBe('friday-mcp');
-    expect(res.json().version).toBe('1.4.0');
+    expect(res.json().version).toBe('1.5.0');
     expect(res.json().status).toBe('running');
   });
 

@@ -387,7 +387,7 @@ export class GatewayServer {
       const state = this.secureYeoman.getState();
       return {
         status: state.healthy ? 'ok' : 'error',
-        version: '1.4.1',
+        version: '1.5.0',
         uptime: state.startedAt ? Date.now() - state.startedAt : 0,
         checks: {
           database: true,

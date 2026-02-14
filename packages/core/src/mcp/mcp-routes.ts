@@ -78,11 +78,13 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
       // Disabling: clear in-memory tools (DB retained for re-enable)
       mcpClient.clearTools(request.params.id);
     } else {
-      // Enabling: restore tools from persistent storage
-      await mcpClient.discoverTools(request.params.id);
+      // Enabling: restore tools directly from DB (bypasses enabled guard)
+      mcpClient.restoreTools(request.params.id);
     }
 
-    return { server: mcpStorage.getServer(request.params.id) };
+    const serverAfter = mcpStorage.getServer(request.params.id);
+    const tools = request.body.enabled ? mcpClient.getAllTools().filter(t => t.serverId === request.params.id) : [];
+    return { server: serverAfter, tools };
   });
 
   // Delete an MCP server
