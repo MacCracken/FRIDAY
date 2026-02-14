@@ -23,7 +23,7 @@ export class McpClientManager {
 
   /**
    * Register tools provided by an MCP server during auto-registration.
-   * This avoids the need for core to speak the MCP protocol.
+   * Persists tools to SQLite so they survive toggle cycles.
    */
   registerTools(serverId: string, serverName: string, tools: McpToolManifest[]): void {
     const mcpTools: McpToolDef[] = tools.map((t) => ({
@@ -34,6 +34,7 @@ export class McpClientManager {
       serverName,
     }));
     this.discoveredTools.set(serverId, mcpTools);
+    this.storage.saveTools(serverId, serverName, tools);
     this.logger.info('Registered tools from MCP server', { serverId, serverName, count: mcpTools.length });
   }
 
@@ -41,14 +42,20 @@ export class McpClientManager {
     const server = this.storage.getServer(serverId);
     if (!server || !server.enabled) return [];
 
-    // If tools were already registered (e.g. via auto-registration), return those
+    // If tools are already in memory, return those
     const existing = this.discoveredTools.get(serverId);
     if (existing && existing.length > 0) {
       return existing;
     }
 
-    // For servers that didn't provide tools upfront, return empty
-    // Full MCP protocol discovery would require the MCP SDK client
+    // Fall back to persisted tools (survives toggle off/on)
+    const persisted = this.storage.loadTools(serverId);
+    if (persisted.length > 0) {
+      this.discoveredTools.set(serverId, persisted);
+      this.logger.info('Restored tools from storage for MCP server', { serverId, count: persisted.length });
+      return persisted;
+    }
+
     this.logger.debug('No pre-registered tools for MCP server', { serverId });
     return [];
   }
@@ -101,10 +108,21 @@ export class McpClientManager {
   }
 
   /**
-   * Clear tools for a server (e.g. on deregistration).
+   * Clear in-memory tools for a server (e.g. on disable).
+   * Persisted tools are retained so they can be restored on re-enable.
    */
   clearTools(serverId: string): void {
     this.discoveredTools.delete(serverId);
     this.discoveredResources.delete(serverId);
+  }
+
+  /**
+   * Permanently delete tools for a server (e.g. on server removal).
+   * Clears both in-memory cache and persistent storage.
+   */
+  deleteTools(serverId: string): void {
+    this.discoveredTools.delete(serverId);
+    this.discoveredResources.delete(serverId);
+    this.storage.deleteTools(serverId);
   }
 }

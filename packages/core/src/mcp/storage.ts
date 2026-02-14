@@ -3,7 +3,7 @@
  */
 
 import Database from 'better-sqlite3';
-import type { McpServerConfig, McpServerCreate } from '@friday/shared';
+import type { McpServerConfig, McpServerCreate, McpToolDef } from '@friday/shared';
 import { uuidv7 } from '../utils/crypto.js';
 
 export class McpStorage {
@@ -29,6 +29,16 @@ export class McpStorage {
         enabled INTEGER DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_server_tools (
+        server_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        input_schema TEXT DEFAULT '{}',
+        PRIMARY KEY (server_id, name),
+        FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
       )
     `);
   }
@@ -112,6 +122,44 @@ export class McpStorage {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };
+  }
+
+  /**
+   * Persist tool manifests for a server. Replaces any existing tools.
+   */
+  saveTools(serverId: string, serverName: string, tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>): void {
+    const del = this.db.prepare('DELETE FROM mcp_server_tools WHERE server_id = ?');
+    const ins = this.db.prepare('INSERT INTO mcp_server_tools (server_id, name, description, input_schema) VALUES (?, ?, ?, ?)');
+    const tx = this.db.transaction(() => {
+      del.run(serverId);
+      for (const t of tools) {
+        ins.run(serverId, t.name, t.description ?? '', JSON.stringify(t.inputSchema ?? {}));
+      }
+    });
+    tx();
+  }
+
+  /**
+   * Load persisted tools for a server.
+   */
+  loadTools(serverId: string): McpToolDef[] {
+    const server = this.getServer(serverId);
+    if (!server) return [];
+    const rows = this.db.prepare('SELECT * FROM mcp_server_tools WHERE server_id = ?').all(serverId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      name: row.name as string,
+      description: (row.description as string) ?? '',
+      inputSchema: JSON.parse((row.input_schema as string) || '{}'),
+      serverId,
+      serverName: server.name,
+    }));
+  }
+
+  /**
+   * Delete persisted tools for a server.
+   */
+  deleteTools(serverId: string): void {
+    this.db.prepare('DELETE FROM mcp_server_tools WHERE server_id = ?').run(serverId);
   }
 
   close(): void {

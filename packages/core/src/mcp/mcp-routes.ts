@@ -74,9 +74,12 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
       return reply.code(500).send({ error: 'Failed to update server' });
     }
 
-    // If disabling, clear discovered tools
     if (!request.body.enabled) {
+      // Disabling: clear in-memory tools (DB retained for re-enable)
       mcpClient.clearTools(request.params.id);
+    } else {
+      // Enabling: restore tools from persistent storage
+      await mcpClient.discoverTools(request.params.id);
     }
 
     return { server: mcpStorage.getServer(request.params.id) };
@@ -90,7 +93,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
     if (!deleted) {
       return reply.code(404).send({ error: 'MCP server not found' });
     }
-    mcpClient.clearTools(request.params.id);
+    mcpClient.deleteTools(request.params.id);
     return { message: 'Server removed' };
   });
 
