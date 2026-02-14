@@ -387,7 +387,7 @@ export class GatewayServer {
       const state = this.secureYeoman.getState();
       return {
         status: state.healthy ? 'ok' : 'error',
-        version: '1.4.0',
+        version: '1.4.1',
         uptime: state.startedAt ? Date.now() - state.startedAt : 0,
         checks: {
           database: true,
@@ -749,6 +749,59 @@ export class GatewayServer {
       const stats = await this.secureYeoman.getAuditStats();
       return stats;
     });
+
+    // Enforce audit retention
+    this.app.post(
+      '/api/v1/audit/retention',
+      async (
+        request: FastifyRequest<{
+          Body: { maxAgeDays?: number; maxEntries?: number };
+        }>,
+        reply: FastifyReply
+      ) => {
+        try {
+          const { maxAgeDays, maxEntries } = request.body;
+          if (maxAgeDays !== undefined && (maxAgeDays < 1 || maxAgeDays > 3650)) {
+            return reply.code(400).send({ error: 'maxAgeDays must be between 1 and 3650' });
+          }
+          if (maxEntries !== undefined && (maxEntries < 100 || maxEntries > 10_000_000)) {
+            return reply.code(400).send({ error: 'maxEntries must be between 100 and 10,000,000' });
+          }
+          const deleted = this.secureYeoman.enforceAuditRetention({ maxAgeDays, maxEntries });
+          const stats = await this.secureYeoman.getAuditStats();
+          return { deleted, ...stats };
+        } catch {
+          return reply.code(500).send({ error: 'Failed to enforce retention' });
+        }
+      }
+    );
+
+    // Export audit log as compressed JSON
+    this.app.get(
+      '/api/v1/audit/export',
+      async (
+        request: FastifyRequest<{
+          Querystring: { from?: string; to?: string; limit?: string };
+        }>,
+        reply: FastifyReply
+      ) => {
+        try {
+          const q = request.query;
+          const entries = await this.secureYeoman.exportAuditLog({
+            from: q.from ? Number(q.from) : undefined,
+            to: q.to ? Number(q.to) : undefined,
+            limit: q.limit ? Number(q.limit) : 100_000,
+          });
+          const filename = `friday-audit-${new Date().toISOString().slice(0, 10)}.json`;
+          return reply
+            .header('Content-Type', 'application/json')
+            .header('Content-Disposition', `attachment; filename="${filename}"`)
+            .send(JSON.stringify({ exportedAt: new Date().toISOString(), count: entries.length, entries }, null, 2));
+        } catch {
+          return reply.code(500).send({ error: 'Failed to export audit log' });
+        }
+      }
+    );
 
     // WebSocket endpoint — auth is handled via ?token= query param
     // (browser WebSocket API does not support custom headers)

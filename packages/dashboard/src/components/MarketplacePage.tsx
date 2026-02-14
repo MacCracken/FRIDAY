@@ -41,7 +41,10 @@ export function MarketplacePage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
   const { data, isLoading } = useQuery({ queryKey: ['marketplace', query], queryFn: () => searchMarketplace(query || undefined) });
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['marketplace'] });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['marketplace'] });
+    void queryClient.invalidateQueries({ queryKey: ['skills'] });
+  };
   const installMut = useMutation({ mutationFn: installSkill, onSuccess: invalidate });
   const uninstallMut = useMutation({ mutationFn: uninstallSkill, onSuccess: invalidate });
 

@@ -38,6 +38,7 @@ const SOURCE_LABELS: Record<string, string> = {
   user: 'User',
   ai_proposed: 'AI Proposed',
   ai_learned: 'AI Learned',
+  marketplace: 'Marketplace',
 };
 
 const STATUS_BADGES: Record<string, string> = {
@@ -231,6 +232,7 @@ export function SkillsManager() {
           <option value="user">User</option>
           <option value="ai_proposed">AI Proposed</option>
           <option value="ai_learned">AI Learned</option>
+          <option value="marketplace">Marketplace</option>
         </select>
       </div>
 

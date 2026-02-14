@@ -646,6 +646,28 @@ export async function fetchAuditStats(): Promise<{
   }
 }
 
+// ─── Audit Retention & Export ─────────────────────────────────
+
+export async function enforceRetention(data: {
+  maxAgeDays?: number;
+  maxEntries?: number;
+}): Promise<{ deletedCount: number; remainingCount: number }> {
+  return request('/audit/retention', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function exportAuditBackup(): Promise<Blob> {
+  const base = (window as any).__FRIDAY_API_BASE__ || `${window.location.protocol}//${window.location.hostname}:18789/api/v1`;
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${base}/audit/export`, { headers });
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+  return res.blob();
+}
+
 // ─── Chat ─────────────────────────────────────────────────────
 
 export async function sendChatMessage(data: {

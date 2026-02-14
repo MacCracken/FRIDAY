@@ -83,7 +83,7 @@ import { ExperimentStorage } from './experiment/storage.js';
 import { ExperimentManager } from './experiment/manager.js';
 import { MarketplaceStorage } from './marketplace/storage.js';
 import { MarketplaceManager } from './marketplace/manager.js';
-import type { Config, TaskCreate, Task, MetricsSnapshot } from '@friday/shared';
+import type { Config, TaskCreate, Task, MetricsSnapshot, AuditEntry } from '@friday/shared';
 
 export interface SecureYeomanOptions {
   /** Configuration options */
@@ -607,7 +607,9 @@ export class SecureYeoman {
       });
       this.marketplaceManager = new MarketplaceManager(this.marketplaceStorage, {
         logger: this.logger.child({ component: 'MarketplaceManager' }),
+        brainManager: this.brainManager ?? undefined,
       });
+      this.marketplaceManager.seedBuiltinSkills();
       this.logger.debug('Marketplace manager initialized');
 
       // Step 7: Record initialization in audit log
@@ -847,6 +849,33 @@ export class SecureYeoman {
       chainValid: stats.chainValid,
       lastVerification: stats.lastVerification,
     };
+  }
+
+  /**
+   * Enforce retention policy, deleting entries beyond the given limits.
+   * Returns the number of deleted entries.
+   */
+  enforceAuditRetention(opts: { maxAgeDays?: number; maxEntries?: number }): number {
+    this.ensureInitialized();
+    if (this.auditStorage && this.auditStorage instanceof SQLiteAuditStorage) {
+      return this.auditStorage.enforceRetention(opts);
+    }
+    return 0;
+  }
+
+  /**
+   * Export audit entries as a JSON array for backup.
+   */
+  async exportAuditLog(opts?: { from?: number; to?: number; limit?: number }): Promise<AuditEntry[]> {
+    this.ensureInitialized();
+    const result = await this.queryAuditLog({
+      from: opts?.from,
+      to: opts?.to,
+      limit: opts?.limit ?? 100_000,
+      offset: 0,
+      order: 'asc' as const,
+    });
+    return result.entries;
   }
 
   /**

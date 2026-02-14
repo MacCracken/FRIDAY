@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.1] — 2026-02-13
+
+### Marketplace
+- **Install → Brain skills** — Marketplace `install()` now creates an actual Skill in BrainStorage (visible in the Skills view) with `source: 'marketplace'`; `uninstall()` removes it from both marketplace and Brain
+- **Built-in example skill** — "Summarize Text" utility skill seeded into marketplace on startup (idempotent)
+- **New `marketplace` skill source** — `SkillSourceSchema` extended with `'marketplace'`; dashboard SkillsManager shows Marketplace label and filter option
+- **Dashboard sync** — Installing/uninstalling marketplace skills now invalidates the Skills query cache so the Skills view stays in sync
+
+### Dashboard
+- **Notification toggle fix** — Toggle switch circle no longer overflows the track; fixed dimensions (`w-9 h-5` track, `w-4 h-4` circle) and translation values
+- **Log retention settings** — Retention policy fields (max age days, max entries) are now editable with an "Enforce Retention" button that prunes old audit entries via the backend
+- **Audit log export** — New "Export Audit Log" button downloads a JSON backup of the full audit log
+
+### Core
+- **Audit retention endpoint** — `POST /api/v1/audit/retention` accepts `maxAgeDays` and `maxEntries` to prune old audit entries with validation (1–3650 days, 100–10M entries)
+- **Audit export endpoint** — `GET /api/v1/audit/export` returns the full audit log as a downloadable JSON file with `Content-Disposition` header
+- **MCP tool persistence** — Toggling an MCP server off then on now correctly restores discovered tools; tools are persisted to SQLite (`mcp_server_tools` table) and restored from DB on re-enable
+
+### Documentation
+- **ADR 028** — Marketplace Skill Installation decision record
+
+---
+
 ## [1.4.0] — 2026-02-13
 
 ### Security Hardening

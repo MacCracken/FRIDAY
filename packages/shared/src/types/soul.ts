@@ -174,7 +174,7 @@ export type ShellAction = z.infer<typeof ShellActionSchema>;
 
 // ─── Skill ────────────────────────────────────────────────────
 
-export const SkillSourceSchema = z.enum(['user', 'ai_proposed', 'ai_learned']);
+export const SkillSourceSchema = z.enum(['user', 'ai_proposed', 'ai_learned', 'marketplace']);
 export type SkillSource = z.infer<typeof SkillSourceSchema>;
 
 export const SkillStatusSchema = z.enum(['active', 'pending_approval', 'disabled']);

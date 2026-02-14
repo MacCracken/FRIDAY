@@ -193,6 +193,9 @@ All core modules maintain >80% coverage thresholds.
 | **v1.2.0 Release** | — | **Complete** |
 | **v1.3.0 Release** | — | **Complete (released 2026-02-12)** |
 | **v1.3.1 Release** | — | **Complete (released 2026-02-12)** |
+| **v1.3.3 Release** | — | **Complete (released 2026-02-13)** |
+| **v1.4.0 Release** | — | **Complete (released 2026-02-13)** |
+| **v1.4.1 Release** | — | **Complete (released 2026-02-13)** |
 
 ---
 
@@ -232,6 +235,34 @@ All core modules maintain >80% coverage thresholds.
 - ✅ Parallel provider fetching — `getAvailableModelsAsync()` queries all configured providers simultaneously via `Promise.allSettled`
 - ✅ Dashboard dropdown highlighting — lighter blue highlight with left border on active personality and model selections
 - ✅ Sidebar collapsed spacing — reduced icon spacing when sidebar is collapsed
+
+---
+
+## v1.4.0: Security & MCP
+
+**Status**: Complete
+**Released**: 2026-02-13
+
+- ✅ HTTP security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, HSTS)
+- ✅ CORS wildcard + credentials fix (Fetch spec compliance)
+- ✅ WebSocket channel RBAC authorization (role-based subscribe filtering)
+- ✅ WebSocket heartbeat ping/pong (30s cycle, 60s dead connection cleanup)
+- ✅ MCP service package (`@friday/mcp`) — 22+ tools, 7 resources, 4 prompts, auto-registration
+- ✅ CLI, Webhook, Google Chat integrations
+- ✅ Auth verify endpoint for service-to-service JWT delegation
+
+---
+
+## v1.4.1: Dashboard & Marketplace Polish
+
+**Status**: Complete
+**Released**: 2026-02-13
+
+- ✅ Marketplace skill installation → Brain skill sync
+- ✅ Notification toggle CSS fix (circle overflow)
+- ✅ Log retention settings — editable policy with backend enforcement
+- ✅ Audit log JSON export/download
+- ✅ MCP tool persistence (SQLite-backed; toggle off/on restores tools)
 
 ---
 

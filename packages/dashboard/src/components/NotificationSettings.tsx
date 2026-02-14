@@ -66,7 +66,7 @@ export function NotificationSettings() {
         <span className="text-sm">Enable notifications</span>
         <button
           onClick={() => setPrefs((p) => ({ ...p, enabled: !p.enabled }))}
-          className={`w-11 h-6 rounded-full transition-colors relative ${
+          className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${
             prefs.enabled ? 'bg-primary' : 'bg-muted'
           }`}
           role="switch"
@@ -74,8 +74,8 @@ export function NotificationSettings() {
           aria-label="Toggle notifications"
         >
           <span
-            className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-              prefs.enabled ? 'translate-x-5' : 'translate-x-0.5'
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+              prefs.enabled ? 'translate-x-4' : 'translate-x-0'
             }`}
           />
         </button>
@@ -89,7 +89,7 @@ export function NotificationSettings() {
         </span>
         <button
           onClick={() => setPrefs((p) => ({ ...p, sound: !p.sound }))}
-          className={`w-11 h-6 rounded-full transition-colors relative ${
+          className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${
             prefs.sound ? 'bg-primary' : 'bg-muted'
           }`}
           role="switch"
@@ -97,8 +97,8 @@ export function NotificationSettings() {
           aria-label="Toggle notification sound"
         >
           <span
-            className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-              prefs.sound ? 'translate-x-5' : 'translate-x-0.5'
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+              prefs.sound ? 'translate-x-4' : 'translate-x-0'
             }`}
           />
         </button>

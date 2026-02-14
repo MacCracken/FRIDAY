@@ -70,7 +70,7 @@ Health check endpoint - no authentication required.
 {
   "status": "healthy",
   "timestamp": "2026-02-11T00:00:00.000Z",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "uptime": 3600
 }
 ```
@@ -455,6 +455,49 @@ Verify audit chain integrity.
   "valid": true,
   "entries_verified": 1000,
   "last_verification": "2026-02-11T00:00:00.000Z"
+}
+```
+
+#### POST /api/v1/audit/retention
+
+Enforce audit log retention policy by pruning entries older than the specified age or exceeding the maximum count.
+
+**Required Permissions**: `audit.manage` (admin)
+
+**Request Body**
+```json
+{
+  "maxAgeDays": 90,
+  "maxEntries": 100000
+}
+```
+
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `maxAgeDays` | number | 1–3650 | Delete entries older than this many days |
+| `maxEntries` | number | 100–10,000,000 | Keep at most this many entries (oldest deleted first) |
+
+**Response**
+```json
+{
+  "deletedCount": 1234,
+  "remainingCount": 98766
+}
+```
+
+#### GET /api/v1/audit/export
+
+Download the full audit log as a JSON file.
+
+**Required Permissions**: `audit.read`
+
+**Response**: JSON file download with `Content-Disposition: attachment; filename=friday-audit-export-<date>.json`
+
+```json
+{
+  "exportedAt": "2026-02-13T12:00:00.000Z",
+  "totalEntries": 5000,
+  "entries": [ ... ]
 }
 ```
 
