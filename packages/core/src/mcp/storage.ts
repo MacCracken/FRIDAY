@@ -93,6 +93,11 @@ export class McpStorage {
     return row ? this.rowToConfig(row) : null;
   }
 
+  findServerByName(name: string): McpServerConfig | null {
+    const row = this.db.prepare('SELECT * FROM mcp_servers WHERE name = ?').get(name) as Record<string, unknown> | undefined;
+    return row ? this.rowToConfig(row) : null;
+  }
+
   listServers(): McpServerConfig[] {
     const rows = this.db.prepare('SELECT * FROM mcp_servers ORDER BY created_at DESC').all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToConfig(r));

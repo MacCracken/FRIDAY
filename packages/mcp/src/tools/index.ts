@@ -16,6 +16,7 @@ import { registerIntegrationTools } from './integration-tools.js';
 import { registerSoulTools } from './soul-tools.js';
 import { registerAuditTools } from './audit-tools.js';
 import { registerFilesystemTools } from './filesystem-tools.js';
+import { registerGitTools } from './git-tools.js';
 
 export interface ToolMiddleware {
   rateLimiter: RateLimiterMiddleware;
@@ -37,7 +38,9 @@ export function registerAllTools(
   registerSoulTools(server, client, middleware);
   registerAuditTools(server, client, middleware);
 
-  if (config.exposeFilesystem) {
-    registerFilesystemTools(server, config, middleware);
-  }
+  // Git & filesystem tools are always registered at the MCP protocol level.
+  // Feature toggles (exposeGit, exposeFilesystem) control visibility in the
+  // core API response, not whether the tools exist on the MCP server.
+  registerGitTools(server, config, middleware);
+  registerFilesystemTools(server, config, middleware);
 }

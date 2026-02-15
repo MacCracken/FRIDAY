@@ -44,6 +44,7 @@ import {
   fetchExternalBrainConfig,
   updateExternalBrainConfig,
   triggerExternalSync,
+  fetchMcpConfig,
 } from '../api/client';
 import { ConfirmDialog } from './common/ConfirmDialog';
 import type {
@@ -901,6 +902,12 @@ function BodySection({
   });
   const servers = serversData?.servers ?? [];
 
+  // Global MCP feature config — gates per-personality feature toggles
+  const { data: globalMcpConfig } = useQuery({
+    queryKey: ['mcpConfig'],
+    queryFn: fetchMcpConfig,
+  });
+
   const creationItems = [
     { key: 'skills' as const, label: 'New Skills', icon: '🧠' },
     { key: 'tasks' as const, label: 'New Tasks', icon: '📋' },
@@ -1090,23 +1097,39 @@ function BodySection({
                             <p className="text-[10px] text-muted-foreground mb-1">
                               Tool categories this personality can access:
                             </p>
-                            <label className="flex items-center gap-2 p-1.5 rounded bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                            <label className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
+                              globalMcpConfig?.exposeGit ? 'cursor-pointer hover:bg-muted/50' : 'opacity-50 cursor-not-allowed'
+                            }`}>
                               <GitBranch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                              <span className="text-xs flex-1">Git & GitHub</span>
+                              <span className="text-xs flex-1">
+                                Git & GitHub
+                                {!globalMcpConfig?.exposeGit && (
+                                  <span className="text-[10px] text-muted-foreground ml-1">(enable in Connections first)</span>
+                                )}
+                              </span>
                               <input
                                 type="checkbox"
                                 checked={mcpFeatures.exposeGit}
                                 onChange={(e) => onMcpFeaturesChange({ ...mcpFeatures, exposeGit: e.target.checked })}
+                                disabled={!globalMcpConfig?.exposeGit}
                                 className="w-3.5 h-3.5 rounded accent-primary shrink-0"
                               />
                             </label>
-                            <label className="flex items-center gap-2 p-1.5 rounded bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                            <label className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
+                              globalMcpConfig?.exposeFilesystem ? 'cursor-pointer hover:bg-muted/50' : 'opacity-50 cursor-not-allowed'
+                            }`}>
                               <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                              <span className="text-xs flex-1">Filesystem</span>
+                              <span className="text-xs flex-1">
+                                Filesystem
+                                {!globalMcpConfig?.exposeFilesystem && (
+                                  <span className="text-[10px] text-muted-foreground ml-1">(enable in Connections first)</span>
+                                )}
+                              </span>
                               <input
                                 type="checkbox"
                                 checked={mcpFeatures.exposeFilesystem}
                                 onChange={(e) => onMcpFeaturesChange({ ...mcpFeatures, exposeFilesystem: e.target.checked })}
+                                disabled={!globalMcpConfig?.exposeFilesystem}
                                 className="w-3.5 h-3.5 rounded accent-primary shrink-0"
                               />
                             </label>

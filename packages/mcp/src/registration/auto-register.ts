@@ -26,7 +26,7 @@ export class AutoRegistration {
     }
 
     try {
-      const toolManifest = getToolManifest(this.config);
+      const toolManifest = getToolManifest();
 
       const result = await this.client.post<{ server: RegisteredServer }>('/api/v1/mcp/servers', {
         name: 'YEOMAN MCP',

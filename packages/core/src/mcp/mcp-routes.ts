@@ -31,7 +31,9 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
     return { servers, total: servers.length };
   });
 
-  // Add a new MCP server (with optional tool manifest)
+  // Add (or upsert) an MCP server with optional tool manifest.
+  // If a server with the same name already exists, update its tools and
+  // connection details instead of creating a duplicate entry.
   app.post(
     '/api/v1/mcp/servers',
     async (
@@ -52,9 +54,20 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
     ) => {
       try {
         const { tools, ...serverData } = request.body;
-        const server = mcpStorage.addServer(serverData as any);
 
-        // Register tools if provided in the request
+        // Upsert: if a server with the same name exists, reuse it
+        const existing = mcpStorage.findServerByName(serverData.name);
+        let server: typeof existing & {};
+        let statusCode = 201;
+
+        if (existing) {
+          server = existing;
+          statusCode = 200;
+        } else {
+          server = mcpStorage.addServer(serverData as any);
+        }
+
+        // Register/update tools if provided in the request
         if (tools && Array.isArray(tools) && tools.length > 0) {
           mcpClient.registerTools(server.id, server.name, tools);
         } else if (server.enabled) {
@@ -62,7 +75,7 @@ export function registerMcpRoutes(app: FastifyInstance, opts: McpRoutesOptions):
           await mcpClient.discoverTools(server.id);
         }
 
-        return reply.code(201).send({ server });
+        return reply.code(statusCode).send({ server });
       } catch (err) {
         return reply.code(400).send({ error: errorMessage(err) });
       }
