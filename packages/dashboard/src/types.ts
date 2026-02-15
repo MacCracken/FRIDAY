@@ -1,6 +1,6 @@
 /**
  * Dashboard Types
- * 
+ *
  * Mirrors the shared types but optimized for frontend use
  */
 
@@ -143,6 +143,17 @@ export interface PersonalityCreate {
   preferredLanguage?: string;
   defaultModel?: DefaultModel | null;
   includeArchetypes?: boolean;
+  body?: {
+    enabled?: boolean;
+    capabilities?: string[];
+    heartEnabled?: boolean;
+    creationConfig?: {
+      skills?: boolean;
+      tasks?: boolean;
+      personalities?: boolean;
+      experiments?: boolean;
+    };
+  };
 }
 
 // ─── Spirit Types ────────────────────────────────────────────

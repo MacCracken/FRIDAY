@@ -832,7 +832,17 @@ function HeartbeatTasksSection() {
   );
 }
 
-function BodySection() {
+interface BodySectionProps {
+  creationConfig: { skills: boolean; tasks: boolean; personalities: boolean; experiments: boolean };
+  onCreationConfigChange: (config: {
+    skills: boolean;
+    tasks: boolean;
+    personalities: boolean;
+    experiments: boolean;
+  }) => void;
+}
+
+function BodySection({ creationConfig, onCreationConfigChange }: BodySectionProps) {
   const capabilities = ['vision', 'limb_movement', 'auditory', 'haptic'] as const;
 
   const [enabledCaps, setEnabledCaps] = useState<Record<string, boolean>>({
@@ -840,6 +850,32 @@ function BodySection() {
     limb_movement: false,
     auditory: false,
   });
+
+  const creationItems = [
+    { key: 'skills' as const, label: 'New Skills', icon: '🧠' },
+    { key: 'tasks' as const, label: 'New Tasks', icon: '📋' },
+    { key: 'experiments' as const, label: 'New Experiments', icon: '🧪' },
+    { key: 'personalities' as const, label: 'New Personalities', icon: '👤' },
+  ];
+
+  const allEnabled = creationItems.every((item) => creationConfig[item.key]);
+
+  const toggleCreationItem = (key: 'skills' | 'tasks' | 'personalities' | 'experiments') => {
+    onCreationConfigChange({
+      ...creationConfig,
+      [key]: !creationConfig[key],
+    });
+  };
+
+  const toggleAllCreation = () => {
+    const newValue = !allEnabled;
+    onCreationConfigChange({
+      skills: newValue,
+      tasks: newValue,
+      personalities: newValue,
+      experiments: newValue,
+    });
+  };
 
   const capabilityInfo: Record<string, { icon: string; description: string; available: boolean }> =
     {
@@ -933,31 +969,54 @@ function BodySection() {
 
       {/* Creation Controls */}
       <div className="mt-4 pt-4 border-t border-border">
-        <h4 className="text-sm font-medium mb-2">Resource Creation</h4>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium">Resource Creation</h4>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allEnabled}
+              onChange={toggleAllCreation}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-muted-foreground/30 peer-checked:bg-success rounded-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+            <span className="text-xs ml-2 text-muted-foreground peer-checked:text-success">
+              {allEnabled ? 'All enabled' : 'Enable all'}
+            </span>
+          </label>
+        </div>
         <p className="text-xs text-muted-foreground mb-3">
           Allow this personality to autonomously create new skills, tasks, experiments, and
           personalities.
         </p>
         <div className="space-y-2">
-          {[
-            { key: 'skills', label: 'New Skills', icon: '🧠' },
-            { key: 'tasks', label: 'New Tasks', icon: '📋' },
-            { key: 'experiments', label: 'New Experiments', icon: '🧪' },
-            { key: 'personalities', label: 'New Personalities', icon: '👤' },
-          ].map((item) => (
-            <div
-              key={item.key}
-              className="text-sm px-3 py-2 rounded flex items-center justify-between border bg-muted/50 border-border"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base">{item.icon}</span>
-                <span className="font-medium">{item.label}</span>
+          {creationItems.map((item) => {
+            const isEnabled = creationConfig[item.key];
+            return (
+              <div
+                key={item.key}
+                className={`text-sm px-3 py-2 rounded flex items-center justify-between border ${
+                  isEnabled ? 'bg-success/5 border-success/30' : 'bg-muted/50 border-border'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{item.icon}</span>
+                  <span className="font-medium">{item.label}</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    onChange={() => toggleCreationItem(item.key)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-muted-foreground/30 peer-checked:bg-success rounded-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+                  <span className="text-xs ml-2 text-muted-foreground peer-checked:text-success">
+                    {isEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </label>
               </div>
-              <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                Coming soon
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </CollapsibleSection>
@@ -996,6 +1055,19 @@ export function PersonalityEditor() {
     preferredLanguage: '',
     defaultModel: null,
     includeArchetypes: true,
+    body: {
+      enabled: false,
+      capabilities: [],
+      heartEnabled: true,
+      creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+    },
+  });
+
+  const [creationConfig, setCreationConfig] = useState({
+    skills: false,
+    tasks: false,
+    personalities: false,
+    experiments: false,
   });
 
   const { data: personalitiesData, isLoading } = useQuery({
@@ -1108,10 +1180,17 @@ export function PersonalityEditor() {
   };
 
   const handleSave = () => {
+    const formWithBody = {
+      ...form,
+      body: {
+        ...form.body,
+        creationConfig,
+      },
+    };
     if (editing === 'new') {
-      createMut.mutate(form);
+      createMut.mutate(formWithBody);
     } else if (editing) {
-      updateMut.mutate({ id: editing, data: form });
+      updateMut.mutate({ id: editing, data: formWithBody });
     }
   };
 
@@ -1338,7 +1417,7 @@ export function PersonalityEditor() {
           <BrainSection />
 
           {/* Body Section */}
-          <BodySection />
+          <BodySection creationConfig={creationConfig} onCreationConfigChange={setCreationConfig} />
 
           {/* Heart Section */}
           <HeartSection />

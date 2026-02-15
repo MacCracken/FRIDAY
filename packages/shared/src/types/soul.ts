@@ -20,6 +20,35 @@ export const DefaultModelSchema = z
 
 export type DefaultModel = z.infer<typeof DefaultModelSchema>;
 
+// ─── Body Config (owns Heart) ───────────────────────────────
+
+export const BodyCapabilitySchema = z.enum(['vision', 'limb_movement', 'auditory', 'haptic']);
+export type BodyCapability = z.infer<typeof BodyCapabilitySchema>;
+
+export const CreationConfigSchema = z
+  .object({
+    skills: z.boolean().default(false),
+    tasks: z.boolean().default(false),
+    personalities: z.boolean().default(false),
+    experiments: z.boolean().default(false),
+  })
+  .default({});
+
+export type CreationConfig = z.infer<typeof CreationConfigSchema>;
+
+export const BodyConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    capabilities: z.array(BodyCapabilitySchema).default([]),
+    heartEnabled: z.boolean().default(true),
+    creationConfig: CreationConfigSchema.default({}),
+  })
+  .default({});
+
+export type BodyConfig = z.infer<typeof BodyConfigSchema>;
+
+// ─── Personality ─────────────────────────────────────────────
+
 export const PersonalitySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(100),
@@ -32,6 +61,7 @@ export const PersonalitySchema = z.object({
   defaultModel: DefaultModelSchema,
   includeArchetypes: z.boolean().default(true),
   isActive: z.boolean().default(false),
+  body: BodyConfigSchema.default({}),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 });
@@ -563,33 +593,6 @@ export const ExternalBrainConfigSchema = z
   .default({});
 
 export type ExternalBrainConfig = z.infer<typeof ExternalBrainConfigSchema>;
-
-// ─── Body Config (owns Heart) ───────────────────────────────
-
-export const BodyCapabilitySchema = z.enum(['vision', 'limb_movement', 'auditory', 'haptic']);
-export type BodyCapability = z.infer<typeof BodyCapabilitySchema>;
-
-export const CreationConfigSchema = z
-  .object({
-    skills: z.boolean().default(false),
-    tasks: z.boolean().default(false),
-    personalities: z.boolean().default(false),
-    experiments: z.boolean().default(false),
-  })
-  .default({});
-
-export type CreationConfig = z.infer<typeof CreationConfigSchema>;
-
-export const BodyConfigSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    capabilities: z.array(BodyCapabilitySchema).default([]),
-    heartEnabled: z.boolean().default(true),
-    creationConfig: CreationConfigSchema.default({}),
-  })
-  .default({});
-
-export type BodyConfig = z.infer<typeof BodyConfigSchema>;
 
 // ─── Heart Config ───────────────────────────────────────────
 
