@@ -262,8 +262,22 @@ export class BrainStorage {
       params.minImportance = query.minImportance;
     }
     if (query.search) {
-      sql += ' AND content LIKE @search';
-      params.search = `%${query.search}%`;
+      // Split into keywords (3+ chars) for better matching than full-string LIKE
+      const keywords = query.search
+        .split(/\s+/)
+        .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
+        .filter(w => w.length >= 3);
+      if (keywords.length > 0) {
+        const clauses = keywords.map((kw, idx) => {
+          const key = `search_kw_${idx}`;
+          params[key] = `%${kw}%`;
+          return `content LIKE @${key}`;
+        });
+        sql += ` AND (${clauses.join(' OR ')})`;
+      } else {
+        sql += ' AND content LIKE @search';
+        params.search = `%${query.search}%`;
+      }
     }
     if (query.context) {
       for (const [key, value] of Object.entries(query.context)) {
@@ -391,8 +405,21 @@ export class BrainStorage {
       params.topic = query.topic;
     }
     if (query.search) {
-      sql += ' AND (content LIKE @search OR topic LIKE @search)';
-      params.search = `%${query.search}%`;
+      const keywords = query.search
+        .split(/\s+/)
+        .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
+        .filter(w => w.length >= 3);
+      if (keywords.length > 0) {
+        const clauses = keywords.map((kw, idx) => {
+          const key = `search_kw_${idx}`;
+          params[key] = `%${kw}%`;
+          return `(content LIKE @${key} OR topic LIKE @${key})`;
+        });
+        sql += ` AND (${clauses.join(' OR ')})`;
+      } else {
+        sql += ' AND (content LIKE @search OR topic LIKE @search)';
+        params.search = `%${query.search}%`;
+      }
     }
     if (query.minConfidence !== undefined) {
       sql += ' AND confidence >= @minConfidence';
