@@ -384,10 +384,12 @@ export function ConnectionsPage() {
       setToggleError(null);
       return updateMcpConfig(data);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['mcpConfig'] });
-      void queryClient.invalidateQueries({ queryKey: ['mcpTools'] });
-      void queryClient.invalidateQueries({ queryKey: ['mcpServers'] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['mcpConfig'] }),
+        queryClient.invalidateQueries({ queryKey: ['mcpTools'] }),
+        queryClient.invalidateQueries({ queryKey: ['mcpServers'] }),
+      ]);
       setIsRestarting(false);
     },
     onError: (err: Error) => {
