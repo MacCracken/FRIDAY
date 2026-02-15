@@ -43,7 +43,13 @@ export class SoulManager {
   private heartbeat: HeartbeatManager | null = null;
   private heartManager: HeartManager | null = null;
 
-  constructor(storage: SoulStorage, config: SoulConfig, deps: SoulManagerDeps, brain?: BrainManager, spirit?: SpiritManager) {
+  constructor(
+    storage: SoulStorage,
+    config: SoulConfig,
+    deps: SoulManagerDeps,
+    brain?: BrainManager,
+    spirit?: SpiritManager
+  ) {
     this.storage = storage;
     this.config = config;
     this.deps = deps;
@@ -76,14 +82,19 @@ export class SoulManager {
     const personality = this.storage.createPersonality({
       name: agentName,
       description: 'Friendly, Reliable, Intelligent Digitally Adaptable Yeoman',
-      systemPrompt:
-        `You are ${agentName}, a helpful and security-conscious AI assistant. You are direct, technically precise, and proactive about identifying risks.`,
+      systemPrompt: `You are ${agentName}, a helpful and security-conscious AI assistant. You are direct, technically precise, and proactive about identifying risks.`,
       traits: { formality: 'balanced', humor: 'subtle', verbosity: 'concise' },
       sex: 'unspecified',
       voice: '',
       preferredLanguage: '',
       defaultModel: null,
       includeArchetypes: true,
+      body: {
+        enabled: false,
+        capabilities: [],
+        heartEnabled: true,
+        creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+      },
     });
 
     this.storage.setActivePersonality(personality.id);
@@ -320,7 +331,9 @@ export class SoulManager {
         lines.push('### Heart');
         lines.push('Your Heart is your pulse — the vital rhythms that sustain you.');
         lines.push('');
-        lines.push(`Heartbeat #${status.beatCount} at ${new Date(lastBeat.timestamp).toISOString()} (${lastBeat.durationMs}ms):`);
+        lines.push(
+          `Heartbeat #${status.beatCount} at ${new Date(lastBeat.timestamp).toISOString()} (${lastBeat.durationMs}ms):`
+        );
         for (const check of lastBeat.checks) {
           const tag = check.status === 'ok' ? 'ok' : check.status === 'warning' ? 'WARN' : 'ERR';
           lines.push(`- ${check.name}: [${tag}] ${check.message}`);
@@ -341,7 +354,7 @@ export class SoulManager {
     const parts: string[] = [];
 
     const personality = personalityId
-      ? this.storage.getPersonality(personalityId) ?? this.storage.getActivePersonality()
+      ? (this.storage.getPersonality(personalityId) ?? this.storage.getActivePersonality())
       : this.storage.getActivePersonality();
 
     // Sacred archetypes — cosmological foundation (toggleable per personality)
@@ -416,9 +429,7 @@ export class SoulManager {
     }
 
     // Skills from Brain or Soul storage
-    const skills = this.brain
-      ? this.brain.getActiveSkills()
-      : this.storage.getEnabledSkills();
+    const skills = this.brain ? this.brain.getActiveSkills() : this.storage.getEnabledSkills();
 
     for (const skill of skills) {
       if (skill.instructions) {

@@ -659,7 +659,9 @@ export async function enforceRetention(data: {
 }
 
 export async function exportAuditBackup(): Promise<Blob> {
-  const base = (window as any).__FRIDAY_API_BASE__ || `${window.location.protocol}//${window.location.hostname}:18789/api/v1`;
+  const base =
+    (window as any).__FRIDAY_API_BASE__ ||
+    `${window.location.protocol}//${window.location.hostname}:18789/api/v1`;
   const headers: Record<string, string> = {};
   const token = getAccessToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -963,17 +965,46 @@ export async function fetchMcpResources(): Promise<{ resources: McpResourceDef[]
   }
 }
 
+export async function fetchMcpConfig(): Promise<{
+  exposeGit: boolean;
+  exposeFilesystem: boolean;
+}> {
+  try {
+    return await request('/mcp/config');
+  } catch {
+    return { exposeGit: false, exposeFilesystem: false };
+  }
+}
+
+export async function updateMcpConfig(data: {
+  exposeGit?: boolean;
+  exposeFilesystem?: boolean;
+}): Promise<{ exposeGit: boolean; exposeFilesystem: boolean }> {
+  return request('/mcp/config', {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
 // ─── Marketplace API ────────────────────────────────────────────
 
-export async function fetchMarketplaceSkills(query?: string): Promise<{ skills: any[]; total: number }> {
+export async function fetchMarketplaceSkills(
+  query?: string
+): Promise<{ skills: any[]; total: number }> {
   const params = new URLSearchParams();
   if (query) params.set('query', query);
   const qs = params.toString();
   return request(`/marketplace${qs ? `?${qs}` : ''}`);
 }
 
-export async function installMarketplaceSkill(id: string): Promise<{ message: string }> {
-  return request(`/marketplace/${id}/install`, { method: 'POST' });
+export async function installMarketplaceSkill(
+  id: string,
+  personalityId?: string
+): Promise<{ message: string }> {
+  return request(`/marketplace/${id}/install`, {
+    method: 'POST',
+    body: personalityId ? JSON.stringify({ personalityId }) : undefined,
+  });
 }
 
 export async function uninstallMarketplaceSkill(id: string): Promise<{ message: string }> {
@@ -997,4 +1028,29 @@ export async function executeTerminalCommand(
     method: 'POST',
     body: JSON.stringify({ command, cwd }),
   });
+}
+
+// ─── Conversations (stub) ─────────────────────────────────────
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messageCount?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export async function fetchConversations(options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<{ conversations: Conversation[] }> {
+  return { conversations: [] };
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  return undefined;
+}
+
+export async function renameConversation(id: string, title: string): Promise<Conversation> {
+  return { id, title, createdAt: Date.now(), updatedAt: Date.now() };
 }

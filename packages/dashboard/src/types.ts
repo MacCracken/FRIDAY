@@ -213,6 +213,8 @@ export interface Skill {
   status: 'active' | 'pending_approval' | 'disabled';
   usageCount: number;
   lastUsedAt: number | null;
+  personalityId?: string | null;
+  personalityName?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -226,6 +228,7 @@ export interface SkillCreate {
   enabled?: boolean;
   source?: Skill['source'];
   status?: Skill['status'];
+  personalityId?: string | null;
 }
 
 export interface HeartbeatTask {
@@ -366,6 +369,11 @@ export interface McpToolDef {
   inputSchema: Record<string, unknown>;
   serverId: string;
   serverName: string;
+}
+
+export interface McpFeatureConfig {
+  exposeGit: boolean;
+  exposeFilesystem: boolean;
 }
 
 export interface McpResourceDef {

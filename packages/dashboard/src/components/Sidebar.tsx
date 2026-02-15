@@ -38,51 +38,20 @@ export interface SidebarProps {
 }
 
 const NAV_ITEMS: {
-  to?: string;
+  to: string;
   label: string;
   icon: React.ReactNode;
   end?: boolean;
-  subItems?: { to: string; label: string }[];
 }[] = [
   { to: '/', label: 'Overview', icon: <LayoutDashboard className="w-5 h-5" />, end: true },
   { to: '/chat', label: 'Chat', icon: <MessageSquare className="w-5 h-5" /> },
   { to: '/code', label: 'Code', icon: <Code className="w-5 h-5" /> },
-  {
-    label: 'Security',
-    icon: <ShieldAlert className="w-5 h-5" />,
-    subItems: [
-      { to: '/security', label: 'Overview' },
-      { to: '/tasks', label: 'Tasks' },
-      { to: '/reports', label: 'Reports' },
-    ],
-  },
+  { to: '/security', label: 'Security', icon: <ShieldAlert className="w-5 h-5" /> },
   { to: '/personality', label: 'Personality', icon: <Brain className="w-5 h-5" /> },
-  {
-    label: 'Skills',
-    icon: <Zap className="w-5 h-5" />,
-    subItems: [
-      { to: '/skills', label: 'Overview' },
-      { to: '/marketplace', label: 'Marketplace' },
-    ],
-  },
-  {
-    label: 'Connections',
-    icon: <Cable className="w-5 h-5" />,
-    subItems: [
-      { to: '/connections', label: 'Messaging' },
-      { to: '/mcp', label: 'MCP Servers' },
-    ],
-  },
+  { to: '/skills', label: 'Skills', icon: <Zap className="w-5 h-5" /> },
+  { to: '/connections', label: 'Connections', icon: <Cable className="w-5 h-5" /> },
   { to: '/experiments', label: 'Experiments', icon: <FlaskConical className="w-5 h-5" /> },
-  {
-    label: 'Settings',
-    icon: <Settings className="w-5 h-5" />,
-    subItems: [
-      { to: '/settings', label: 'General' },
-      { to: '/security-settings', label: 'Security' },
-      { to: '/api-keys', label: 'API Keys' },
-    ],
-  },
+  { to: '/settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
 ];
 
 const navLinkClass = (isActive: boolean, collapsed: boolean) =>
@@ -116,11 +85,8 @@ export function Sidebar({
   const [profileOpen, setProfileOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
-  const [expandedSection, setExpandedSection] = useState<string | null>('Settings');
   const profileRef = useRef<HTMLDivElement>(null);
   const role = parseJwtRole();
-
-  const isSectionExpanded = (label: string) => !collapsed && expandedSection === label;
 
   useEffect(() => {
     setMobileOpen(false);
@@ -162,78 +128,24 @@ export function Sidebar({
       <nav
         className={`flex-1 px-3 py-4 overflow-y-auto ${collapsed ? 'overflow-hidden scrollbar-hide space-y-0.5' : 'space-y-1'}`}
       >
-        {NAV_ITEMS.map((item) => {
-          if (item.subItems) {
-            const isExpanded = isSectionExpanded(item.label);
-            return (
-              <div key={item.label}>
-                <button
-                  onClick={() => setExpandedSection(isExpanded ? null : item.label)}
-                  className={navLinkClass(false, collapsed)}
-                  disabled={collapsed}
-                >
-                  <span className="w-5 h-5 flex-shrink-0">{item.icon}</span>
-                  <span
-                    className={`flex-1 transition-opacity duration-200 ${
-                      collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-                    }`}
-                  >
-                    {item.label}
-                  </span>
-                  {!collapsed && (
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                    />
-                  )}
-                </button>
-                {isExpanded && (
-                  <div className="ml-6 mt-1 space-y-1">
-                    {item.subItems.map((sub) => (
-                      <NavLink
-                        key={sub.to}
-                        to={sub.to}
-                        className={({ isActive }) =>
-                          `group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
-                            isActive
-                              ? 'bg-primary/10 text-primary'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                          }`
-                        }
-                      >
-                        <span
-                          className={`transition-opacity duration-200 ${
-                            collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-                          }`}
-                        >
-                          {sub.label}
-                        </span>
-                      </NavLink>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          }
-
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to!}
-              end={item.end}
-              className={({ isActive }) => navLinkClass(isActive, collapsed)}
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) => navLinkClass(isActive, collapsed)}
+          >
+            <span className="w-5 h-5 flex-shrink-0">{item.icon}</span>
+            <span
+              className={`transition-opacity duration-200 ${
+                collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+              }`}
             >
-              <span className="w-5 h-5 flex-shrink-0">{item.icon}</span>
-              <span
-                className={`transition-opacity duration-200 ${
-                  collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-                }`}
-              >
-                {item.label}
-              </span>
-              {collapsed && item.label && <span className="sidebar-tooltip">{item.label}</span>}
-            </NavLink>
-          );
-        })}
+              {item.label}
+            </span>
+            {collapsed && item.label && <span className="sidebar-tooltip">{item.label}</span>}
+          </NavLink>
+        ))}
       </nav>
 
       <div className={`${collapsed ? 'px-2 py-2' : 'px-3 py-2'} border-t border-border`}>

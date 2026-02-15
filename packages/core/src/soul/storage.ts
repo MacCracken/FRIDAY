@@ -34,6 +34,7 @@ interface PersonalityRow {
   default_model: string; // JSON | ''
   include_archetypes: number; // 0 | 1
   is_active: number; // 0 | 1
+  body: string; // JSON
   created_at: number;
   updated_at: number;
 }
@@ -77,6 +78,12 @@ function rowToPersonality(row: PersonalityRow): Personality {
       : null,
     includeArchetypes: row.include_archetypes === 1,
     isActive: row.is_active === 1,
+    body: safeJsonParse(row.body, {
+      enabled: false,
+      capabilities: [],
+      heartEnabled: true,
+      creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+    }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -214,6 +221,13 @@ export class SoulStorage {
     } catch {
       // Column already exists
     }
+
+    // Migration: add body column (v1.6+)
+    try {
+      this.db.exec(`ALTER TABLE personalities ADD COLUMN body TEXT NOT NULL DEFAULT '{}'`);
+    } catch {
+      // Column already exists
+    }
   }
 
   // ── Personalities ─────────────────────────────────────────────
@@ -224,8 +238,8 @@ export class SoulStorage {
 
     this.db
       .prepare(
-        `INSERT INTO personalities (id, name, description, system_prompt, traits, sex, voice, preferred_language, default_model, include_archetypes, is_active, created_at, updated_at)
-         VALUES (@id, @name, @description, @system_prompt, @traits, @sex, @voice, @preferred_language, @default_model, @include_archetypes, @is_active, @created_at, @updated_at)`
+        `INSERT INTO personalities (id, name, description, system_prompt, traits, sex, voice, preferred_language, default_model, include_archetypes, is_active, body, created_at, updated_at)
+         VALUES (@id, @name, @description, @system_prompt, @traits, @sex, @voice, @preferred_language, @default_model, @include_archetypes, @is_active, @body, @created_at, @updated_at)`
       )
       .run({
         id,
@@ -239,6 +253,19 @@ export class SoulStorage {
         default_model: data.defaultModel ? JSON.stringify(data.defaultModel) : '',
         include_archetypes: (data.includeArchetypes ?? true) ? 1 : 0,
         is_active: 0,
+        body: JSON.stringify(
+          data.body ?? {
+            enabled: false,
+            capabilities: [],
+            heartEnabled: true,
+            creationConfig: {
+              skills: false,
+              tasks: false,
+              personalities: false,
+              experiments: false,
+            },
+          }
+        ),
         created_at: now,
         updated_at: now,
       });

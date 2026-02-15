@@ -29,8 +29,14 @@ export function MarketplacePage() {
     void queryClient.invalidateQueries({ queryKey: ['marketplace'] });
     void queryClient.invalidateQueries({ queryKey: ['skills'] });
   };
-  const installMut = useMutation({ mutationFn: installMarketplaceSkill, onSuccess: invalidate });
-  const uninstallMut = useMutation({ mutationFn: uninstallMarketplaceSkill, onSuccess: invalidate });
+  const installMut = useMutation({
+    mutationFn: (id: string) => installMarketplaceSkill(id),
+    onSuccess: invalidate,
+  });
+  const uninstallMut = useMutation({
+    mutationFn: uninstallMarketplaceSkill,
+    onSuccess: invalidate,
+  });
 
   return (
     <div className="space-y-6">
@@ -50,11 +56,15 @@ export function MarketplacePage() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
       ) : !data?.skills.length ? (
         <div className="card p-12 text-center">
           <Store className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">{query ? 'No skills found' : 'Marketplace is empty'}</p>
+          <p className="text-muted-foreground">
+            {query ? 'No skills found' : 'Marketplace is empty'}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -65,7 +75,9 @@ export function MarketplacePage() {
                   <h3 className="font-medium">{skill.name}</h3>
                   <span className="text-xs text-muted-foreground">v{skill.version}</span>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{skill.description}</p>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                  {skill.description}
+                </p>
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                   <span>{skill.author}</span>
                   <span>{skill.category}</span>
@@ -87,7 +99,11 @@ export function MarketplacePage() {
                     onClick={() => installMut.mutate(skill.id)}
                     disabled={installMut.isPending}
                   >
-                    {installMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    {installMut.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
                     Install
                   </button>
                 )}

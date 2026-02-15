@@ -28,40 +28,26 @@ import type { MetricsSnapshot } from '../types';
 const MetricsGraph = lazy(() =>
   import('./MetricsGraph').then((m) => ({ default: m.MetricsGraph }))
 );
-const TaskHistory = lazy(() => import('./TaskHistory').then((m) => ({ default: m.TaskHistory })));
-const SecurityEvents = lazy(() =>
-  import('./SecurityEvents').then((m) => ({ default: m.SecurityEvents }))
-);
 const ResourceMonitor = lazy(() =>
   import('./ResourceMonitor').then((m) => ({ default: m.ResourceMonitor }))
 );
 const PersonalityEditor = lazy(() =>
   import('./PersonalityEditor').then((m) => ({ default: m.PersonalityEditor }))
 );
-const SkillsManager = lazy(() =>
-  import('./SkillsManager').then((m) => ({ default: m.SkillsManager }))
-);
-const ConnectionManager = lazy(() =>
-  import('./ConnectionManager').then((m) => ({ default: m.ConnectionManager }))
-);
-const McpManager = lazy(() => import('./McpManager').then((m) => ({ default: m.McpManager })));
 const CodePage = lazy(() => import('./CodePage').then((m) => ({ default: m.CodePage })));
-const SettingsPage = lazy(() =>
-  import('./SettingsPage').then((m) => ({ default: m.SettingsPage }))
-);
-const SecuritySettings = lazy(() =>
-  import('./SecuritySettings').then((m) => ({ default: m.SecuritySettings }))
-);
-const ApiKeysSettings = lazy(() =>
-  import('./ApiKeysSettings').then((m) => ({ default: m.ApiKeysSettings }))
-);
 const ChatPage = lazy(() => import('./ChatPage').then((m) => ({ default: m.ChatPage })));
-const ReportsPage = lazy(() => import('./ReportsPage').then((m) => ({ default: m.ReportsPage })));
 const ExperimentsPage = lazy(() =>
   import('./ExperimentsPage').then((m) => ({ default: m.ExperimentsPage }))
 );
-const MarketplacePage = lazy(() =>
-  import('./MarketplacePage').then((m) => ({ default: m.MarketplacePage }))
+const SettingsPage = lazy(() =>
+  import('./SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const SecurityPage = lazy(() =>
+  import('./SecurityPage').then((m) => ({ default: m.SecurityPage }))
+);
+const SkillsPage = lazy(() => import('./SkillsPage').then((m) => ({ default: m.SkillsPage })));
+const ConnectionsPage = lazy(() =>
+  import('./ConnectionsPage').then((m) => ({ default: m.ConnectionsPage }))
 );
 
 export function DashboardLayout() {
@@ -206,18 +192,18 @@ export function DashboardLayout() {
                   <Route path="/" element={<OverviewPage metrics={metrics} />} />
                   <Route path="/chat" element={<ChatPage />} />
                   <Route path="/code" element={<CodePage />} />
-                  <Route path="/tasks" element={<TaskHistory />} />
-                  <Route path="/security" element={<SecurityEvents metrics={metrics} />} />
+                  <Route path="/security" element={<SecurityPage />} />
+                  <Route path="/tasks" element={<SecurityPage />} />
+                  <Route path="/reports" element={<SecurityPage />} />
                   <Route path="/personality" element={<PersonalityEditor />} />
-                  <Route path="/skills" element={<SkillsManager />} />
-                  <Route path="/connections" element={<ConnectionManager />} />
-                  <Route path="/mcp" element={<McpManager />} />
-                  <Route path="/reports" element={<ReportsPage />} />
+                  <Route path="/skills" element={<SkillsPage />} />
+                  <Route path="/marketplace" element={<SkillsPage />} />
+                  <Route path="/connections" element={<ConnectionsPage />} />
+                  <Route path="/mcp" element={<ConnectionsPage />} />
                   <Route path="/experiments" element={<ExperimentsPage />} />
-                  <Route path="/marketplace" element={<MarketplacePage />} />
-                  <Route path="/security-settings" element={<SecuritySettings />} />
-                  <Route path="/api-keys" element={<ApiKeysSettings />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/security-settings" element={<SettingsPage />} />
+                  <Route path="/api-keys" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>
