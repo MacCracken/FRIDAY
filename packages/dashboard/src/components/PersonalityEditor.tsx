@@ -790,6 +790,13 @@ function HeartbeatTasksSection() {
                 <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-accent text-accent-foreground">
                   {task.type}
                 </span>
+                <span
+                  className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                    task.enabled ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {task.enabled ? 'Enabled' : 'Disabled'}
+                </span>
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Clock className="w-3 h-3" />
                   every {formatIntervalHuman(task.intervalMs ?? 60_000)}
@@ -1243,6 +1250,12 @@ export function PersonalityEditor() {
   }, [searchParams, setSearchParams]);
 
   const startEdit = (p: Personality) => {
+    const body = p.body ?? {
+      enabled: false,
+      capabilities: [],
+      heartEnabled: true,
+      creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+    };
     setForm({
       name: p.name,
       description: p.description,
@@ -1253,12 +1266,27 @@ export function PersonalityEditor() {
       preferredLanguage: p.preferredLanguage,
       defaultModel: p.defaultModel,
       includeArchetypes: p.includeArchetypes,
+      body,
     });
+    setCreationConfig({
+      skills: body.creationConfig?.skills ?? false,
+      tasks: body.creationConfig?.tasks ?? false,
+      personalities: body.creationConfig?.personalities ?? false,
+      experiments: body.creationConfig?.experiments ?? false,
+    });
+    setAllowConnections(body.enabled ?? false);
+    setSelectedServers(body.selectedServers ?? []);
     setSetActiveOnSave(false);
     setEditing(p.id);
   };
 
   const startCreate = () => {
+    const body = {
+      enabled: false,
+      capabilities: [],
+      heartEnabled: true,
+      creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+    };
     setForm({
       name: '',
       description: '',
@@ -1269,7 +1297,11 @@ export function PersonalityEditor() {
       preferredLanguage: '',
       defaultModel: null,
       includeArchetypes: true,
+      body,
     });
+    setCreationConfig({ skills: false, tasks: false, personalities: false, experiments: false });
+    setAllowConnections(false);
+    setSelectedServers([]);
     setSetActiveOnSave(false);
     setEditing('new');
   };

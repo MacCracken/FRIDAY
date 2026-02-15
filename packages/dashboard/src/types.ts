@@ -129,6 +129,18 @@ export interface Personality {
   defaultModel: DefaultModel | null;
   includeArchetypes: boolean;
   isActive: boolean;
+  body?: {
+    enabled?: boolean;
+    capabilities?: string[];
+    heartEnabled?: boolean;
+    creationConfig?: {
+      skills?: boolean;
+      tasks?: boolean;
+      personalities?: boolean;
+      experiments?: boolean;
+    };
+    selectedServers?: string[];
+  };
   createdAt: number;
   updatedAt: number;
 }
