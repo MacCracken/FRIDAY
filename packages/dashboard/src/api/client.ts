@@ -30,6 +30,7 @@ import type {
   Pain,
   KnowledgeEntry,
   HeartbeatTask,
+  Memory,
 } from '../types.js';
 
 const API_BASE = '/api/v1';
@@ -677,11 +678,33 @@ export async function sendChatMessage(data: {
   history?: Array<{ role: string; content: string }>;
   personalityId?: string;
   editorContent?: string;
+  saveAsMemory?: boolean;
 }): Promise<ChatResponse> {
   return request('/chat', {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+export async function rememberChatMessage(
+  content: string,
+  context?: Record<string, string>,
+): Promise<{ memory: Memory }> {
+  return request('/chat/remember', {
+    method: 'POST',
+    body: JSON.stringify({ content, context }),
+  });
+}
+
+export async function fetchMemories(
+  query?: string,
+): Promise<{ memories: Memory[] }> {
+  const params = query ? `?search=${encodeURIComponent(query)}` : '';
+  try {
+    return await request(`/brain/memories${params}`);
+  } catch {
+    return { memories: [] };
+  }
 }
 
 // ─── Model Info ───────────────────────────────────────────────

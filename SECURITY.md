@@ -4,8 +4,10 @@
 
 | Version | Supported          | Security Updates |
 |---------|--------------------|------------------|
-| 1.0.x   | :white_check_mark: | Yes              |
-| < 1.0.0 | :x:                | No               |
+| 1.5.x   | :white_check_mark: | Yes              |
+| 1.4.x   | :white_check_mark: | Security fixes   |
+| 1.3.x   | :x:                | No               |
+| < 1.3.0 | :x:                | No               |
 
 ## Reporting a Vulnerability
 

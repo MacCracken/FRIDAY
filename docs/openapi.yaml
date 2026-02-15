@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FRIDAY API
-  version: 1.4.1
+  version: 1.5.1
   description: |
     REST API for the FRIDAY (Fully Responsive Integrated Digitally Adaptable Yeoman)
     agent system with SecureYeoman security framework.
@@ -160,7 +160,7 @@ paths:
       parameters:
         - name: platform
           in: query
-          schema: { type: string, enum: [telegram, discord, slack, github] }
+          schema: { type: string, enum: [telegram, discord, slack, github, googlechat, cli, webhook] }
         - name: enabled
           in: query
           schema: { type: string, enum: ["true", "false"] }
@@ -360,7 +360,7 @@ components:
       properties:
         platform:
           type: string
-          enum: [telegram, discord, slack, github]
+          enum: [telegram, discord, slack, github, googlechat, cli, webhook]
         displayName:
           type: string
           maxLength: 100

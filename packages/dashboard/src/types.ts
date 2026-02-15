@@ -314,6 +314,23 @@ export interface IntegrationInfo {
   errorMessage?: string;
 }
 
+// ─── Brain Types (Memory) ────────────────────────────────────
+
+export interface Memory {
+  id: string;
+  type: 'episodic' | 'semantic' | 'procedural' | 'preference';
+  content: string;
+  source: string;
+  importance: number;
+  createdAt: number;
+}
+
+export interface BrainContext {
+  memoriesUsed: number;
+  knowledgeUsed: number;
+  contextSnippets: string[];
+}
+
 // ─── Chat Types ─────────────────────────────────────────────
 
 export interface ChatMessage {
@@ -323,6 +340,7 @@ export interface ChatMessage {
   model?: string;
   provider?: string;
   tokensUsed?: number;
+  brainContext?: BrainContext;
 }
 
 export interface ChatResponse {
@@ -331,6 +349,7 @@ export interface ChatResponse {
   model: string;
   provider: string;
   tokensUsed?: number;
+  brainContext?: BrainContext;
 }
 
 // ─── Code Session Types ─────────────────────────────────────

@@ -2,7 +2,7 @@
 
 > Tracking open and deferred work items. For completed work, see [CHANGELOG.md](CHANGELOG.md).
 
-**Project Status**: v1.3.3 released. Phases 1-5 complete. Security hardening complete. 1000+ tests across core and dashboard. All core features implemented. Coding IDE view, voice interface, dashboard improvements, dynamic model discovery, task CRUD, and heartbeat task visibility shipped.
+**Project Status**: v1.5.1 released (2026-02-14). Phases 1-5 complete. Security hardening complete. 1700+ tests across 115+ files. All core features implemented. MCP service, marketplace, coding IDE, voice interface, and full integration suite shipped.
 
 ---
 
@@ -74,12 +74,10 @@
 
 ## Future Enhancements
 
-### v1.4
+### Next
 
 - [ ] HTML prompt injection protection — DOMPurify sanitization for user/LLM content
 - [ ] Outbound webhooks for events
-- [ ] CLI enhancements — expanded command set, interactive mode, plugin management commands
-- [ ] CLI updates — config validation command, health check, integration management from CLI
 
 ### v2.0
 

@@ -18,6 +18,18 @@ interface ChatRequestBody {
   message: string;
   history?: Array<{ role: string; content: string }>;
   personalityId?: string;
+  saveAsMemory?: boolean;
+}
+
+interface RememberRequestBody {
+  content: string;
+  context?: Record<string, string>;
+}
+
+interface BrainContextMeta {
+  memoriesUsed: number;
+  knowledgeUsed: number;
+  contextSnippets: string[];
 }
 
 export function registerChatRoutes(
@@ -30,7 +42,7 @@ export function registerChatRoutes(
     request: FastifyRequest<{ Body: ChatRequestBody }>,
     reply: FastifyReply,
   ) => {
-    const { message, history, personalityId } = request.body;
+    const { message, history, personalityId, saveAsMemory } = request.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return reply.code(400).send({ error: 'Message is required' });
@@ -43,6 +55,24 @@ export function registerChatRoutes(
       return reply.code(503).send({
         error: 'AI client is not available. Check provider configuration and API keys.',
       });
+    }
+
+    // Gather Brain context metadata (best-effort — Brain may not be available)
+    let brainContext: BrainContextMeta = { memoriesUsed: 0, knowledgeUsed: 0, contextSnippets: [] };
+    try {
+      const brainManager = secureYeoman.getBrainManager();
+      const memories = brainManager.recall({ search: message, limit: 5 });
+      const knowledge = brainManager.queryKnowledge({ search: message, limit: 5 });
+      const snippets: string[] = [];
+      for (const m of memories) snippets.push(`[${m.type}] ${m.content}`);
+      for (const k of knowledge) snippets.push(`[${k.topic}] ${k.content}`);
+      brainContext = {
+        memoriesUsed: memories.length,
+        knowledgeUsed: knowledge.length,
+        contextSnippets: snippets,
+      };
+    } catch {
+      // Brain not available — brainContext stays empty
     }
 
     const soulManager = secureYeoman.getSoulManager();
@@ -120,16 +150,54 @@ export function registerChatRoutes(
     try {
       const response = await aiClient.chat(aiRequest, { source: 'dashboard_chat' });
 
+      // Optionally store the exchange as an episodic memory
+      if (saveAsMemory) {
+        try {
+          const brainManager = secureYeoman.getBrainManager();
+          brainManager.remember(
+            'episodic',
+            `User: ${message.trim()}\nAssistant: ${response.content}`,
+            'dashboard_chat',
+            { personalityId: personalityId ?? 'default' },
+          );
+        } catch {
+          // Brain not available — skip memory storage
+        }
+      }
+
       return {
         role: 'assistant' as const,
         content: response.content,
         model: response.model,
         provider: response.provider,
         tokensUsed: response.usage.totalTokens,
+        brainContext,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      return reply.code(502).send({ error: `AI request failed: ${message}` });
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      return reply.code(502).send({ error: `AI request failed: ${errMsg}` });
+    }
+  });
+
+  // ── Remember endpoint — store a message as an episodic memory ──
+
+  app.post('/api/v1/chat/remember', async (
+    request: FastifyRequest<{ Body: RememberRequestBody }>,
+    reply: FastifyReply,
+  ) => {
+    const { content, context } = request.body;
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return reply.code(400).send({ error: 'Content is required' });
+    }
+
+    try {
+      const brainManager = secureYeoman.getBrainManager();
+      const memory = brainManager.remember('episodic', content.trim(), 'dashboard_chat', context);
+      return { memory };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Brain is not available';
+      return reply.code(503).send({ error: errMsg });
     }
   });
 }

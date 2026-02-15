@@ -4,6 +4,13 @@
 
 ---
 
+## v1.5.1 — Completed (2026-02-14)
+
+- **Documentation & version audit** — All packages, source, Dashboard UI, OpenAPI spec, and security policy aligned to 1.5.1
+- **OpenAPI spec update** — Added missing `googlechat`, `cli`, `webhook` platforms; version corrected from 1.4.1
+- **Removed obsolete planning docs** — Superseded by implemented features and ADRs
+- **Roadmap & TODO cleanup** — Updated test counts, removed stale references
+
 ## v1.5.0 — Completed (2026-02-13)
 
 - **Universal Script Assistant** — Builtin marketplace skill: elite script consultant with Brainstorm, Architect, Draft, and Roast modes

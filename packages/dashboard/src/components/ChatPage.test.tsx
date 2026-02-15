@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
   sendChatMessage: vi.fn(),
   fetchModelInfo: vi.fn(),
   switchModel: vi.fn(),
+  rememberChatMessage: vi.fn(),
 }));
 
 // ── Mock ModelWidget to keep test focused ────────────────────────
@@ -27,6 +28,7 @@ import * as api from '../api/client';
 
 const mockFetchPersonalities = vi.mocked(api.fetchPersonalities);
 const mockSendChatMessage = vi.mocked(api.sendChatMessage);
+const mockRememberChatMessage = vi.mocked(api.rememberChatMessage);
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -210,5 +212,86 @@ describe('ChatPage', () => {
 
     const call = mockSendChatMessage.mock.calls[0][0];
     expect(call.personalityId).toBe('p-2');
+  });
+
+  // ── Brain integration tests ─────────────────────────────────
+
+  it('shows Brain context indicator when brainContext is present', async () => {
+    mockSendChatMessage.mockResolvedValue(
+      createChatResponse({
+        brainContext: {
+          memoriesUsed: 2,
+          knowledgeUsed: 1,
+          contextSnippets: ['[episodic] User likes TypeScript', '[coding] TS is typed JS'],
+        },
+      })
+    );
+
+    const user = userEvent.setup();
+    renderComponent();
+
+    const textarea = screen.getByPlaceholderText(/Message/);
+    await user.type(textarea, 'Hello!{enter}');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('brain-indicator-1')).toBeInTheDocument();
+    });
+
+    // Badge should show total count (2 memories + 1 knowledge = 3)
+    expect(screen.getByTestId('brain-indicator-1')).toHaveTextContent('3');
+  });
+
+  it('hides Brain context indicator when no context was used', async () => {
+    mockSendChatMessage.mockResolvedValue(
+      createChatResponse({
+        brainContext: {
+          memoriesUsed: 0,
+          knowledgeUsed: 0,
+          contextSnippets: [],
+        },
+      })
+    );
+
+    const user = userEvent.setup();
+    renderComponent();
+
+    const textarea = screen.getByPlaceholderText(/Message/);
+    await user.type(textarea, 'Hello!{enter}');
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello! I am FRIDAY, your AI assistant.')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('brain-indicator-1')).not.toBeInTheDocument();
+  });
+
+  it('Remember button calls the remember API', async () => {
+    mockRememberChatMessage.mockResolvedValue({
+      memory: { id: 'mem-1', type: 'episodic', content: 'test', source: 'dashboard_chat', importance: 0.5, createdAt: Date.now() },
+    });
+
+    const user = userEvent.setup();
+    renderComponent();
+
+    const textarea = screen.getByPlaceholderText(/Message/);
+    await user.type(textarea, 'Hello!{enter}');
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello! I am FRIDAY, your AI assistant.')).toBeInTheDocument();
+    });
+
+    // Click the remember button on the assistant message (index 1)
+    const rememberBtn = screen.getByTestId('remember-btn-1');
+    await user.click(rememberBtn);
+
+    await waitFor(() => {
+      expect(mockRememberChatMessage).toHaveBeenCalledWith(
+        'Hello! I am FRIDAY, your AI assistant.',
+        undefined,
+      );
+    });
+
+    // Button should now show "Remembered"
+    expect(screen.getByText('Remembered')).toBeInTheDocument();
   });
 });

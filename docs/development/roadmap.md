@@ -160,19 +160,13 @@ Foundation       Security         Infrastructure   Dashboard        Integrations
 
 ## Test Coverage
 
-| Category | Tests | Files |
-|----------|-------|-------|
-| Core (AI, config, task, logging) | ~200 | 12 |
-| Security (auth, RBAC, crypto, rate limiter, sandbox) | ~250 | 10 |
-| Brain + Soul | ~130 | 4 |
-| Comms | ~40 | 1 |
-| Integrations (framework + all adapters) | ~101 | 6 |
-| Integration tests (E2E flows) | ~32 | 3 |
-| Dashboard (component tests) | ~57 | 5 |
-| Security + Chaos tests | ~76 | 5+ |
-| File writer + Log rotation | ~27 | 2 |
-| Prometheus | ~5 | 1 |
-| **Total** | **~963** | **59** |
+| Package | Tests | Files |
+|---------|-------|-------|
+| `@friday/core` | 1360+ | 76 |
+| `@friday/mcp` | 219 | 27 |
+| `@friday/dashboard` | 124 | 13 |
+| Security + Chaos | ~76 | 8 |
+| **Total** | **1700+** | **115+** |
 
 All core modules maintain >80% coverage thresholds.
 
@@ -197,6 +191,7 @@ All core modules maintain >80% coverage thresholds.
 | **v1.4.0 Release** | — | **Complete (released 2026-02-13)** |
 | **v1.4.1 Release** | — | **Complete (released 2026-02-13)** |
 | **v1.5.0 Release** | — | **Complete (released 2026-02-13)** |
+| **v1.5.1 Release** | — | **Complete (released 2026-02-14)** |
 
 ---
 

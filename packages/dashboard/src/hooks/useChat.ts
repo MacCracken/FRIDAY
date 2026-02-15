@@ -33,6 +33,7 @@ export function useChat(options?: UseChatOptions): UseChatReturn {
           model: response.model,
           provider: response.provider,
           tokensUsed: response.tokensUsed,
+          brainContext: response.brainContext,
         },
       ]);
     },

@@ -2,7 +2,7 @@
 
 > **F**ully **R**esponsive **I**ntegrated **D**igitally **A**daptable **Y**eoman
 
-[![Version](https://img.shields.io/badge/Version-1.5.0-blue.svg)](https://github.com/MacCracken/FRIDAY/releases/tag/v1.5.0)
+[![Version](https://img.shields.io/badge/Version-1.5.1-blue.svg)](https://github.com/MacCracken/FRIDAY/releases/tag/v1.5.1)
 [![CI](https://github.com/MacCracken/FRIDAY/actions/workflows/ci.yml/badge.svg)](https://github.com/MacCracken/FRIDAY/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Security: Enterprise-Grade](https://img.shields.io/badge/Security-Enterprise--Grade-green.svg)]()
@@ -328,7 +328,7 @@ npm run build --workspace=@friday/mcp
 | **Deployment** | [Deployment Guide](docs/deployment.md) |
 | **Integrations** | [Integration Setup](docs/guides/integrations.md) |
 | **Troubleshooting** | [Troubleshooting Guide](docs/troubleshooting.md) |
-| **Architecture Decisions** | [ADRs](docs/adr/) (28 records) |
+| **Architecture Decisions** | [ADRs](docs/adr/) (31 records) |
 | **Roadmap** | [Development Roadmap](docs/development/roadmap.md) |
 | **Changelog** | [CHANGELOG.md](CHANGELOG.md) |
 | **Contributing** | [Contributing Guide](CONTRIBUTING.md) |

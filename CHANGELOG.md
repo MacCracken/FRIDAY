@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.1] — 2026-02-14
+
+### Documentation & Maintenance
+- **Version alignment** — All packages, source references, Dashboard UI, OpenAPI spec, and security policy updated to 1.5.1
+- **OpenAPI platform coverage** — Added `googlechat`, `cli`, and `webhook` platforms to integration endpoint schemas (were missing since v1.4.0)
+- **Security policy update** — Supported versions table now reflects current release train (1.5.x supported, 1.4.x security-only)
+- **ADR count correction** — README now correctly references 31 ADRs (was 28)
+- **Documentation audit** — Removed obsolete planning documents (dashboard-create-task, personality-action-capabilities, voice-listening-capabilities) superseded by implemented features and ADRs; removed redundant proactive-heartbeat guide (covered by ADR 018); cleaned up stale TODO and roadmap references
+- **Roadmap update** — Test coverage table updated to reflect current 1700+ tests across 115+ files
+- **TODO cleanup** — Project status updated from v1.3.3 to v1.5.1; removed completed v1.4 future items
+
+### Tests
+- 1700+ tests across 115+ test files
+
+---
+
 ## [1.5.0] — 2026-02-13
 
 ### Marketplace
@@ -437,4 +453,4 @@ All features from the pre-release development phases below are included in this 
 
 ---
 
-*Last updated: February 13, 2026*
+*Last updated: February 14, 2026*

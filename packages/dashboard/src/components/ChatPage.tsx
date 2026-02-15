@@ -1,14 +1,14 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Loader2, Bot, User, ChevronDown } from 'lucide-react';
-import { fetchPersonalities, switchModel, fetchModelInfo } from '../api/client';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { Send, Loader2, Bot, User, ChevronDown, Brain, Bookmark } from 'lucide-react';
+import { fetchPersonalities, switchModel, fetchModelInfo, rememberChatMessage } from '../api/client';
 import { ModelWidget } from './ModelWidget';
 import { VoiceToggle } from './VoiceToggle';
 import { VoiceOverlay } from './VoiceOverlay';
 import { useChat } from '../hooks/useChat';
 import { useVoice } from '../hooks/useVoice';
 import { usePushToTalk } from '../hooks/usePushToTalk';
-import type { Personality } from '../types';
+import type { Personality, BrainContext } from '../types';
 
 export function ChatPage() {
   const [showModelWidget, setShowModelWidget] = useState(false);
@@ -37,9 +37,22 @@ export function ChatPage() {
   const personality =
     personalities.find((p) => p.id === effectivePersonalityId) ?? activePersonality ?? null;
 
+  const [expandedBrainIdx, setExpandedBrainIdx] = useState<number | null>(null);
+  const [rememberedIndices, setRememberedIndices] = useState<Set<number>>(new Set());
+
   const { messages, input, setInput, handleSend, isPending } = useChat({
     personalityId: effectivePersonalityId,
   });
+
+  const rememberMutation = useMutation({
+    mutationFn: ({ content, context }: { content: string; context?: Record<string, string> }) =>
+      rememberChatMessage(content, context),
+  });
+
+  const handleRemember = useCallback((msgIndex: number, content: string) => {
+    rememberMutation.mutate({ content });
+    setRememberedIndices((prev) => new Set(prev).add(msgIndex));
+  }, [rememberMutation]);
   const voice = useVoice();
 
   const ptt = usePushToTalk(
@@ -210,27 +223,87 @@ export function ChatPage() {
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[75%] rounded-lg px-4 py-3 ${
-                msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                {msg.role === 'user' ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
-                <span className="text-xs opacity-70">
-                  {msg.role === 'user' ? 'You' : (personality?.name ?? 'Assistant')}
-                </span>
-                {msg.model && <span className="text-xs opacity-50">{msg.model}</span>}
+        {messages.map((msg, i) => {
+          const hasBrainContext = msg.role === 'assistant' && msg.brainContext &&
+            (msg.brainContext.memoriesUsed > 0 || msg.brainContext.knowledgeUsed > 0);
+
+          return (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[75%] rounded-lg px-4 py-3 ${
+                  msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  {msg.role === 'user' ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
+                  <span className="text-xs opacity-70">
+                    {msg.role === 'user' ? 'You' : (personality?.name ?? 'Assistant')}
+                  </span>
+                  {msg.model && <span className="text-xs opacity-50">{msg.model}</span>}
+
+                  {/* Brain context indicator */}
+                  {hasBrainContext && (
+                    <button
+                      onClick={() => setExpandedBrainIdx(expandedBrainIdx === i ? null : i)}
+                      className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full hover:bg-primary/20 transition-colors"
+                      data-testid={`brain-indicator-${i}`}
+                      title="Brain context was used"
+                    >
+                      <Brain className="w-3 h-3" />
+                      <span>{msg.brainContext!.memoriesUsed + msg.brainContext!.knowledgeUsed}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Brain context snippets popover */}
+                {expandedBrainIdx === i && msg.brainContext && (
+                  <div
+                    className="mb-2 p-2 rounded bg-background/80 border text-xs space-y-1"
+                    data-testid={`brain-context-${i}`}
+                  >
+                    <div className="font-medium flex items-center gap-1">
+                      <Brain className="w-3 h-3" /> Brain Context
+                    </div>
+                    <div className="text-muted-foreground">
+                      {msg.brainContext.memoriesUsed} memories, {msg.brainContext.knowledgeUsed} knowledge
+                    </div>
+                    {msg.brainContext.contextSnippets.length > 0 && (
+                      <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
+                        {msg.brainContext.contextSnippets.map((s, j) => (
+                          <li key={j}>{s}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+
+                <div className="flex items-center gap-2 mt-1">
+                  {msg.tokensUsed !== undefined && (
+                    <span className="text-xs opacity-50">{msg.tokensUsed} tokens</span>
+                  )}
+
+                  {/* Remember button on assistant messages */}
+                  {msg.role === 'assistant' && (
+                    <button
+                      onClick={() => handleRemember(i, msg.content)}
+                      disabled={rememberedIndices.has(i)}
+                      className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors ${
+                        rememberedIndices.has(i) ? 'text-primary opacity-70' : 'opacity-40 hover:opacity-70'
+                      }`}
+                      data-testid={`remember-btn-${i}`}
+                      title={rememberedIndices.has(i) ? 'Remembered' : 'Remember this response'}
+                    >
+                      <Bookmark className={`w-3 h-3 ${rememberedIndices.has(i) ? 'fill-current' : ''}`} />
+                      {rememberedIndices.has(i) ? 'Remembered' : 'Remember'}
+                    </button>
+                  )}
+                </div>
               </div>
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-              {msg.tokensUsed !== undefined && (
-                <p className="text-xs opacity-50 mt-1">{msg.tokensUsed} tokens</p>
-              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {/* Typing indicator */}
         {isPending && (

@@ -329,7 +329,7 @@ export function Sidebar({
             <div className="space-y-3">
               <div className="flex items-center justify-between py-2 border-b">
                 <span className="text-sm text-muted-foreground">Version</span>
-                <span className="text-sm font-medium">1.5.0</span>
+                <span className="text-sm font-medium">1.5.1</span>
               </div>
               <div className="flex items-center justify-between py-2 border-b">
                 <span className="text-sm text-muted-foreground">Security</span>
