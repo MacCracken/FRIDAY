@@ -23,7 +23,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@friday/shared": "^1.0.0",
+    "@friday/shared": "*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@fastify/compress": "^8.0.1",
     "fastify": "^5.7.4",

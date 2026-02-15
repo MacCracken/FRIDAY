@@ -124,6 +124,15 @@ docker compose up -d
 # With MCP service
 docker compose --profile mcp up -d
 
+# Fresh start (wipe database and data volumes)
+docker compose down -v
+
+# Backup database
+docker compose exec postgres pg_dump -U friday friday > backup.sql
+
+# Restore database
+docker compose exec -T postgres psql -U friday friday < backup.sql
+
 # Or manual build
 docker build -t friday .
 docker run --env-file .env -p 18789:18789 friday

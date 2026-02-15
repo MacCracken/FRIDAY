@@ -12,7 +12,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@friday/shared": "^1.0.0",
+    "@friday/shared": "*",
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.56.2",
     "clsx": "^2.1.1",
