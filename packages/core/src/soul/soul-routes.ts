@@ -344,6 +344,8 @@ export function registerSoulRoutes(app: FastifyInstance, opts: SoulRoutesOptions
               personalities: false,
               experiments: false,
             },
+            selectedServers: [],
+            mcpFeatures: { exposeGit: false, exposeFilesystem: false },
           },
         };
 

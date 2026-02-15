@@ -38,7 +38,7 @@ import {
 import { ConfirmDialog } from './common/ConfirmDialog';
 import type { MetricsSnapshot, SecurityEvent, Task, HeartbeatTask } from '../types';
 
-type TabType = 'overview' | 'tasks' | 'reports';
+type TabType = 'overview' | 'audit' | 'tasks' | 'reports';
 
 const SEVERITY_ICONS: Record<string, React.ReactNode> = {
   info: <Info className="w-4 h-4 text-info" />,
@@ -205,6 +205,17 @@ export function SecurityPage() {
           Overview
         </button>
         <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'audit'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Audit Log
+        </button>
+        <button
           onClick={() => setActiveTab('tasks')}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'tasks'
@@ -239,6 +250,10 @@ export function SecurityPage() {
           onAcknowledge={acknowledgeEvent}
           onAcknowledgeAll={acknowledgeAll}
         />
+      )}
+
+      {activeTab === 'audit' && (
+        <AuditLogTab entryCount={verificationResult?.entriesChecked ?? 0} />
       )}
 
       {activeTab === 'tasks' && <TasksTab />}
@@ -509,6 +524,30 @@ function TasksTab() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function AuditLogTab({ entryCount }: { entryCount: number }) {
+  return (
+    <div className="space-y-6">
+      <div className="card">
+        <div className="p-4 border-b">
+          <h3 className="font-semibold">Audit Log</h3>
+          <p className="text-xs text-muted-foreground mt-1">View and verify audit chain entries</p>
+        </div>
+        <div className="p-8 text-center">
+          <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+          <p className="text-muted-foreground">
+            {entryCount > 0
+              ? `${entryCount} audit entries verified`
+              : 'No audit entries to display'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Run verification from the Overview tab to check the audit chain
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

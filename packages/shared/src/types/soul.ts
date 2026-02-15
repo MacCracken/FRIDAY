@@ -36,12 +36,23 @@ export const CreationConfigSchema = z
 
 export type CreationConfig = z.infer<typeof CreationConfigSchema>;
 
+export const McpFeaturesSchema = z
+  .object({
+    exposeGit: z.boolean().default(false),
+    exposeFilesystem: z.boolean().default(false),
+  })
+  .default({});
+
+export type McpFeatures = z.infer<typeof McpFeaturesSchema>;
+
 export const BodyConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     capabilities: z.array(BodyCapabilitySchema).default([]),
     heartEnabled: z.boolean().default(true),
     creationConfig: CreationConfigSchema.default({}),
+    selectedServers: z.array(z.string()).default([]),
+    mcpFeatures: McpFeaturesSchema.default({}),
   })
   .default({});
 

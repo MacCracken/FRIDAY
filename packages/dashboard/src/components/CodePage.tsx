@@ -23,7 +23,6 @@ import { useChat } from '../hooks/useChat';
 import { useVoice } from '../hooks/useVoice';
 import { usePushToTalk } from '../hooks/usePushToTalk';
 import { useTheme } from '../hooks/useTheme';
-import { VoiceToggle } from './VoiceToggle';
 import { VoiceOverlay } from './VoiceOverlay';
 import type { Personality, ChatMessage } from '../types';
 
@@ -483,14 +482,6 @@ export function CodePage() {
                 </select>
                 <ChevronDown className="w-3 h-3 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground" />
               </div>
-
-              <VoiceToggle
-                voiceEnabled={voice.voiceEnabled}
-                isListening={voice.isListening}
-                isSpeaking={voice.isSpeaking}
-                supported={voice.supported}
-                onToggle={voice.toggleVoice}
-              />
             </div>
 
             {/* Chat messages */}

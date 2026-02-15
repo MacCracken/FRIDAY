@@ -83,6 +83,8 @@ function rowToPersonality(row: PersonalityRow): Personality {
       capabilities: [],
       heartEnabled: true,
       creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+      selectedServers: [],
+      mcpFeatures: { exposeGit: false, exposeFilesystem: false },
     }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

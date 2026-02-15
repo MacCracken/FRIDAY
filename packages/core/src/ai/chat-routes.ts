@@ -7,7 +7,8 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { SecureYeoman } from '../secureyeoman.js';
-import type { AIRequest } from '@friday/shared';
+import type { AIRequest, Tool } from '@friday/shared';
+import type { McpToolDef } from '@friday/shared';
 
 export interface ChatRoutesOptions {
   secureYeoman: SecureYeoman;
@@ -66,9 +67,54 @@ export function registerChatRoutes(
     // Append the new user message
     messages.push({ role: 'user', content: message.trim() });
 
+    // Collect tools from personality MCP config + skill tools
+    const tools: Tool[] = [];
+
+    // Skill-based tools
+    tools.push(...soulManager.getActiveTools());
+
+    // MCP tools filtered by personality config
+    const personality = personalityId
+      ? (soulManager.getPersonality(personalityId) ?? soulManager.getActivePersonality())
+      : soulManager.getActivePersonality();
+
+    const mcpClient = secureYeoman.getMcpClientManager();
+    const mcpStorage = secureYeoman.getMcpStorage();
+
+    if (personality?.body?.enabled && mcpClient && mcpStorage) {
+      const selectedServers = personality.body.selectedServers ?? [];
+      const perPersonalityFeatures = personality.body.mcpFeatures ?? { exposeGit: false, exposeFilesystem: false };
+      const globalConfig = mcpStorage.getConfig();
+
+      if (selectedServers.length > 0) {
+        const allMcpTools: McpToolDef[] = mcpClient.getAllTools();
+
+        for (const tool of allMcpTools) {
+          // Only include tools from servers the personality has selected
+          if (!selectedServers.includes(tool.serverName)) continue;
+
+          // For YEOMAN MCP tools, apply per-personality AND global feature gates
+          if (tool.serverName === 'YEOMAN MCP') {
+            const isGitTool = tool.name.startsWith('git_') || tool.name.includes('git');
+            const isFsTool = tool.name.startsWith('fs_') || tool.name.includes('filesystem') || tool.name.includes('file_');
+
+            if (isGitTool && !(globalConfig.exposeGit && perPersonalityFeatures.exposeGit)) continue;
+            if (isFsTool && !(globalConfig.exposeFilesystem && perPersonalityFeatures.exposeFilesystem)) continue;
+          }
+
+          tools.push({
+            name: tool.name,
+            description: tool.description || undefined,
+            parameters: tool.inputSchema as Tool['parameters'],
+          });
+        }
+      }
+    }
+
     const aiRequest: AIRequest = {
       messages,
       stream: false,
+      ...(tools.length > 0 ? { tools } : {}),
     };
 
     try {

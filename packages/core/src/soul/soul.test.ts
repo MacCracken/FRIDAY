@@ -654,7 +654,7 @@ describe('SoulManager', () => {
       const prompt = manager.composeSoulPrompt();
       expect(prompt).toContain('## Body');
       expect(prompt).toContain('Your Body is your form');
-      expect(prompt).toContain('Capabilities:');
+      expect(prompt).toContain('### Capabilities');
       expect(prompt).toContain('### Heart');
       expect(prompt).toContain('Your Heart is your pulse');
       expect(prompt).toContain('system_health: [ok] All good');

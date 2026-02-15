@@ -210,40 +210,44 @@ function SpiritSection() {
             </div>
           ))}
         </div>
-        <div className="flex gap-2 items-end flex-wrap">
-          <input
-            type="text"
-            placeholder="Name"
-            value={newPassion.name}
-            onChange={(e) => setNewPassion((p) => ({ ...p, name: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="text"
-            placeholder="Description (optional)"
-            value={newPassion.description}
-            onChange={(e) => setNewPassion((p) => ({ ...p, description: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.1"
-            value={newPassion.intensity}
-            onChange={(e) =>
-              setNewPassion((p) => ({ ...p, intensity: parseFloat(e.target.value) }))
-            }
-            className="w-20"
-            title={`Intensity: ${newPassion.intensity}`}
-          />
-          <button
-            onClick={() => createPassionMut.mutate()}
-            disabled={!newPassion.name.trim()}
-            className="btn btn-primary text-xs px-2 py-1"
-          >
-            Add
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Name"
+              value={newPassion.name}
+              onChange={(e) => setNewPassion((p) => ({ ...p, name: e.target.value }))}
+              className="flex-1 px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={newPassion.intensity}
+              onChange={(e) =>
+                setNewPassion((p) => ({ ...p, intensity: parseFloat(e.target.value) }))
+              }
+              className="w-20"
+              title={`Intensity: ${newPassion.intensity}`}
+            />
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Description (optional)"
+              value={newPassion.description}
+              onChange={(e) => setNewPassion((p) => ({ ...p, description: e.target.value }))}
+              className="flex-1 max-w-[calc(100%-80px)] px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <button
+              onClick={() => createPassionMut.mutate()}
+              disabled={!newPassion.name.trim()}
+              className="btn btn-primary px-3 py-1.5 text-sm"
+            >
+              Add
+            </button>
+          </div>
         </div>
       </div>
 
@@ -269,40 +273,44 @@ function SpiritSection() {
             </div>
           ))}
         </div>
-        <div className="flex gap-2 items-end flex-wrap">
-          <input
-            type="text"
-            placeholder="Source"
-            value={newInspiration.source}
-            onChange={(e) => setNewInspiration((i) => ({ ...i, source: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="text"
-            placeholder="Description (optional)"
-            value={newInspiration.description}
-            onChange={(e) => setNewInspiration((i) => ({ ...i, description: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.1"
-            value={newInspiration.impact}
-            onChange={(e) =>
-              setNewInspiration((i) => ({ ...i, impact: parseFloat(e.target.value) }))
-            }
-            className="w-20"
-            title={`Impact: ${newInspiration.impact}`}
-          />
-          <button
-            onClick={() => createInspirationMut.mutate()}
-            disabled={!newInspiration.source.trim()}
-            className="btn btn-primary text-xs px-2 py-1"
-          >
-            Add
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Source"
+              value={newInspiration.source}
+              onChange={(e) => setNewInspiration((i) => ({ ...i, source: e.target.value }))}
+              className="flex-1 px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={newInspiration.impact}
+              onChange={(e) =>
+                setNewInspiration((i) => ({ ...i, impact: parseFloat(e.target.value) }))
+              }
+              className="w-20"
+              title={`Impact: ${newInspiration.impact}`}
+            />
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Description (optional)"
+              value={newInspiration.description}
+              onChange={(e) => setNewInspiration((i) => ({ ...i, description: e.target.value }))}
+              className="flex-1 max-w-[calc(100%-80px)] px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <button
+              onClick={() => createInspirationMut.mutate()}
+              disabled={!newInspiration.source.trim()}
+              className="btn btn-primary px-3 py-1.5 text-sm"
+            >
+              Add
+            </button>
+          </div>
         </div>
       </div>
 
@@ -328,38 +336,42 @@ function SpiritSection() {
             </div>
           ))}
         </div>
-        <div className="flex gap-2 items-end flex-wrap">
-          <input
-            type="text"
-            placeholder="Trigger"
-            value={newPain.trigger}
-            onChange={(e) => setNewPain((p) => ({ ...p, trigger: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="text"
-            placeholder="Description (optional)"
-            value={newPain.description}
-            onChange={(e) => setNewPain((p) => ({ ...p, description: e.target.value }))}
-            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
-          />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.1"
-            value={newPain.severity}
-            onChange={(e) => setNewPain((p) => ({ ...p, severity: parseFloat(e.target.value) }))}
-            className="w-20"
-            title={`Severity: ${newPain.severity}`}
-          />
-          <button
-            onClick={() => createPainMut.mutate()}
-            disabled={!newPain.trigger.trim()}
-            className="btn btn-primary text-xs px-2 py-1"
-          >
-            Add
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Trigger"
+              value={newPain.trigger}
+              onChange={(e) => setNewPain((p) => ({ ...p, trigger: e.target.value }))}
+              className="flex-1 px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={newPain.severity}
+              onChange={(e) => setNewPain((p) => ({ ...p, severity: parseFloat(e.target.value) }))}
+              className="w-20"
+              title={`Severity: ${newPain.severity}`}
+            />
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              placeholder="Description (optional)"
+              value={newPain.description}
+              onChange={(e) => setNewPain((p) => ({ ...p, description: e.target.value }))}
+              className="flex-1 max-w-[calc(100%-80px)] px-2 py-1.5 text-sm rounded border bg-background"
+            />
+            <button
+              onClick={() => createPainMut.mutate()}
+              disabled={!newPain.trigger.trim()}
+              className="btn btn-primary px-3 py-1.5 text-sm"
+            >
+              Add
+            </button>
+          </div>
         </div>
       </div>
     </CollapsibleSection>
@@ -1076,7 +1088,9 @@ function BodySection({
                               if (e.target.checked) {
                                 onSelectedServersChange([...selectedServers, server.id]);
                               } else {
-                                onSelectedServersChange(selectedServers.filter((id) => id !== server.id));
+                                onSelectedServersChange(
+                                  selectedServers.filter((id) => id !== server.id)
+                                );
                               }
                             }}
                             className="w-3.5 h-3.5 rounded accent-primary"
@@ -1097,38 +1111,60 @@ function BodySection({
                             <p className="text-[10px] text-muted-foreground mb-1">
                               Tool categories this personality can access:
                             </p>
-                            <label className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
-                              globalMcpConfig?.exposeGit ? 'cursor-pointer hover:bg-muted/50' : 'opacity-50 cursor-not-allowed'
-                            }`}>
+                            <label
+                              className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
+                                globalMcpConfig?.exposeGit
+                                  ? 'cursor-pointer hover:bg-muted/50'
+                                  : 'opacity-50 cursor-not-allowed'
+                              }`}
+                            >
                               <GitBranch className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                               <span className="text-xs flex-1">
                                 Git & GitHub
                                 {!globalMcpConfig?.exposeGit && (
-                                  <span className="text-[10px] text-muted-foreground ml-1">(enable in Connections first)</span>
+                                  <span className="text-[10px] text-muted-foreground ml-1">
+                                    (enable in Connections first)
+                                  </span>
                                 )}
                               </span>
                               <input
                                 type="checkbox"
                                 checked={mcpFeatures.exposeGit}
-                                onChange={(e) => onMcpFeaturesChange({ ...mcpFeatures, exposeGit: e.target.checked })}
+                                onChange={(e) =>
+                                  onMcpFeaturesChange({
+                                    ...mcpFeatures,
+                                    exposeGit: e.target.checked,
+                                  })
+                                }
                                 disabled={!globalMcpConfig?.exposeGit}
                                 className="w-3.5 h-3.5 rounded accent-primary shrink-0"
                               />
                             </label>
-                            <label className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
-                              globalMcpConfig?.exposeFilesystem ? 'cursor-pointer hover:bg-muted/50' : 'opacity-50 cursor-not-allowed'
-                            }`}>
+                            <label
+                              className={`flex items-center gap-2 p-1.5 rounded bg-muted/30 transition-colors ${
+                                globalMcpConfig?.exposeFilesystem
+                                  ? 'cursor-pointer hover:bg-muted/50'
+                                  : 'opacity-50 cursor-not-allowed'
+                              }`}
+                            >
                               <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                               <span className="text-xs flex-1">
                                 Filesystem
                                 {!globalMcpConfig?.exposeFilesystem && (
-                                  <span className="text-[10px] text-muted-foreground ml-1">(enable in Connections first)</span>
+                                  <span className="text-[10px] text-muted-foreground ml-1">
+                                    (enable in Connections first)
+                                  </span>
                                 )}
                               </span>
                               <input
                                 type="checkbox"
                                 checked={mcpFeatures.exposeFilesystem}
-                                onChange={(e) => onMcpFeaturesChange({ ...mcpFeatures, exposeFilesystem: e.target.checked })}
+                                onChange={(e) =>
+                                  onMcpFeaturesChange({
+                                    ...mcpFeatures,
+                                    exposeFilesystem: e.target.checked,
+                                  })
+                                }
                                 disabled={!globalMcpConfig?.exposeFilesystem}
                                 className="w-3.5 h-3.5 rounded accent-primary shrink-0"
                               />
@@ -1255,10 +1291,12 @@ export function PersonalityEditor() {
     auditory: false,
     haptic: false,
   });
-  const [mcpFeatures, setMcpFeatures] = useState<{ exposeGit: boolean; exposeFilesystem: boolean }>({
-    exposeGit: false,
-    exposeFilesystem: false,
-  });
+  const [mcpFeatures, setMcpFeatures] = useState<{ exposeGit: boolean; exposeFilesystem: boolean }>(
+    {
+      exposeGit: false,
+      exposeFilesystem: false,
+    }
+  );
 
   const { data: personalitiesData, isLoading } = useQuery({
     queryKey: ['personalities'],

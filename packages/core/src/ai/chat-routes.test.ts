@@ -22,6 +22,9 @@ function createMockSecureYeoman(overrides: Partial<{
 
   const mockSoulManager = {
     composeSoulPrompt: vi.fn().mockReturnValue('You are FRIDAY.'),
+    getActiveTools: vi.fn().mockReturnValue([]),
+    getPersonality: vi.fn().mockReturnValue(null),
+    getActivePersonality: vi.fn().mockReturnValue(null),
   };
 
   const mock = {
@@ -29,6 +32,8 @@ function createMockSecureYeoman(overrides: Partial<{
       ? vi.fn().mockImplementation(() => { throw new Error('AI client not available'); })
       : vi.fn().mockReturnValue(overrides.aiClient ?? mockAiClient),
     getSoulManager: vi.fn().mockReturnValue(overrides.soulManager ?? mockSoulManager),
+    getMcpClientManager: vi.fn().mockReturnValue(null),
+    getMcpStorage: vi.fn().mockReturnValue(null),
   } as unknown as SecureYeoman;
 
   return { mock, mockAiClient, mockSoulManager };

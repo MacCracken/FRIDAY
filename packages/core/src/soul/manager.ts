@@ -94,6 +94,8 @@ export class SoulManager {
         capabilities: [],
         heartEnabled: true,
         creationConfig: { skills: false, tasks: false, personalities: false, experiments: false },
+        selectedServers: [],
+        mcpFeatures: { exposeGit: false, exposeFilesystem: false },
       },
     });
 
@@ -297,23 +299,47 @@ export class SoulManager {
     this.heartManager = new HeartManager(hb);
   }
 
-  private composeBodyPrompt(): string {
-    if (!this.heartManager && !this.heartbeat) return '';
+  private composeBodyPrompt(personality: Personality | null): string {
+    const bodyEnabled = personality?.body?.enabled ?? false;
+    if (!bodyEnabled && !this.heartManager && !this.heartbeat) return '';
 
     const lines: string[] = [
       '## Body',
       'Your Body is your form — the vessel and capabilities through which you act in the world.',
     ];
 
-    // Capability placeholders
-    const capabilities = ['vision', 'limb_movement', 'auditory', 'haptic'] as const;
+    // Capabilities — show enabled/disabled from personality config
+    const allCapabilities = ['vision', 'limb_movement', 'auditory', 'haptic'] as const;
+    const enabledCaps = personality?.body?.capabilities ?? [];
     const capLines: string[] = [];
-    for (const cap of capabilities) {
-      capLines.push(`- **${cap}**: not yet configured`);
+    for (const cap of allCapabilities) {
+      const status = enabledCaps.includes(cap) ? 'enabled' : 'disabled';
+      capLines.push(`- **${cap}**: ${status}`);
     }
     lines.push('');
-    lines.push('Capabilities:');
+    lines.push('### Capabilities');
     lines.push(...capLines);
+
+    // MCP Connections — list selected servers and feature toggles
+    const selectedServers = personality?.body?.selectedServers ?? [];
+    const mcpFeatures = personality?.body?.mcpFeatures ?? { exposeGit: false, exposeFilesystem: false };
+    if (selectedServers.length > 0) {
+      lines.push('');
+      lines.push('### MCP Connections');
+      lines.push(`Connected servers: ${selectedServers.join(', ')}`);
+      lines.push(`Tool categories — Git: ${mcpFeatures.exposeGit ? 'enabled' : 'disabled'}, Filesystem: ${mcpFeatures.exposeFilesystem ? 'enabled' : 'disabled'}`);
+    }
+
+    // Creation Permissions
+    const creation = personality?.body?.creationConfig;
+    if (creation) {
+      const perms = Object.entries(creation)
+        .map(([k, v]) => `${k}: ${v ? 'allowed' : 'denied'}`)
+        .join(', ');
+      lines.push('');
+      lines.push('### Creation Permissions');
+      lines.push(perms);
+    }
 
     // Heart subsection
     if (this.heartManager) {
@@ -423,7 +449,7 @@ export class SoulManager {
     }
 
     // Body vital signs injection
-    const bodyPrompt = this.composeBodyPrompt();
+    const bodyPrompt = this.composeBodyPrompt(personality);
     if (bodyPrompt) {
       parts.push(bodyPrompt);
     }
