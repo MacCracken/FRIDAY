@@ -182,7 +182,7 @@ function SpiritSection() {
   });
 
   return (
-    <CollapsibleSection title="Spirit — Passions, Inspirations & Pains">
+    <CollapsibleSection title="Spirit - Pathos">
       {/* Passions */}
       <div>
         <h4 className="text-sm font-medium mb-2">Passions</h4>
@@ -211,6 +211,13 @@ function SpiritSection() {
             placeholder="Name"
             value={newPassion.name}
             onChange={(e) => setNewPassion((p) => ({ ...p, name: e.target.value }))}
+            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
+          />
+          <input
+            type="text"
+            placeholder="Description (optional)"
+            value={newPassion.description}
+            onChange={(e) => setNewPassion((p) => ({ ...p, description: e.target.value }))}
             className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
           />
           <input
@@ -266,6 +273,13 @@ function SpiritSection() {
             className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
           />
           <input
+            type="text"
+            placeholder="Description (optional)"
+            value={newInspiration.description}
+            onChange={(e) => setNewInspiration((i) => ({ ...i, description: e.target.value }))}
+            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
+          />
+          <input
             type="range"
             min="0"
             max="1"
@@ -315,6 +329,13 @@ function SpiritSection() {
             placeholder="Trigger"
             value={newPain.trigger}
             onChange={(e) => setNewPain((p) => ({ ...p, trigger: e.target.value }))}
+            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
+          />
+          <input
+            type="text"
+            placeholder="Description (optional)"
+            value={newPain.description}
+            onChange={(e) => setNewPain((p) => ({ ...p, description: e.target.value }))}
             className="flex-1 min-w-0 px-2 py-1 text-sm rounded border bg-background"
           />
           <input
@@ -930,10 +951,10 @@ function BodySection({
   };
 
   return (
-    <CollapsibleSection title="Body — Capabilities" defaultOpen={false}>
+    <CollapsibleSection title="Body - Endowments" defaultOpen={false}>
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-medium">Capabilities</h4>
+          <span className="text-sm font-medium text-muted-foreground">Capabilities</span>
           <div className="flex items-center gap-4">
             <span className="text-xs text-muted-foreground">MCP</span>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -947,62 +968,66 @@ function BodySection({
             </label>
           </div>
         </div>
-        <div className="space-y-2">
-          {capabilities.map((cap) => {
-            const info = capabilityInfo[cap];
-            const isEnabled = enabledCaps[cap] ?? false;
-            const isConfigurable =
-              info.available && (cap === 'vision' || cap === 'auditory' || cap === 'limb_movement');
 
-            return (
-              <div
-                key={cap}
-                className={`text-sm px-3 py-2 rounded flex items-center justify-between border ${
-                  isEnabled
-                    ? 'bg-success/5 border-success/30'
-                    : info.available
-                      ? 'bg-muted/50 border-border'
-                      : 'bg-muted/30 border-border opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-base">{info.icon}</span>
-                  <div>
-                    <span className="capitalize font-medium">{cap.replace('_', ' ')}</span>
-                    <p className="text-xs text-muted-foreground">{info.description}</p>
+        <CollapsibleSection title="Capabilities" defaultOpen={false}>
+          <div className="space-y-2">
+            {capabilities.map((cap) => {
+              const info = capabilityInfo[cap];
+              const isEnabled = enabledCaps[cap] ?? false;
+              const isConfigurable =
+                info.available &&
+                (cap === 'vision' || cap === 'auditory' || cap === 'limb_movement');
+
+              return (
+                <div
+                  key={cap}
+                  className={`text-sm px-3 py-2 rounded flex items-center justify-between border ${
+                    isEnabled
+                      ? 'bg-success/5 border-success/30'
+                      : info.available
+                        ? 'bg-muted/50 border-border'
+                        : 'bg-muted/30 border-border opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">{info.icon}</span>
+                    <div>
+                      <span className="capitalize font-medium">{cap.replace('_', ' ')}</span>
+                      <p className="text-xs text-muted-foreground">{info.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!info.available ? (
+                      <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                        Not available
+                      </span>
+                    ) : isConfigurable ? (
+                      <label
+                        className="relative inline-flex items-center cursor-pointer"
+                        title={isEnabled ? 'Enabled' : 'Disabled'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          onChange={() => toggleCapability(cap)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-muted-foreground/30 peer-checked:bg-success rounded-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+                        <span className="text-xs ml-2 text-muted-foreground peer-checked:text-success">
+                          {isEnabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </label>
+                    ) : (
+                      <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                        Available
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {!info.available ? (
-                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                      Not available
-                    </span>
-                  ) : isConfigurable ? (
-                    <label
-                      className="relative inline-flex items-center cursor-pointer"
-                      title={isEnabled ? 'Enabled' : 'Disabled'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isEnabled}
-                        onChange={() => toggleCapability(cap)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-muted-foreground/30 peer-checked:bg-success rounded-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
-                      <span className="text-xs ml-2 text-muted-foreground peer-checked:text-success">
-                        {isEnabled ? 'Enabled' : 'Disabled'}
-                      </span>
-                    </label>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                      Available
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </CollapsibleSection>
       </div>
 
       {/* MCP Connections */}
@@ -1080,8 +1105,7 @@ function BodySection({
         )}
       </div>
 
-      {/* Creation Controls */}
-      <div className="mt-4 pt-4 border-t border-border">
+      <CollapsibleSection title="Resource Creation" defaultOpen={false}>
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-sm font-medium">Resource Creation</h4>
           <label className="relative inline-flex items-center cursor-pointer">
@@ -1131,7 +1155,7 @@ function BodySection({
             );
           })}
         </div>
-      </div>
+      </CollapsibleSection>
     </CollapsibleSection>
   );
 }
