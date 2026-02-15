@@ -49,7 +49,7 @@ F.R.I.D.A.Y. is a **secure autonomous agent system** built around the **SecureYe
 | **AI Integration** | Anthropic Claude, OpenAI GPT, Google Gemini, Ollama, LM Studio, LocalAI (local), OpenCode Zen; automatic fallback chains on rate limits/outages; dynamic model discovery |
 | **Dashboard** | React + Vite + Tailwind; real-time WebSocket updates (channel-based RBAC); metrics graphs, task history, security events, personality editor, skills manager, code editor (Monaco), notification & retention settings |
 | **Agent Architecture** | Soul (identity/archetypes/personality), Spirit (passions/inspirations/pains), Brain (memory/knowledge/skills with decay & pruning), Body (heartbeat/vital signs/screen capture) |
-| **Integrations** | Telegram, Discord, Slack, GitHub, Google Chat, CLI, Generic Webhook — plugin architecture with unified message routing |
+| **Integrations** | Telegram, Discord, Slack, GitHub, Google Chat, Gmail, Email (IMAP/SMTP), CLI, Generic Webhook — plugin architecture with unified message routing |
 | **MCP Protocol** | Standalone `@friday/mcp` service (22+ tools, 7 resources, 4 prompts); auto-registers with core; streamable HTTP, SSE, and stdio transports; connect external MCP servers with persistent tool discovery |
 | **Marketplace** | Skill discovery, search, install/uninstall (syncs with Brain skills), publish with cryptographic signature verification |
 | **Team Collaboration** | Workspaces with isolation, member management, workspace-scoped RBAC |

@@ -222,6 +222,26 @@ const PLATFORM_META: Record<string, PlatformMeta> = {
     icon: <Mail className="w-6 h-6" />,
     fields: BASE_FIELDS,
   },
+  email: {
+    name: 'Email (IMAP/SMTP)',
+    description: 'Connect any email provider via IMAP/SMTP (ProtonMail Bridge, Outlook, Yahoo, Fastmail, etc.)',
+    icon: <Mail className="w-6 h-6" />,
+    fields: [
+      ...BASE_FIELDS,
+      { key: 'imapHost', label: 'IMAP Host', type: 'text', placeholder: '127.0.0.1', helpText: 'IMAP server hostname' },
+      { key: 'imapPort', label: 'IMAP Port', type: 'text', placeholder: '993', helpText: 'IMAP port (993 for TLS, 143 for plain)' },
+      { key: 'smtpHost', label: 'SMTP Host', type: 'text', placeholder: '127.0.0.1', helpText: 'SMTP server hostname' },
+      { key: 'smtpPort', label: 'SMTP Port', type: 'text', placeholder: '465', helpText: 'SMTP port (465 for TLS, 587 for STARTTLS)' },
+      { key: 'username', label: 'Username', type: 'text', placeholder: 'user@example.com' },
+      { key: 'password', label: 'Password', type: 'password', placeholder: 'Password or app-specific password' },
+    ],
+    setupSteps: [
+      'Enter your mail server IMAP and SMTP connection details',
+      'For ProtonMail: install Bridge, use 127.0.0.1:1143/1025 (or host.docker.internal in Docker) with self-signed certs',
+      'For Outlook/Yahoo: use their IMAP/SMTP settings with an app password',
+      'Configure read/send preferences and connect',
+    ],
+  },
   googlechat: {
     name: 'Google Chat',
     description: 'Connect to Google Chat spaces via Bot API',
@@ -377,7 +397,7 @@ export function ConnectionsPage() {
   const externalServers = servers.filter((s) => s.name !== LOCAL_MCP_NAME);
   const activePlatformIds = new Set(integrations.map((i) => i.platform));
   const unregisteredPlatforms = Object.keys(PLATFORM_META)
-    .filter((p) => !activePlatformIds.has(p) && p !== 'gmail')
+    .filter((p) => !activePlatformIds.has(p) && p !== 'gmail' && p !== 'email')
     .sort((a, b) => PLATFORM_META[a].name.localeCompare(PLATFORM_META[b].name));
 
   const toolsByServer = tools.reduce<Record<string, McpToolDef[]>>((acc, tool) => {
@@ -613,7 +633,7 @@ export function ConnectionsPage() {
 
       {activeTab === 'email' && (
         <EmailTab
-          integrations={integrations.filter((i) => i.platform === 'gmail')}
+          integrations={integrations.filter((i) => i.platform === 'gmail' || i.platform === 'email')}
           onStart={startIntegrationMut.mutate}
           onStop={stopIntegrationMut.mutate}
           onDelete={(id) => {
@@ -622,6 +642,7 @@ export function ConnectionsPage() {
           isStarting={startIntegrationMut.isPending}
           isStopping={stopIntegrationMut.isPending}
           isDeleting={deleteIntegrationMut.isPending}
+          availablePlatforms={availablePlatforms}
         />
       )}
 
@@ -1555,6 +1576,7 @@ function EmailTab({
   isStarting,
   isStopping,
   isDeleting,
+  availablePlatforms,
 }: {
   integrations: IntegrationInfo[];
   onStart: (id: string) => void;
@@ -1563,6 +1585,7 @@ function EmailTab({
   isStarting: boolean;
   isStopping: boolean;
   isDeleting: boolean;
+  availablePlatforms: Set<string>;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -1575,6 +1598,22 @@ function EmailTab({
     labelName: '',
   });
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [showImapForm, setShowImapForm] = useState(false);
+  const [imapForm, setImapForm] = useState({
+    displayName: '',
+    imapHost: '',
+    imapPort: '993',
+    smtpHost: '',
+    smtpPort: '465',
+    username: '',
+    password: '',
+    tls: true,
+    rejectUnauthorized: true,
+    enableRead: true,
+    enableSend: false,
+    preset: 'custom' as 'protonmail' | 'outlook' | 'yahoo' | 'custom',
+  });
+  const [imapError, setImapError] = useState<string | null>(null);
 
   // Parse OAuth callback params
   const searchParams = new URLSearchParams(location.search);
@@ -1625,13 +1664,90 @@ function EmailTab({
     },
   });
 
+  const imapCreateMut = useMutation({
+    mutationFn: async () => {
+      setImapError(null);
+      const integration = await createIntegration({
+        platform: 'email',
+        displayName: imapForm.displayName || 'Email (IMAP/SMTP)',
+        enabled: true,
+        config: {
+          imapHost: imapForm.imapHost,
+          imapPort: parseInt(imapForm.imapPort, 10),
+          smtpHost: imapForm.smtpHost,
+          smtpPort: parseInt(imapForm.smtpPort, 10),
+          username: imapForm.username,
+          password: imapForm.password,
+          tls: imapForm.tls,
+          rejectUnauthorized: imapForm.rejectUnauthorized,
+          enableRead: imapForm.enableRead,
+          enableSend: imapForm.enableSend,
+        },
+      });
+      await startIntegration(integration.id);
+      return integration;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['integrations'] });
+      setShowImapForm(false);
+      setImapForm((f) => ({ ...f, displayName: '', username: '', password: '' }));
+    },
+    onError: (err: Error) => {
+      setImapError(err.message || 'Failed to connect email');
+    },
+  });
+
+  const applyPreset = (preset: string) => {
+    switch (preset) {
+      case 'protonmail':
+        setImapForm((f) => ({
+          ...f,
+          preset: 'protonmail',
+          imapHost: '127.0.0.1',
+          imapPort: '1143',
+          smtpHost: '127.0.0.1',
+          smtpPort: '1025',
+          tls: false,
+          rejectUnauthorized: false,
+        }));
+        break;
+      case 'outlook':
+        setImapForm((f) => ({
+          ...f,
+          preset: 'outlook',
+          imapHost: 'outlook.office365.com',
+          imapPort: '993',
+          smtpHost: 'smtp.office365.com',
+          smtpPort: '587',
+          tls: true,
+          rejectUnauthorized: true,
+        }));
+        break;
+      case 'yahoo':
+        setImapForm((f) => ({
+          ...f,
+          preset: 'yahoo',
+          imapHost: 'imap.mail.yahoo.com',
+          imapPort: '993',
+          smtpHost: 'smtp.mail.yahoo.com',
+          smtpPort: '465',
+          tls: true,
+          rejectUnauthorized: true,
+        }));
+        break;
+      default:
+        setImapForm((f) => ({ ...f, preset: 'custom' }));
+        break;
+    }
+  };
+
   const hasGmail = integrations.length > 0;
 
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
-        Connect your Gmail account for direct email integration. Friday can read incoming emails
-        and optionally send replies on your behalf.
+        Connect email accounts for direct email integration. Friday can read incoming emails
+        and optionally send replies on your behalf. Supports Gmail (OAuth) and any IMAP/SMTP provider.
       </p>
 
       {oauthError && (
@@ -1843,6 +1959,226 @@ function EmailTab({
                 </div>
               </div>
             </div>
+
+            {/* IMAP/SMTP Card */}
+            {showImapForm ? (
+              <div className="card p-4 border-primary border-2 md:col-span-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <Mail className="w-5 h-5 text-primary" />
+                  <h3 className="font-medium text-sm">Connect Email (IMAP/SMTP)</h3>
+                </div>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    imapCreateMut.mutate();
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Provider Preset</label>
+                    <select
+                      value={imapForm.preset}
+                      onChange={(e) => applyPreset(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="custom">Custom</option>
+                      <option value="protonmail">ProtonMail Bridge (localhost)</option>
+                      <option value="outlook">Outlook / Office 365</option>
+                      <option value="yahoo">Yahoo Mail</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Display Name</label>
+                    <input
+                      type="text"
+                      value={imapForm.displayName}
+                      onChange={(e) => setImapForm((f) => ({ ...f, displayName: e.target.value }))}
+                      placeholder="e.g. My ProtonMail"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted block mb-1">IMAP Host</label>
+                      <input
+                        type="text"
+                        value={imapForm.imapHost}
+                        onChange={(e) => setImapForm((f) => ({ ...f, imapHost: e.target.value }))}
+                        placeholder="127.0.0.1"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">IMAP Port</label>
+                      <input
+                        type="text"
+                        value={imapForm.imapPort}
+                        onChange={(e) => setImapForm((f) => ({ ...f, imapPort: e.target.value }))}
+                        placeholder="993"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted block mb-1">SMTP Host</label>
+                      <input
+                        type="text"
+                        value={imapForm.smtpHost}
+                        onChange={(e) => setImapForm((f) => ({ ...f, smtpHost: e.target.value }))}
+                        placeholder="127.0.0.1"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">SMTP Port</label>
+                      <input
+                        type="text"
+                        value={imapForm.smtpPort}
+                        onChange={(e) => setImapForm((f) => ({ ...f, smtpPort: e.target.value }))}
+                        placeholder="465"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Username</label>
+                      <input
+                        type="text"
+                        value={imapForm.username}
+                        onChange={(e) => setImapForm((f) => ({ ...f, username: e.target.value }))}
+                        placeholder="user@example.com"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Password</label>
+                      <input
+                        type="password"
+                        value={imapForm.password}
+                        onChange={(e) => setImapForm((f) => ({ ...f, password: e.target.value }))}
+                        placeholder="Password or app password"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <label className="flex items-center gap-2.5 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                      <div className="flex-1">
+                        <span className="text-xs font-medium block">TLS</span>
+                        <span className="text-xs text-muted">Use encrypted connection</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={imapForm.tls}
+                        onChange={(e) => setImapForm((f) => ({ ...f, tls: e.target.checked }))}
+                        className="w-4 h-4 rounded accent-primary"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2.5 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                      <div className="flex-1">
+                        <span className="text-xs font-medium block">Allow Self-Signed</span>
+                        <span className="text-xs text-muted">For ProtonMail Bridge</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={!imapForm.rejectUnauthorized}
+                        onChange={(e) => setImapForm((f) => ({ ...f, rejectUnauthorized: !e.target.checked }))}
+                        className="w-4 h-4 rounded accent-primary"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <label className="flex items-center gap-2.5 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                      <div className="flex-1">
+                        <span className="text-xs font-medium block">Read Emails</span>
+                        <span className="text-xs text-muted">Poll via IMAP for new messages</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={imapForm.enableRead}
+                        onChange={(e) => setImapForm((f) => ({ ...f, enableRead: e.target.checked }))}
+                        className="w-4 h-4 rounded accent-primary"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2.5 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                      <div className="flex-1">
+                        <span className="text-xs font-medium block">Send Emails</span>
+                        <span className="text-xs text-muted">Send via SMTP</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={imapForm.enableSend}
+                        onChange={(e) => setImapForm((f) => ({ ...f, enableSend: e.target.checked }))}
+                        className="w-4 h-4 rounded accent-primary"
+                      />
+                    </label>
+                  </div>
+
+                  {imapError && (
+                    <p className="text-xs text-red-400">{imapError}</p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={!imapForm.displayName || !imapForm.imapHost || !imapForm.username || !imapForm.password || imapCreateMut.isPending}
+                      className="btn btn-primary text-xs px-3 py-1.5"
+                    >
+                      {imapCreateMut.isPending ? (
+                        <span className="flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Connecting...
+                        </span>
+                      ) : (
+                        'Connect'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowImapForm(false)}
+                      className="btn btn-ghost text-xs px-3 py-1.5"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <div className="card p-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-lg bg-surface text-muted">
+                    <Mail className="w-6 h-6" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium text-sm">Email (IMAP/SMTP)</h3>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${availablePlatforms.has('email') ? 'bg-green-500/10 text-green-400' : 'bg-surface text-muted'}`}>
+                        {availablePlatforms.has('email') ? 'Available' : 'Coming Soon'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted mt-1">
+                      Connect any IMAP/SMTP provider: ProtonMail Bridge, Outlook, Yahoo, Fastmail
+                    </p>
+                    {availablePlatforms.has('email') && (
+                      <button
+                        onClick={() => setShowImapForm(true)}
+                        className="btn btn-primary text-xs px-3 py-1.5 mt-3"
+                      >
+                        Connect
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

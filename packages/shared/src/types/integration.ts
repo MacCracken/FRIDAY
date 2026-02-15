@@ -19,6 +19,7 @@ export const PlatformSchema = z.enum([
   'imessage',
   'googlechat',
   'gmail',
+  'email',
 ]);
 export type Platform = z.infer<typeof PlatformSchema>;
 

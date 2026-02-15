@@ -19,6 +19,8 @@ services:
 
   core:
     build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "18789:18789"
     volumes:

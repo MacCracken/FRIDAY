@@ -8,7 +8,9 @@ FRIDAY supports multiple platform integrations for receiving and responding to m
 |----------|--------|----------|
 | CLI      | Stable | Built-in REST API / command-line interface |
 | Discord  | Stable | Slash commands, embeds, guild messages |
+| Email (IMAP/SMTP) | Stable | Any IMAP/SMTP provider — ProtonMail Bridge, Outlook, Yahoo, Fastmail |
 | GitHub   | Stable | Webhooks, issue comments, PR events |
+| Gmail    | Stable | OAuth2, polling, label filtering, send/receive |
 | Google Chat | Stable | Bot messages, card messages, space integration |
 | iMessage | Beta   | macOS only, AppleScript send, chat.db polling |
 | Slack    | Stable | Socket mode, slash commands, mentions |
@@ -160,6 +162,215 @@ curl -X POST http://localhost:18789/api/v1/integrations \
 ### Sending Responses
 FRIDAY responds to GitHub events by posting comments. The `chatId` format is:
 `owner/repo/issues/123` or `owner/repo/pulls/456`
+
+## Gmail
+
+### Overview
+Gmail integration uses OAuth2 for secure access to your Gmail account. FRIDAY polls for new messages using the Gmail History API and can send replies via the Gmail REST API.
+
+### Setup
+1. Go to **Dashboard > Connections > Email** tab
+2. Click **Connect with Google** to start the OAuth flow
+3. Grant permissions to read and/or send emails
+4. Configure preferences: display name, read/send toggles, label filter
+5. Click **Finish Setup**
+
+### Config Options
+- `enableRead` — Poll inbox for new messages (default: on)
+- `enableSend` — Allow sending replies (default: off)
+- `labelFilter` — `all` (entire inbox), `label` (existing Gmail label), or `custom` (auto-created label)
+- `labelName` — Label name when using `label` or `custom` filter
+- `pollIntervalMs` — Polling interval in milliseconds (default: 30000)
+
+### Prerequisites
+Set these in your `.env` file (or Docker environment):
+```bash
+GMAIL_OAUTH_CLIENT_ID=your-google-client-id
+GMAIL_OAUTH_CLIENT_SECRET=your-google-client-secret
+# Can reuse GOOGLE_OAUTH_CLIENT_ID/SECRET if same GCP project
+```
+
+### API Setup
+```bash
+curl -X POST http://localhost:18789/api/v1/integrations \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "gmail",
+    "displayName": "user@gmail.com",
+    "enabled": true,
+    "config": {
+      "accessToken": "ya29...",
+      "refreshToken": "1//...",
+      "email": "user@gmail.com",
+      "enableRead": true,
+      "enableSend": false,
+      "labelFilter": "all"
+    }
+  }'
+```
+
+### Rate Limit
+- 2 messages/second
+
+---
+
+## Email (IMAP/SMTP)
+
+### Overview
+The generic Email integration connects to any standard IMAP/SMTP mail server. This works with ProtonMail Bridge, Outlook, Yahoo Mail, Fastmail, self-hosted mail servers, and any provider that supports IMAP for reading and SMTP for sending.
+
+FRIDAY uses IMAP IDLE for real-time new mail notifications with a fallback polling interval. Outbound messages are sent via SMTP using nodemailer.
+
+### Setup via Dashboard
+1. Go to **Dashboard > Connections > Email** tab
+2. Click **Connect** on the **Email (IMAP/SMTP)** card
+3. Select a provider preset (ProtonMail Bridge, Outlook, Yahoo) or use Custom
+4. Fill in IMAP/SMTP host and port, username, and password
+5. Configure TLS, self-signed certs, read/send toggles
+6. Click **Connect**
+
+### Setup via API
+```bash
+curl -X POST http://localhost:18789/api/v1/integrations \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "email",
+    "displayName": "My ProtonMail",
+    "enabled": true,
+    "config": {
+      "imapHost": "127.0.0.1",
+      "imapPort": 1143,
+      "smtpHost": "127.0.0.1",
+      "smtpPort": 1025,
+      "username": "user@proton.me",
+      "password": "your-bridge-password",
+      "enableRead": true,
+      "enableSend": true,
+      "tls": false,
+      "rejectUnauthorized": false
+    }
+  }'
+```
+
+### Config Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `imapHost` | string | *(required)* | IMAP server hostname |
+| `imapPort` | number | 993 (TLS) / 143 | IMAP server port |
+| `smtpHost` | string | *(required)* | SMTP server hostname |
+| `smtpPort` | number | 465 (TLS) / 587 | SMTP server port |
+| `username` | string | *(required)* | Login username (usually email address) |
+| `password` | string | *(required)* | Login password or app-specific password |
+| `fromAddress` | string | *(username)* | Sender address for outbound mail |
+| `enableRead` | boolean | `true` | Poll IMAP for new messages |
+| `enableSend` | boolean | `false` | Allow sending via SMTP |
+| `mailbox` | string | `INBOX` | IMAP mailbox to monitor |
+| `pollIntervalMs` | number | `30000` | Fallback polling interval (ms) |
+| `tls` | boolean | `true` | Use TLS encryption |
+| `rejectUnauthorized` | boolean | `true` | Reject self-signed TLS certificates |
+
+### Provider Presets
+
+#### ProtonMail Bridge
+
+[ProtonMail Bridge](https://proton.me/mail/bridge) is a desktop application that runs a local IMAP/SMTP server, allowing any standard email client (or FRIDAY) to connect to your ProtonMail account.
+
+**Install ProtonMail Bridge:**
+
+1. Download from [proton.me/mail/bridge](https://proton.me/mail/bridge)
+   - **Linux**: Available as `.deb`, `.rpm`, or via Flatpak/Snap
+     ```bash
+     # Debian/Ubuntu
+     sudo apt install protonmail-bridge
+
+     # Arch (AUR)
+     yay -S protonmail-bridge
+
+     # Flatpak
+     flatpak install flathub me.proton.Mail.Bridge
+     ```
+   - **macOS**: Download `.dmg` from the website or `brew install --cask protonmail-bridge`
+   - **Windows**: Download `.exe` installer from the website
+
+2. Launch Bridge and sign in with your Proton account
+3. Bridge will display your **IMAP/SMTP credentials** (username and a generated password — this is *not* your Proton login password)
+4. Note the local server addresses:
+   - **IMAP**: `127.0.0.1:1143`
+   - **SMTP**: `127.0.0.1:1025`
+
+**Configure in FRIDAY:**
+
+| Setting | Value |
+|---------|-------|
+| IMAP Host | `127.0.0.1` |
+| IMAP Port | `1143` |
+| SMTP Host | `127.0.0.1` |
+| SMTP Port | `1025` |
+| Username | *(shown in Bridge)* |
+| Password | *(generated by Bridge — not your Proton password)* |
+| TLS | Off |
+| Allow Self-Signed | On |
+
+> **Docker note**: If FRIDAY runs in Docker and Bridge runs on the host, use `host.docker.internal` instead of `127.0.0.1` for the IMAP/SMTP host. The `docker-compose.yml` includes `extra_hosts: host.docker.internal:host-gateway` for Linux compatibility.
+
+**Headless / server usage**: ProtonMail Bridge also supports a CLI mode for headless servers:
+```bash
+protonmail-bridge --cli
+# Then: login, info (to see credentials)
+```
+
+#### Outlook / Office 365
+
+| Setting | Value |
+|---------|-------|
+| IMAP Host | `outlook.office365.com` |
+| IMAP Port | `993` |
+| SMTP Host | `smtp.office365.com` |
+| SMTP Port | `587` |
+| TLS | On |
+| Allow Self-Signed | Off |
+
+> You may need to generate an **app password** if your account has MFA enabled. Go to [Microsoft Account Security](https://account.microsoft.com/security) > Additional security options > App passwords.
+
+#### Yahoo Mail
+
+| Setting | Value |
+|---------|-------|
+| IMAP Host | `imap.mail.yahoo.com` |
+| IMAP Port | `993` |
+| SMTP Host | `smtp.mail.yahoo.com` |
+| SMTP Port | `465` |
+| TLS | On |
+| Allow Self-Signed | Off |
+
+> Yahoo requires an **app password**. Go to Yahoo Account Security > Generate app password.
+
+#### Fastmail
+
+| Setting | Value |
+|---------|-------|
+| IMAP Host | `imap.fastmail.com` |
+| IMAP Port | `993` |
+| SMTP Host | `smtp.fastmail.com` |
+| SMTP Port | `465` |
+| TLS | On |
+| Allow Self-Signed | Off |
+
+> Use an **app password** from Fastmail Settings > Privacy & Security > Integrations > App Passwords.
+
+### How It Works
+- **Inbound**: Connects via IMAP, uses IDLE for real-time new mail notifications, with a configurable fallback poll interval. Messages from your own address are automatically filtered out.
+- **Outbound**: Sends via SMTP with support for threading headers (`In-Reply-To`, `References`).
+- **Thread grouping**: Messages are grouped into conversations using `In-Reply-To` and `References` email headers.
+- **chatId**: Derived from the email thread's `In-Reply-To` header for consistent thread grouping. When sending, `chatId` is the recipient email address.
+
+### Rate Limit
+- 2 messages/second
+
+---
 
 ## Google Chat
 
