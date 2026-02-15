@@ -153,6 +153,7 @@ export interface PersonalityCreate {
       personalities?: boolean;
       experiments?: boolean;
     };
+    selectedServers?: string[];
   };
 }
 

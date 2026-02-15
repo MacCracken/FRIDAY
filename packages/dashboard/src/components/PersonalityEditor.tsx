@@ -833,6 +833,10 @@ function HeartbeatTasksSection() {
 }
 
 interface BodySectionProps {
+  allowConnections: boolean;
+  onAllowConnectionsChange: (enabled: boolean) => void;
+  selectedServers: string[];
+  onSelectedServersChange: (servers: string[]) => void;
   creationConfig: { skills: boolean; tasks: boolean; personalities: boolean; experiments: boolean };
   onCreationConfigChange: (config: {
     skills: boolean;
@@ -842,8 +846,21 @@ interface BodySectionProps {
   }) => void;
 }
 
-function BodySection({ creationConfig, onCreationConfigChange }: BodySectionProps) {
+function BodySection({
+  allowConnections,
+  onAllowConnectionsChange,
+  selectedServers,
+  onSelectedServersChange,
+  creationConfig,
+  onCreationConfigChange,
+}: BodySectionProps) {
   const capabilities = ['vision', 'limb_movement', 'auditory', 'haptic'] as const;
+  const { data: serversData, isLoading: serversLoading } = useQuery({
+    queryKey: ['mcpServers'],
+    queryFn: () => fetch('/api/v1/mcp/servers').then((r) => r.json()),
+  });
+  const servers = serversData?.servers ?? [];
+  const enabledServers = servers.filter((s: { enabled: boolean }) => s.enabled);
 
   const [enabledCaps, setEnabledCaps] = useState<Record<string, boolean>>({
     vision: false,
@@ -967,6 +984,81 @@ function BodySection({ creationConfig, onCreationConfigChange }: BodySectionProp
         </div>
       </div>
 
+      {/* MCP Connections */}
+      <div className="mt-4 pt-4 border-t border-border">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium">MCP Connections</h4>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allowConnections}
+              onChange={(e) => onAllowConnectionsChange(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-muted-foreground/30 peer-checked:bg-success rounded-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+            <span className="text-xs ml-2 text-muted-foreground peer-checked:text-success">
+              {allowConnections ? 'Allowed' : 'Disabled'}
+            </span>
+          </label>
+        </div>
+
+        {allowConnections && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Select which MCP servers this personality can use:
+            </p>
+
+            {serversLoading ? (
+              <p className="text-xs text-muted-foreground">Loading servers...</p>
+            ) : enabledServers.length === 0 ? (
+              <p className="text-xs text-destructive">
+                No MCP servers enabled. Enable servers in Connections &gt; MCP Server.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {enabledServers.map((server: { id: string; name: string; description: string }) => (
+                  <label
+                    key={server.id}
+                    className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${
+                      selectedServers.includes(server.id)
+                        ? 'bg-success/5 border-success/30'
+                        : 'bg-muted/30 border-border hover:bg-muted/50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedServers.includes(server.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          onSelectedServersChange([...selectedServers, server.id]);
+                        } else {
+                          onSelectedServersChange(selectedServers.filter((id) => id !== server.id));
+                        }
+                      }}
+                      className="w-3.5 h-3.5 rounded accent-primary"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-medium">{server.name}</span>
+                      {server.description && (
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {server.description}
+                        </p>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {selectedServers.length === 0 && enabledServers.length > 0 && (
+              <p className="text-xs text-destructive">
+                Select at least one MCP server to enable MCP tools.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Creation Controls */}
       <div className="mt-4 pt-4 border-t border-border">
         <div className="flex items-center justify-between mb-2">
@@ -1069,6 +1161,9 @@ export function PersonalityEditor() {
     personalities: false,
     experiments: false,
   });
+
+  const [allowConnections, setAllowConnections] = useState(false);
+  const [selectedServers, setSelectedServers] = useState<string[]>([]);
 
   const { data: personalitiesData, isLoading } = useQuery({
     queryKey: ['personalities'],
@@ -1184,7 +1279,11 @@ export function PersonalityEditor() {
       ...form,
       body: {
         ...form.body,
+        enabled: allowConnections,
+        capabilities: [],
+        heartEnabled: true,
         creationConfig,
+        selectedServers,
       },
     };
     if (editing === 'new') {
@@ -1417,7 +1516,14 @@ export function PersonalityEditor() {
           <BrainSection />
 
           {/* Body Section */}
-          <BodySection creationConfig={creationConfig} onCreationConfigChange={setCreationConfig} />
+          <BodySection
+            allowConnections={allowConnections}
+            onAllowConnectionsChange={setAllowConnections}
+            selectedServers={selectedServers}
+            onSelectedServersChange={setSelectedServers}
+            creationConfig={creationConfig}
+            onCreationConfigChange={setCreationConfig}
+          />
 
           {/* Heart Section */}
           <HeartSection />
