@@ -25,9 +25,14 @@ import {
   Edit2,
   Trash2,
   FileText,
+  Heart,
+  Play,
+  Pause,
+  ChevronDown,
 } from 'lucide-react';
 import {
   fetchSecurityEvents,
+  fetchAuditEntries,
   verifyAuditChain,
   fetchTasks,
   createTask,
@@ -36,7 +41,7 @@ import {
   fetchHeartbeatTasks,
 } from '../api/client';
 import { ConfirmDialog } from './common/ConfirmDialog';
-import type { MetricsSnapshot, SecurityEvent, Task, HeartbeatTask } from '../types';
+import type { MetricsSnapshot, SecurityEvent, AuditEntry, Task, HeartbeatTask } from '../types';
 
 type TabType = 'overview' | 'audit' | 'tasks' | 'reports';
 
@@ -124,8 +129,11 @@ export function SecurityPage() {
   const location = useLocation();
   const getInitialTab = (): TabType => {
     const path = location.pathname;
-    if (path.includes('/tasks')) return 'tasks';
-    if (path.includes('/reports')) return 'reports';
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    if (tabParam === 'audit') return 'audit';
+    if (tabParam === 'tasks' || path.includes('/tasks')) return 'tasks';
+    if (tabParam === 'reports' || path.includes('/reports')) return 'reports';
     return 'overview';
   };
 
@@ -137,6 +145,26 @@ export function SecurityPage() {
     error?: string;
   } | null>(null);
   const [acknowledged, setAcknowledged] = useState<Set<string>>(loadAcknowledged);
+  const [auditReviewed, setAuditReviewed] = useState<Set<string>>(loadReviewedAudit);
+
+  const markAuditReviewed = useCallback((ids: string[]) => {
+    setAuditReviewed((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      saveReviewedAudit(next);
+      return next;
+    });
+  }, []);
+
+  const markAllAuditReviewed = useCallback(async () => {
+    try {
+      const result = await fetchAuditEntries({ limit: 10000, offset: 0 });
+      const allIds = result.entries.map((e) => e.id);
+      markAuditReviewed(allIds);
+    } catch {
+      // fallback: no-op
+    }
+  }, [markAuditReviewed]);
 
   const { data: eventsData } = useQuery({
     queryKey: ['security-events'],
@@ -151,6 +179,8 @@ export function SecurityPage() {
     try {
       const result = await verifyAuditChain();
       setVerificationResult(result);
+      // Verification is an audit of the entire chain — mark all entries reviewed
+      await markAllAuditReviewed();
     } finally {
       setVerifying(false);
     }
@@ -249,11 +279,16 @@ export function SecurityPage() {
           onVerify={handleVerifyChain}
           onAcknowledge={acknowledgeEvent}
           onAcknowledgeAll={acknowledgeAll}
+          onViewAuditLog={() => setActiveTab('audit')}
         />
       )}
 
       {activeTab === 'audit' && (
-        <AuditLogTab entryCount={verificationResult?.entriesChecked ?? 0} />
+        <AuditLogTab
+          reviewed={auditReviewed}
+          onMarkReviewed={markAuditReviewed}
+          onMarkAllReviewed={markAllAuditReviewed}
+        />
       )}
 
       {activeTab === 'tasks' && <TasksTab />}
@@ -272,6 +307,7 @@ function SecurityOverviewTab({
   onVerify,
   onAcknowledge,
   onAcknowledgeAll,
+  onViewAuditLog,
 }: {
   events: SecurityEvent[];
   criticalCount: number;
@@ -281,6 +317,7 @@ function SecurityOverviewTab({
   onVerify: () => void;
   onAcknowledge: (id: string) => void;
   onAcknowledgeAll: () => void;
+  onViewAuditLog: () => void;
 }) {
   return (
     <div className="space-y-6">
@@ -314,18 +351,27 @@ function SecurityOverviewTab({
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Audit Status</p>
-              <button
-                onClick={onVerify}
-                disabled={verifying}
-                className="text-sm font-medium text-primary hover:underline flex items-center gap-1"
-              >
-                {verifying ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3 h-3" />
-                )}
-                {verificationResult ? (verificationResult.valid ? 'Verified' : 'Failed') : 'Verify'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onVerify}
+                  disabled={verifying}
+                  className="text-sm font-medium text-primary hover:underline flex items-center gap-1"
+                >
+                  {verifying ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  {verificationResult ? (verificationResult.valid ? 'Verified' : 'Failed') : 'Verify'}
+                </button>
+                <button
+                  onClick={onViewAuditLog}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <Eye className="w-3 h-3" />
+                  View Log
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -350,17 +396,26 @@ function SecurityOverviewTab({
               : 'border-l-destructive bg-destructive/5'
           }`}
         >
-          <div className="flex items-center gap-2">
-            {verificationResult.valid ? (
-              <CheckCircle className="w-5 h-5 text-success" />
-            ) : (
-              <XCircle className="w-5 h-5 text-destructive" />
-            )}
-            <span className="font-medium">
-              {verificationResult.valid
-                ? `Audit chain verified (${verificationResult.entriesChecked} entries)`
-                : verificationResult.error || 'Verification failed'}
-            </span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {verificationResult.valid ? (
+                <CheckCircle className="w-5 h-5 text-success" />
+              ) : (
+                <XCircle className="w-5 h-5 text-destructive" />
+              )}
+              <span className="font-medium">
+                {verificationResult.valid
+                  ? `Audit chain verified (${verificationResult.entriesChecked} entries)`
+                  : verificationResult.error || 'Verification failed'}
+              </span>
+            </div>
+            <button
+              onClick={onViewAuditLog}
+              className="text-sm text-primary hover:underline flex items-center gap-1"
+            >
+              <FileText className="w-4 h-4" />
+              View Audit Log
+            </button>
           </div>
         </div>
       )}
@@ -414,9 +469,15 @@ function SecurityOverviewTab({
   );
 }
 
+function formatInterval(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
 function TasksTab() {
   const [searchParams, setSearchParams] = useState({ offset: '0', status: '', type: '' });
-  const { data: tasksData, isLoading } = useQuery({
+  const { data: tasksData, isLoading: tasksLoading } = useQuery({
     queryKey: ['tasks', searchParams],
     queryFn: () =>
       fetchTasks({
@@ -428,37 +489,331 @@ function TasksTab() {
     refetchInterval: 10000,
   });
 
+  const { data: heartbeatData, isLoading: heartbeatLoading } = useQuery({
+    queryKey: ['heartbeat-tasks'],
+    queryFn: fetchHeartbeatTasks,
+    refetchInterval: 10000,
+  });
+
+  const heartbeatTasks = heartbeatData?.tasks ?? [];
+  const [heartbeatOpen, setHeartbeatOpen] = useState(false);
+  const activeCount = heartbeatTasks.filter((t) => t.enabled).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Heartbeat Tasks Section — collapsible */}
+      <div className="card">
+        <button
+          onClick={() => setHeartbeatOpen((prev) => !prev)}
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/30 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Heart className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold text-sm">Heartbeat Tasks</h3>
+            {heartbeatTasks.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {activeCount}/{heartbeatTasks.length} active
+              </span>
+            )}
+          </div>
+          <ChevronDown
+            className={`w-4 h-4 text-muted-foreground transition-transform ${heartbeatOpen ? '' : '-rotate-90'}`}
+          />
+        </button>
+
+        {heartbeatOpen && (
+          <div className="border-t border-border">
+            {heartbeatLoading ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : heartbeatTasks.length === 0 ? (
+              <div className="p-6 text-center">
+                <Heart className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No heartbeat tasks configured</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {heartbeatTasks.map((task) => (
+                  <div
+                    key={task.name}
+                    className={`p-4 border-l-4 ${task.enabled ? 'border-l-success' : 'border-l-muted-foreground/30'}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {task.enabled ? (
+                          <Play className="w-4 h-4 text-success" />
+                        ) : (
+                          <Pause className="w-4 h-4 text-muted-foreground" />
+                        )}
+                        <div>
+                          <p className="font-medium text-sm">{task.name}</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="badge text-xs">{task.type}</span>
+                            {task.intervalMs && (
+                              <span className="text-xs text-muted-foreground">
+                                every {formatInterval(task.intervalMs)}
+                              </span>
+                            )}
+                            {task.lastRunAt ? (
+                              <span className="text-xs text-muted-foreground">
+                                last run {new Date(task.lastRunAt).toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">never run</span>
+                            )}
+                            {task.personalityName && (
+                              <span className="text-xs text-muted-foreground">
+                                {task.personalityName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <span
+                        className={`badge ${task.enabled ? 'badge-success' : 'badge'}`}
+                      >
+                        {task.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Regular Tasks Section */}
+      <div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold">Task History</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={searchParams.status}
+              onChange={(e) =>
+                setSearchParams({ ...searchParams, status: e.target.value, offset: '0' })
+              }
+              className="bg-card border border-border rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">All Status</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="running">Running</option>
+              <option value="pending">Pending</option>
+            </select>
+            <select
+              value={searchParams.type}
+              onChange={(e) =>
+                setSearchParams({ ...searchParams, type: e.target.value, offset: '0' })
+              }
+              className="bg-card border border-border rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">All Types</option>
+              <option value="execute">Execute</option>
+              <option value="query">Query</option>
+              <option value="file">File</option>
+              <option value="network">Network</option>
+              <option value="system">System</option>
+            </select>
+          </div>
+        </div>
+
+        {tasksLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : !tasksData?.tasks.length ? (
+          <div className="card p-12 text-center">
+            <Clock className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+            <p className="text-muted-foreground">No tasks found</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {tasksData.tasks.map((task) => (
+              <div key={task.id} className="card p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {STATUS_ICONS[task.status] || <Clock className="w-4 h-4" />}
+                    <div>
+                      <p className="font-medium text-sm">{task.name || task.id}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {task.type} • {new Date(task.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`badge ${STATUS_COLORS[task.status] || 'badge'}`}>
+                    {task.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tasksData && tasksData.total > 10 && (
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() =>
+                setSearchParams({
+                  ...searchParams,
+                  offset: String(Math.max(0, Number(searchParams.offset) - 10)),
+                })
+              }
+              disabled={Number(searchParams.offset) <= 0}
+              className="btn btn-ghost"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-sm text-muted-foreground">
+              {Number(searchParams.offset) + 1}-
+              {Math.min(Number(searchParams.offset) + 10, tasksData.total)} of {tasksData.total}
+            </span>
+            <button
+              onClick={() =>
+                setSearchParams({ ...searchParams, offset: String(Number(searchParams.offset) + 10) })
+              }
+              disabled={Number(searchParams.offset) + 10 >= tasksData.total}
+              className="btn btn-ghost"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const AUDIT_REVIEWED_KEY = 'friday_reviewed_audit';
+
+function loadReviewedAudit(): Set<string> {
+  try {
+    const stored = localStorage.getItem(AUDIT_REVIEWED_KEY);
+    return new Set(stored ? JSON.parse(stored) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReviewedAudit(ids: Set<string>): void {
+  localStorage.setItem(AUDIT_REVIEWED_KEY, JSON.stringify(Array.from(ids)));
+}
+
+const LEVEL_ICONS = {
+  info: { unreviewed: <Info className="w-4 h-4 text-info" />, border: 'border-l-info' },
+  warn: { unreviewed: <AlertTriangle className="w-4 h-4 text-warning" />, border: 'border-l-warning' },
+  error: { unreviewed: <XCircle className="w-4 h-4 text-destructive" />, border: 'border-l-destructive' },
+  security: {
+    unreviewed: <ShieldAlert className="w-4 h-4 text-destructive" />,
+    border: 'border-l-destructive bg-destructive/5',
+  },
+} as const;
+
+function AuditLogTab({
+  reviewed,
+  onMarkReviewed,
+  onMarkAllReviewed,
+}: {
+  reviewed: Set<string>;
+  onMarkReviewed: (ids: string[]) => void;
+  onMarkAllReviewed: () => void;
+}) {
+  const [filters, setFilters] = useState({ level: '', event: '', offset: 0 });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const limit = 20;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['audit-entries', filters],
+    queryFn: () =>
+      fetchAuditEntries({
+        level: filters.level || undefined,
+        event: filters.event || undefined,
+        limit,
+        offset: filters.offset,
+      }),
+    refetchInterval: 15000,
+  });
+
+  const entries = data?.entries ?? [];
+  const total = data?.total ?? 0;
+  const unreviewedCount = entries.filter((e: AuditEntry) => !reviewed.has(e.id)).length;
+
+  const markPageReviewed = useCallback(() => {
+    onMarkReviewed(entries.map((e: AuditEntry) => e.id));
+  }, [entries, onMarkReviewed]);
+
+  const handleToggleExpand = useCallback(
+    (id: string) => {
+      setExpandedId((prev) => (prev === id ? null : id));
+      if (!reviewed.has(id)) {
+        onMarkReviewed([id]);
+      }
+    },
+    [reviewed, onMarkReviewed]
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h3 className="font-semibold">Task History</h3>
+        <div>
+          <h3 className="font-semibold">Audit Log</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            {total > 0
+              ? `${total} total entries${unreviewedCount > 0 ? ` \u00b7 ${unreviewedCount} unreviewed` : ''}`
+              : 'View and verify audit chain entries'}
+          </p>
+        </div>
         <div className="flex items-center gap-2">
+          {unreviewedCount > 0 && (
+            <button
+              onClick={markPageReviewed}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <Check className="w-3 h-3" />
+              Mark page reviewed
+            </button>
+          )}
+          <button
+            onClick={onMarkAllReviewed}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          >
+            <CheckCircle className="w-3 h-3" />
+            Mark all reviewed
+          </button>
           <select
-            value={searchParams.status}
-            onChange={(e) =>
-              setSearchParams({ ...searchParams, status: e.target.value, offset: '0' })
-            }
+            value={filters.level}
+            onChange={(e) => setFilters({ ...filters, level: e.target.value, offset: 0 })}
             className="bg-card border border-border rounded-lg px-3 py-2 text-sm"
           >
-            <option value="">All Status</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="running">Running</option>
-            <option value="pending">Pending</option>
+            <option value="">All Levels</option>
+            <option value="info">Info</option>
+            <option value="warn">Warning</option>
+            <option value="error">Error</option>
+            <option value="security">Security</option>
           </select>
           <select
-            value={searchParams.type}
-            onChange={(e) =>
-              setSearchParams({ ...searchParams, type: e.target.value, offset: '0' })
-            }
+            value={filters.event}
+            onChange={(e) => setFilters({ ...filters, event: e.target.value, offset: 0 })}
             className="bg-card border border-border rounded-lg px-3 py-2 text-sm"
           >
-            <option value="">All Types</option>
-            <option value="execute">Execute</option>
-            <option value="query">Query</option>
-            <option value="file">File</option>
-            <option value="network">Network</option>
-            <option value="system">System</option>
+            <option value="">All Events</option>
+            <option value="auth_success">Auth Success</option>
+            <option value="auth_failure">Auth Failure</option>
+            <option value="rate_limit">Rate Limit</option>
+            <option value="injection_attempt">Injection Attempt</option>
+            <option value="permission_denied">Permission Denied</option>
+            <option value="anomaly">Anomaly</option>
+            <option value="sandbox_violation">Sandbox Violation</option>
+            <option value="config_change">Config Change</option>
+            <option value="secret_access">Secret Access</option>
+            <option value="task_start">Task Start</option>
+            <option value="task_complete">Task Complete</option>
+            <option value="task_fail">Task Fail</option>
+            <option value="mcp_tool_call">MCP Tool Call</option>
           </select>
         </div>
       </div>
@@ -467,87 +822,141 @@ function TasksTab() {
         <div className="flex justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
         </div>
-      ) : !tasksData?.tasks.length ? (
+      ) : entries.length === 0 ? (
         <div className="card p-12 text-center">
-          <Clock className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">No tasks found</p>
+          <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+          <p className="text-muted-foreground">No audit entries found</p>
+          {(filters.level || filters.event) && (
+            <button
+              onClick={() => setFilters({ level: '', event: '', offset: 0 })}
+              className="text-sm text-primary hover:underline mt-2"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
-          {tasksData.tasks.map((task) => (
-            <div key={task.id} className="card p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  {STATUS_ICONS[task.status] || <Clock className="w-4 h-4" />}
-                  <div>
-                    <p className="font-medium text-sm">{task.name || task.id}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {task.type} • {new Date(task.createdAt).toLocaleString()}
-                    </p>
+          {entries.map((entry: AuditEntry) => {
+            const level = LEVEL_ICONS[entry.level as keyof typeof LEVEL_ICONS] ?? LEVEL_ICONS.info;
+            const isExpanded = expandedId === entry.id;
+            const isReviewed = reviewed.has(entry.id);
+            const icon = isReviewed
+              ? <CheckCircle className="w-4 h-4 text-muted-foreground/50" />
+              : level.unreviewed;
+
+            return (
+              <div
+                key={entry.id}
+                className={`card border-l-4 ${level.border} cursor-pointer transition-colors hover:bg-muted/30${!isReviewed ? ' bg-muted/10' : ''}`}
+                onClick={() => handleToggleExpand(entry.id)}
+              >
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 min-w-0">
+                      {icon}
+                      <div className="min-w-0">
+                        <p className={`text-sm truncate ${isReviewed ? 'text-muted-foreground' : 'font-medium'}`}>{entry.message || entry.event}</p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="badge text-xs">{entry.event}</span>
+                          <span className="badge text-xs">{entry.level}</span>
+                          {entry.userId && (
+                            <span className="text-xs text-muted-foreground">
+                              user: {entry.userId}
+                            </span>
+                          )}
+                          {entry.taskId && (
+                            <span className="text-xs text-muted-foreground">
+                              task: {entry.taskId.slice(0, 8)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          #{entry.sequence} &middot; {new Date(entry.timestamp).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 text-muted-foreground shrink-0">
+                      {isExpanded ? (
+                        <ChevronLeft className="w-4 h-4 rotate-[-90deg]" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4 rotate-90" />
+                      )}
+                    </div>
                   </div>
+
+                  {isExpanded && (
+                    <div className="mt-3 pt-3 border-t border-border space-y-2 text-xs">
+                      <div className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1">
+                        <span className="text-muted-foreground">ID</span>
+                        <span className="font-mono truncate">{entry.id}</span>
+                        <span className="text-muted-foreground">Sequence</span>
+                        <span>{entry.sequence}</span>
+                        {entry.userId && (
+                          <>
+                            <span className="text-muted-foreground">User ID</span>
+                            <span className="font-mono">{entry.userId}</span>
+                          </>
+                        )}
+                        {entry.taskId && (
+                          <>
+                            <span className="text-muted-foreground">Task ID</span>
+                            <span className="font-mono">{entry.taskId}</span>
+                          </>
+                        )}
+                        {entry.signature && (
+                          <>
+                            <span className="text-muted-foreground">Signature</span>
+                            <span className="font-mono truncate">{entry.signature}</span>
+                          </>
+                        )}
+                        {entry.previousHash && (
+                          <>
+                            <span className="text-muted-foreground">Prev Hash</span>
+                            <span className="font-mono truncate">{entry.previousHash}</span>
+                          </>
+                        )}
+                      </div>
+                      {entry.metadata && Object.keys(entry.metadata).length > 0 && (
+                        <div>
+                          <p className="text-muted-foreground mb-1">Metadata</p>
+                          <pre className="bg-muted/50 rounded p-2 overflow-x-auto text-xs">
+                            {JSON.stringify(entry.metadata, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <span className={`badge ${STATUS_COLORS[task.status] || 'badge'}`}>
-                  {task.status}
-                </span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {tasksData && tasksData.total > 10 && (
+      {total > limit && (
         <div className="flex items-center justify-center gap-2">
           <button
             onClick={() =>
-              setSearchParams({
-                ...searchParams,
-                offset: String(Math.max(0, Number(searchParams.offset) - 10)),
-              })
+              setFilters({ ...filters, offset: Math.max(0, filters.offset - limit) })
             }
-            disabled={Number(searchParams.offset) <= 0}
+            disabled={filters.offset <= 0}
             className="btn btn-ghost"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <span className="text-sm text-muted-foreground">
-            {Number(searchParams.offset) + 1}-
-            {Math.min(Number(searchParams.offset) + 10, tasksData.total)} of {tasksData.total}
+            {filters.offset + 1}-{Math.min(filters.offset + limit, total)} of {total}
           </span>
           <button
-            onClick={() =>
-              setSearchParams({ ...searchParams, offset: String(Number(searchParams.offset) + 10) })
-            }
-            disabled={Number(searchParams.offset) + 10 >= tasksData.total}
+            onClick={() => setFilters({ ...filters, offset: filters.offset + limit })}
+            disabled={filters.offset + limit >= total}
             className="btn btn-ghost"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function AuditLogTab({ entryCount }: { entryCount: number }) {
-  return (
-    <div className="space-y-6">
-      <div className="card">
-        <div className="p-4 border-b">
-          <h3 className="font-semibold">Audit Log</h3>
-          <p className="text-xs text-muted-foreground mt-1">View and verify audit chain entries</p>
-        </div>
-        <div className="p-8 text-center">
-          <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">
-            {entryCount > 0
-              ? `${entryCount} audit entries verified`
-              : 'No audit entries to display'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-2">
-            Run verification from the Overview tab to check the audit chain
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

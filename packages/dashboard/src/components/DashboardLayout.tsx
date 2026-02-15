@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Shield,
@@ -218,6 +218,8 @@ export function DashboardLayout() {
 // ── Overview Page ─────────────────────────────────────────────────────
 
 function OverviewPage({ metrics }: { metrics?: MetricsSnapshot }) {
+  const navigate = useNavigate();
+
   return (
     <div className="space-y-6">
       {/* Quick Stats */}
@@ -245,6 +247,7 @@ function OverviewPage({ metrics }: { metrics?: MetricsSnapshot }) {
           icon={<Shield className="w-5 h-5" />}
           trend={metrics?.security?.auditChainValid ? 'Chain Valid' : 'Chain Invalid'}
           trendUp={metrics?.security?.auditChainValid}
+          onClick={() => navigate('/security?tab=audit')}
         />
         <StatCard
           title="Memory Usage"
@@ -298,11 +301,15 @@ interface StatCardProps {
   trend?: string;
   trendUp?: boolean;
   subtitle?: string;
+  onClick?: () => void;
 }
 
-function StatCard({ title, value, icon, trend, trendUp, subtitle }: StatCardProps) {
+function StatCard({ title, value, icon, trend, trendUp, subtitle, onClick }: StatCardProps) {
   return (
-    <div className="card p-4">
+    <div
+      className={`card p-4${onClick ? ' cursor-pointer hover:bg-muted/30 transition-colors' : ''}`}
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>

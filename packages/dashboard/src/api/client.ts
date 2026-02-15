@@ -407,6 +407,34 @@ function mapLevelToSeverity(level: string): SecurityEvent['severity'] {
   }
 }
 
+export async function fetchAuditEntries(params?: {
+  from?: number;
+  to?: number;
+  level?: string;
+  event?: string;
+  userId?: string;
+  taskId?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ entries: import('../types').AuditEntry[]; total: number; limit: number; offset: number }> {
+  const query = new URLSearchParams();
+  if (params?.from) query.set('from', params.from.toString());
+  if (params?.to) query.set('to', params.to.toString());
+  if (params?.level) query.set('level', params.level);
+  if (params?.event) query.set('event', params.event);
+  if (params?.userId) query.set('userId', params.userId);
+  if (params?.taskId) query.set('taskId', params.taskId);
+  if (params?.limit) query.set('limit', params.limit.toString());
+  if (params?.offset !== undefined) query.set('offset', params.offset.toString());
+
+  const queryString = query.toString();
+  try {
+    return await request(`/audit${queryString ? `?${queryString}` : ''}`);
+  } catch {
+    return { entries: [], total: 0, limit: params?.limit ?? 50, offset: params?.offset ?? 0 };
+  }
+}
+
 export async function verifyAuditChain(): Promise<{
   valid: boolean;
   entriesChecked: number;

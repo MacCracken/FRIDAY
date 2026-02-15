@@ -92,6 +92,20 @@ export interface SecurityEvent {
   acknowledged: boolean;
 }
 
+export interface AuditEntry {
+  id: string;
+  sequence: number;
+  timestamp: number;
+  event: string;
+  level: string;
+  message: string;
+  userId?: string;
+  taskId?: string;
+  metadata?: Record<string, unknown>;
+  signature?: string;
+  previousHash?: string;
+}
+
 export interface HealthStatus {
   status: 'ok' | 'degraded' | 'error';
   version: string;
