@@ -1,11 +1,13 @@
-//! Chat routes — conversation and message CRUD.
+//! Chat routes — conversation/message CRUD and streaming chat completion.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use std::convert::Infallible;
 
 use crate::db::chat;
 use crate::state::AppState;
@@ -17,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/conversations/{id}", get(get_conversation))
         .route("/api/v1/conversations/{id}", delete(delete_conversation))
         .route("/api/v1/conversations/{id}/messages", get(list_messages))
+        .route("/api/v1/chat/stream", post(chat_stream))
 }
 
 #[derive(Deserialize)]
@@ -165,4 +168,156 @@ async fn list_messages(
         )
             .into_response(),
     }
+}
+
+// ── Chat Streaming (SSE) ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatStreamRequest {
+    message: String,
+    #[serde(default)]
+    history: Vec<ChatMessage>,
+    personality_id: Option<String>,
+    conversation_id: Option<String>,
+    model: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+fn hoosh_base_url() -> String {
+    std::env::var("HOOSH_URL").unwrap_or_else(|_| "http://127.0.0.1:8088".to_string())
+}
+
+/// POST /api/v1/chat/stream — stream chat completion tokens via SSE.
+///
+/// Proxies to hoosh's OpenAI-compatible /v1/chat/completions with stream:true.
+/// Maps OpenAI SSE chunks to SY ChatStreamEvent format:
+/// - content_delta: { type: "content_delta", content: "..." }
+/// - done: { type: "done", content: "...", model: "...", provider: "hoosh" }
+/// - error: { type: "error", message: "..." }
+async fn chat_stream(
+    State(_state): State<AppState>,
+    Json(body): Json<ChatStreamRequest>,
+) -> impl IntoResponse {
+    if body.message.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "message is required"})),
+        )
+            .into_response();
+    }
+
+    let base_url = hoosh_base_url();
+    let url = format!("{base_url}/v1/chat/completions");
+
+    // Build OpenAI-compatible messages array
+    let mut messages = Vec::with_capacity(body.history.len() + 1);
+    for msg in &body.history {
+        messages.push(serde_json::json!({
+            "role": msg.role,
+            "content": msg.content,
+        }));
+    }
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": body.message,
+    }));
+
+    let model = body.model.as_deref().unwrap_or("default");
+
+    let oai_body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": true,
+    });
+
+    // POST to hoosh
+    let client = reqwest::Client::new();
+    let response = match client.post(&url).json(&oai_body).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let err = r.text().await.unwrap_or_default();
+            let event = Event::default().data(
+                serde_json::json!({"type": "error", "message": format!("LLM error ({status}): {err}")}).to_string(),
+            );
+            return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
+        }
+        Err(e) => {
+            let event = Event::default().data(
+                serde_json::json!({"type": "error", "message": format!("Failed to connect to LLM: {e}")}).to_string(),
+            );
+            return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
+        }
+    };
+
+    // Read the OpenAI SSE response body and map to SY events.
+    // OpenAI SSE format: `data: {JSON}\n\n` lines, ending with `data: [DONE]\n\n`.
+    let response_text = match response.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            let event = Event::default().data(
+                serde_json::json!({"type": "error", "message": format!("Failed to read LLM response: {e}")}).to_string(),
+            );
+            return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
+        }
+    };
+
+    // Parse OpenAI SSE lines and accumulate content
+    let mut full_content = String::new();
+    let mut events: Vec<Result<Event, Infallible>> = Vec::new();
+    let mut response_model = model.to_string();
+
+    for line in response_text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(':') {
+            continue; // Skip empty lines and comments
+        }
+        if let Some(data) = line.strip_prefix("data: ") {
+            if data == "[DONE]" {
+                break;
+            }
+            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                // Extract model from first chunk
+                if let Some(m) = chunk.get("model").and_then(|v| v.as_str()) {
+                    response_model = m.to_string();
+                }
+                // Extract content delta from choices[0].delta.content
+                if let Some(content) = chunk
+                    .get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("delta"))
+                    .and_then(|d| d.get("content"))
+                    .and_then(|c| c.as_str())
+                    .filter(|c| !c.is_empty())
+                {
+                    full_content.push_str(content);
+                    events.push(Ok(Event::default().data(
+                        serde_json::json!({"type": "content_delta", "content": content})
+                            .to_string(),
+                    )));
+                }
+            }
+        }
+    }
+
+    // Final done event
+    events.push(Ok(Event::default().data(
+        serde_json::json!({
+            "type": "done",
+            "content": full_content,
+            "model": response_model,
+            "provider": "hoosh",
+        })
+        .to_string(),
+    )));
+
+    Sse::new(tokio_stream::iter(events))
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+        .into_response()
 }

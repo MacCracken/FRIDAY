@@ -23,6 +23,7 @@ pub mod health;
 pub mod integrations;
 pub mod marketplace;
 pub mod mcp;
+pub mod models;
 pub mod notifications;
 pub mod proactive;
 pub mod risk;
