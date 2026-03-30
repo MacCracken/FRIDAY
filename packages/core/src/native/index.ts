@@ -205,6 +205,63 @@ export interface NativeModule {
   agnosaiCreateAgentDef(profileJson: string): string;
   agnosaiListBuiltinTools(): string;
   agnosaiUcb1Select(armsJson: string): string;
+
+  // Dhvani audio engine
+  dhvaniVoiceProfileMale(): string;
+  dhvaniVoiceProfileFemale(): string;
+  dhvaniVoiceProfileFromJson(configJson: string): string;
+  dhvaniG2pConvert(text: string, language?: string | null): string;
+  dhvaniSynthesizeSpeech(
+    text: string,
+    voiceProfileJson?: string | null,
+    sampleRate?: number | null
+  ): Buffer;
+  dhvaniSynthesizePhonemes(
+    phonemeEventsJson: string,
+    voiceProfileJson?: string | null,
+    sampleRate?: number | null
+  ): Buffer;
+  dhvaniNoiseReduce(
+    audio: Buffer,
+    sampleRate: number,
+    strength?: number | null,
+    channels?: number | null
+  ): Buffer;
+  dhvaniResample(
+    audio: Buffer,
+    sourceRate: number,
+    targetRate: number,
+    channels?: number | null
+  ): Buffer;
+  dhvaniNormalize(
+    audio: Buffer,
+    sampleRate: number,
+    targetPeak: number,
+    channels?: number | null
+  ): Buffer;
+  dhvaniAnalyzeDynamics(
+    audio: Buffer,
+    sampleRate: number,
+    channels?: number | null
+  ): string;
+  dhvaniLoudnessLufs(
+    audio: Buffer,
+    sampleRate: number,
+    channels?: number | null
+  ): number;
+  dhvaniIsSilent(
+    audio: Buffer,
+    sampleRate: number,
+    thresholdDb?: number | null,
+    channels?: number | null
+  ): boolean;
+  dhvaniPcmToWav(audio: Buffer, sampleRate: number, channels?: number | null): Buffer;
+  dhvaniSuggestGain(
+    audio: Buffer,
+    sampleRate: number,
+    targetRms: number,
+    channels?: number | null
+  ): number;
 }
 
 let _native: NativeModule | null = null;

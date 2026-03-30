@@ -186,19 +186,33 @@ These Rust crates already exist in SY and don't need migration:
 
 ---
 
-## Phase 6 — Communication & Voice (dhvani replaces multimodal)
+## Phase 6 — Communication & Voice (dhvani replaces multimodal) ✅
 
 **SY modules**: `packages/core/src/multimodal/`, `packages/core/src/comms/`
-**Replaces with**: `dhvani` (audio engine + voice synthesis when ready)
+**Replaces with**: `dhvani 1.0.0` (audio engine + voice synthesis via svara + G2P via shabda)
 
-| # | Item | Notes |
-|---|------|-------|
-| 1 | Replace TTS with dhvani voice synthesis (when Phase v2.0 lands) | Bhava personality → prosody. No cloud TTS API |
-| 2 | Replace STT with dhvani capture → hoosh Whisper | Local audio pipeline |
-| 3 | Replace E2E comms encryption with sy-crypto + pqc | Post-quantum secure |
-| 4 | T.Ron speaks with a voice shaped by `bhava::presets::tron()` | Personality-driven voice, zero network latency |
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | Replace TTS with dhvani voice synthesis | ✅ Done | Two providers: `dhvani` (full svara voice) and `dhvani-g2p` (lightweight shabda path for edge). Cloud TTS remains as fallback |
+| 2 | Replace STT with dhvani capture → hoosh Whisper | ✅ Done | `dhvani` STT provider: noise reduce + resample via dhvani DSP, then → faster-whisper for recognition |
+| 3 | Replace E2E comms encryption with sy-crypto | ✅ Done | AgentCrypto delegates to sy-crypto NAPI (X25519/Ed25519/HKDF/AES-256-GCM). PQC deferred (requires quantum kernel) |
+| 4 | T.Ron speaks with a voice shaped by bhava traits | ✅ Done | `traitsToVoiceProfile()` maps 15 bhava personality dimensions → dhvani VoiceProfile prosody (f0, breathiness, vibrato, jitter/shimmer). VoiceAgentConfig accepts `personalityTraits` |
 
-**Result**: SY agents have native voice. No ElevenLabs, no OpenAI TTS. Pure DSP, personality-driven.
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `crates/sy-napi/Cargo.toml` | Added `dhvani = "1.0.0"` with voice, g2p, synthesis, analysis features |
+| `crates/sy-napi/src/dhvani.rs` | NAPI bridge: voice profiles, G2P, synthesis, DSP, analysis, PCM→WAV |
+| `crates/sy-napi/src/lib.rs` | Registered dhvani module |
+| `packages/core/src/native/index.ts` | Extended NativeModule interface with dhvani functions |
+| `packages/core/src/native/dhvani.ts` | Typed TS wrappers + `traitsToVoiceProfile()` mapping |
+| `packages/core/src/native/dhvani.test.ts` | Unit tests: trait mapping (5 tests) + native module tests (16, skip when addon not rebuilt) |
+| `packages/core/src/multimodal/manager.ts` | Added dhvani/dhvani-g2p TTS providers, dhvani STT provider with DSP preprocessing |
+| `packages/core/src/multimodal/voice/voice-agent.ts` | Added `personalityTraits` to VoiceAgentConfig |
+| `packages/core/src/comms/crypto.ts` | Replaced node:crypto with sy-crypto NAPI for all crypto ops |
+
+**Result**: SY agents have native voice via dhvani. G2P provides a zero-inference alternative for edge devices. Cloud TTS/STT remains available as fallback. Comms encryption runs in Rust via sy-crypto.
 
 ---
 
@@ -300,7 +314,7 @@ Phase 5 (security)  ← already mostly Rust, extend existing crates
     ↓
 Phase 4 (daimon)    ← brain becomes thin client, removes vector store deps
     ↓
-Phase 6 (dhvani)    ← when voice synthesis is ready in dhvani
+Phase 6 (dhvani)    ✅ complete (dhvani 1.0.0 integrated)
     ↓
 Phase 7 (core)      ← the final swap: Bun → axum, TS → Rust CLI
     ↓

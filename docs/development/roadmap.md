@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phase 1-5 complete, Phase 4 (daimon) initial integration done. Phase 7.0-7.2 complete — sy-core axum binary with **85 routes across 30 domain modules** (4,805 LoC), JWT+RBAC auth middleware, sqlx database layer covering all PostgreSQL schemas, reverse proxy to Fastify for unmigrated routes. 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.3 (AI/chat SSE streaming), 7.4 (WebSocket), 7.5 (integration proxies).
+**Status**: Phase 1-6 complete, Phase 4 (daimon) initial integration done. Phase 6 (dhvani) complete — voice synthesis, G2P, STT preprocessing, comms crypto via sy-crypto. Phase 7.0-7.2 complete — sy-core axum binary with **85 routes across 30 domain modules** (4,805 LoC), JWT+RBAC auth middleware, sqlx database layer covering all PostgreSQL schemas, reverse proxy to Fastify for unmigrated routes. 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.3 (AI/chat SSE streaming), 7.4 (WebSocket), 7.5 (integration proxies).
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
@@ -149,6 +149,7 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 | bhava | 1.2.0 | personality engine, traits, mood, spirit |
 | agnosai | 1.0.0 | crew orchestration, model routing, agent scoring |
 | ai-hwaccel | 1.0.0 | hardware accelerator detection (GPU, TPU, NPU, ASIC) via sy-hwprobe |
+| dhvani | 1.0.0 | voice synthesis (svara), G2P (shabda), audio DSP, analysis, PCM→WAV. TTS/STT providers + bhava trait→prosody mapping |
 
 ### Remaining
 

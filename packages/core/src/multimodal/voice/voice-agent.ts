@@ -17,6 +17,8 @@ export interface VoiceAgentConfig {
   sttProvider: string;
   ttsProvider: string;
   voiceProfileId?: string;
+  /** Bhava personality traits — used to shape dhvani voice prosody. */
+  personalityTraits?: Record<string, string>;
   /** Language hint for STT. Default 'en' */
   language?: string;
   /** Silence threshold in ms before flushing STT buffer. Default 1500 */

@@ -6,6 +6,19 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ---
 
+## [Unreleased]
+
+### Phase 6 — Communication & Voice (dhvani replaces multimodal/comms)
+
+- **dhvani 1.0.0 integrated** — Voice synthesis (svara), G2P (shabda), audio DSP, analysis via NAPI bridge (`crates/sy-napi/src/dhvani.rs`)
+- **TTS providers** — `dhvani` (full svara vocal synthesis) and `dhvani-g2p` (lightweight shabda phoneme path for edge devices) added to MultimodalManager. Cloud TTS remains as fallback
+- **STT preprocessing** — `dhvani` STT provider: noise reduce + resample via dhvani DSP, then faster-whisper for recognition
+- **comms/crypto.ts → sy-crypto** — AgentCrypto now delegates all crypto ops (X25519, Ed25519, HKDF, AES-256-GCM) to sy-crypto via NAPI. Dropped node:crypto dependency. PQC deferred
+- **Personality-driven voice** — `traitsToVoiceProfile()` maps 15 bhava personality trait dimensions to dhvani VoiceProfile prosody parameters (f0, breathiness, vibrato, jitter/shimmer). T.Ron gets authoritative low-pitch monotone voice. VoiceAgentConfig accepts `personalityTraits`
+- **G2P as alternative path** — shabda G2P provides zero-inference text-to-phoneme conversion, enabling voice on RPi4/DeepLens edge devices without GPU
+
+---
+
 ## [2026.3.28]
 
 *Consolidated release — includes all work since 2026.3.18-1.*

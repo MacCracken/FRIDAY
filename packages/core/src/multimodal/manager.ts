@@ -31,6 +31,9 @@ import { synthesizeViaPolly } from './tts/polly.js';
 import { synthesizeOrpheus, isOrpheusAvailable } from './tts/orpheus.js';
 import { synthesizePiper, isPiperAvailable } from './tts/piper.js';
 import { errorToString } from '../utils/errors.js';
+import { nativeAvailable } from '../native/index.js';
+import * as dhvaniNative from '../native/dhvani.js';
+import type { VoiceProfileConfig } from '../native/dhvani.js';
 
 const MAX_BASE64_LENGTH = 20_971_520; // ~20MB encoded
 const FETCH_TIMEOUT_MS = 30_000;
@@ -66,6 +69,10 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   // AWS
   polly: { label: 'AWS Polly', category: 'cloud' },
   transcribe: { label: 'AWS Transcribe', category: 'cloud' },
+  // Dhvani (native Rust audio engine via svara/shabda)
+  dhvani: { label: 'Dhvani Voice (local)', category: 'local' },
+  'dhvani-g2p': { label: 'Dhvani G2P (local, edge)', category: 'local' },
+  'dhvani-stt': { label: 'Dhvani + Whisper (local)', category: 'local' },
 };
 
 function sanitizeErrorMessage(msg: string): string {
@@ -148,6 +155,8 @@ export class MultimodalManager {
     if (process.env.ORPHEUS_URL) return 'orpheus';
     // Auto-select Piper when its URL is explicitly configured
     if (process.env.PIPER_URL) return 'piper';
+    // Auto-select dhvani when native module is available and no cloud provider configured
+    if (nativeAvailable) return 'dhvani';
     return (this.config.tts.provider ?? 'openai').toLowerCase();
   }
 
@@ -160,6 +169,8 @@ export class MultimodalManager {
     if (process.env.TRANSCRIBE_REGION && process.env.AWS_ACCESS_KEY_ID) return 'transcribe';
     // Auto-select faster-whisper when its URL is explicitly configured
     if (process.env.FASTER_WHISPER_URL) return 'faster-whisper';
+    // Auto-select dhvani preprocessing + faster-whisper when native is available
+    if (nativeAvailable && process.env.FASTER_WHISPER_URL) return 'dhvani';
     return (this.config.stt.provider ?? 'openai').toLowerCase();
   }
 
@@ -209,6 +220,42 @@ export class MultimodalManager {
     } catch {
       return false;
     }
+  }
+
+  /** Synthesize speech via dhvani native voice synthesis (svara).
+   *  When prosodyConfig is provided (from bhava personality traits), it shapes the voice. */
+  private synthesizeViaDhvani(
+    request: TTSRequest,
+    useG2POnly: boolean,
+    prosodyConfig?: VoiceProfileConfig | null
+  ): { audioBase64: string; format: string } {
+    // Priority: explicit prosody config (from bhava traits) > voice field > default
+    const voiceProfile = prosodyConfig
+      ? dhvaniNative.voiceProfileFromConfig(prosodyConfig)
+      : request.voice && request.voice !== 'alloy'
+        ? dhvaniNative.voiceProfileFromConfig({
+            base: request.voice as 'male' | 'female' | 'child',
+          })
+        : null;
+
+    let pcmBuffer: Buffer | null;
+    if (useG2POnly) {
+      // G2P-only path: text -> phonemes -> synthesis (lightweight, edge-friendly)
+      const phonemes = dhvaniNative.g2pConvert(request.text);
+      if (!phonemes) throw new Error('dhvani native module unavailable for G2P');
+      pcmBuffer = dhvaniNative.synthesizePhonemes(JSON.stringify(phonemes), voiceProfile, 44100);
+    } else {
+      // Full path: text -> G2P -> phoneme sequence -> voice synthesis
+      pcmBuffer = dhvaniNative.synthesizeSpeech(request.text, voiceProfile, 44100);
+    }
+
+    if (!pcmBuffer) throw new Error('dhvani native module unavailable');
+
+    // Convert PCM f32 -> WAV for consistent output format
+    const wavBuffer = dhvaniNative.pcmToWav(pcmBuffer, 44100);
+    if (!wavBuffer) throw new Error('dhvani PCM->WAV conversion failed');
+
+    return { audioBase64: wavBuffer.toString('base64'), format: 'wav' };
   }
 
   /**
@@ -288,6 +335,10 @@ export class MultimodalManager {
     if (hasPolly) ttsConfigured.push('polly');
     if (orpheusReachable) ttsConfigured.push('orpheus');
     if (piperReachable) ttsConfigured.push('piper');
+    if (nativeAvailable) {
+      ttsConfigured.push('dhvani');
+      ttsConfigured.push('dhvani-g2p');
+    }
 
     const sttConfigured: string[] = [];
     if (hasOpenAI) sttConfigured.push('openai');
@@ -299,6 +350,7 @@ export class MultimodalManager {
     if (hasAzure) sttConfigured.push('azure');
     if (hasTranscribe) sttConfigured.push('transcribe');
     if (fasterWhisperReachable) sttConfigured.push('faster-whisper');
+    if (nativeAvailable) sttConfigured.push('dhvani');
 
     const [activeVision, activeTTS, activeSTT, activeSTTModel] = await Promise.all([
       this.resolveVisionProvider(),
@@ -335,6 +387,8 @@ export class MultimodalManager {
           'polly',
           'orpheus',
           'piper',
+          'dhvani',
+          'dhvani-g2p',
         ],
         configured: ttsConfigured,
         active: activeTTS,
@@ -352,6 +406,7 @@ export class MultimodalManager {
           'azure',
           'transcribe',
           'faster-whisper',
+          'dhvani',
         ],
         configured: sttConfigured,
         active: activeSTT,
@@ -1113,6 +1168,20 @@ export class MultimodalManager {
           data = await transcribeFasterWhisper(audioBuffer, request.format, request.language);
           break;
         }
+        case 'dhvani': {
+          // Dhvani preprocessing: noise reduce + resample to 16kHz, then -> faster-whisper
+          let processedAudio = Buffer.from(request.audioBase64, 'base64');
+          const denoised = dhvaniNative.noiseReduce(processedAudio, 44100, 0.5);
+          if (denoised) {
+            const resampled = dhvaniNative.resample(denoised, 44100, 16000);
+            if (resampled) {
+              const wav = dhvaniNative.pcmToWav(resampled, 16000);
+              if (wav) processedAudio = Buffer.from(wav);
+            }
+          }
+          data = await transcribeFasterWhisper(processedAudio, 'wav', request.language);
+          break;
+        }
         default: {
           // openai (default)
           const apiKey = process.env.OPENAI_API_KEY;
@@ -1213,6 +1282,10 @@ export class MultimodalManager {
             return synthesizeOrpheus(request.text, request.voice, request.model);
           case 'piper':
             return synthesizePiper(request.text, request.voice, request.responseFormat);
+          case 'dhvani':
+            return this.synthesizeViaDhvani(request, false);
+          case 'dhvani-g2p':
+            return this.synthesizeViaDhvani(request, true);
           default: {
             // openai (default)
             const apiKey = process.env.OPENAI_API_KEY;
@@ -1375,6 +1448,12 @@ export class MultimodalManager {
             break;
           case 'piper':
             b64result = await synthesizePiper(request.text, request.voice, request.responseFormat);
+            break;
+          case 'dhvani':
+            b64result = this.synthesizeViaDhvani(request, false);
+            break;
+          case 'dhvani-g2p':
+            b64result = this.synthesizeViaDhvani(request, true);
             break;
           default:
             throw new Error(`Unknown TTS provider: ${provider}`);
