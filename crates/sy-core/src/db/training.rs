@@ -25,12 +25,20 @@ pub struct FinetuneJobRow {
     pub updated_at: i64,
 }
 
-pub async fn list_distillation_jobs(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<DistillationJobRow>, sqlx::Error> {
+pub async fn list_distillation_jobs(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DistillationJobRow>, sqlx::Error> {
     sqlx::query_as::<_, DistillationJobRow>("SELECT id, status, teacher_model, student_model, created_at, updated_at FROM training.distillation_jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2")
         .bind(limit).bind(offset).fetch_all(pool).await
 }
 
-pub async fn list_finetune_jobs(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<FinetuneJobRow>, sqlx::Error> {
+pub async fn list_finetune_jobs(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<FinetuneJobRow>, sqlx::Error> {
     sqlx::query_as::<_, FinetuneJobRow>("SELECT id, status, base_model, method, created_at, updated_at FROM training.finetune_jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2")
         .bind(limit).bind(offset).fetch_all(pool).await
 }

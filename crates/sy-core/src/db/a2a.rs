@@ -17,12 +17,21 @@ pub struct A2aPeerRow {
     pub updated_at: i64,
 }
 
-pub async fn list_peers(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<A2aPeerRow>, sqlx::Error> {
+pub async fn list_peers(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<A2aPeerRow>, sqlx::Error> {
     sqlx::query_as::<_, A2aPeerRow>("SELECT * FROM a2a.peers ORDER BY name ASC LIMIT $1 OFFSET $2")
-        .bind(limit).bind(offset).fetch_all(pool).await
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
 }
 
 pub async fn get_peer(pool: &PgPool, id: &str) -> Result<Option<A2aPeerRow>, sqlx::Error> {
     sqlx::query_as::<_, A2aPeerRow>("SELECT * FROM a2a.peers WHERE id = $1")
-        .bind(id).fetch_optional(pool).await
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }

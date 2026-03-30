@@ -78,18 +78,12 @@ static OVERRIDES: LazyLock<OverrideMap> = LazyLock::new(|| {
     m.insert(("POST", "/api/v1/audit/verify"), ("audit", "verify"));
     m.insert(("POST", "/api/v1/chat"), ("chat", "execute"));
     m.insert(("POST", "/api/v1/chat/stream"), ("chat", "execute"));
-    m.insert(
-        ("POST", "/api/v1/execution/run"),
-        ("execution", "execute"),
-    );
+    m.insert(("POST", "/api/v1/execution/run"), ("execution", "execute"));
     m.insert(
         ("POST", "/api/v1/browser/sessions"),
         ("execution", "execute"),
     );
-    m.insert(
-        ("POST", "/api/v1/sandbox/scan"),
-        ("sandbox", "execute"),
-    );
+    m.insert(("POST", "/api/v1/sandbox/scan"), ("sandbox", "execute"));
     m
 });
 

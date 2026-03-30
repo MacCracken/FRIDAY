@@ -48,7 +48,11 @@ where
             set(headers, "x-content-type-options", "nosniff");
             set(headers, "x-frame-options", "DENY");
             set(headers, "x-xss-protection", "0");
-            set(headers, "referrer-policy", "strict-origin-when-cross-origin");
+            set(
+                headers,
+                "referrer-policy",
+                "strict-origin-when-cross-origin",
+            );
             set(
                 headers,
                 "permissions-policy",

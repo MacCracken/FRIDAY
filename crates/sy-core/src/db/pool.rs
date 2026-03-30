@@ -1,7 +1,7 @@
 //! PostgreSQL connection pool initialization.
 
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 /// Create a PostgreSQL connection pool from DATABASE_URL.
 pub async fn create_pool() -> Result<PgPool, String> {

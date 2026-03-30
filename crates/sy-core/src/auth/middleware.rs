@@ -33,10 +33,7 @@ const PUBLIC_ROUTES: &[&str] = &[
 ];
 
 /// Prefixes that bypass auth (dynamic paths like /oauth/:provider).
-const PUBLIC_PREFIXES: &[&str] = &[
-    "/api/v1/auth/oauth/",
-    "/api/v1/federation/marketplace/",
-];
+const PUBLIC_PREFIXES: &[&str] = &["/api/v1/auth/oauth/", "/api/v1/federation/marketplace/"];
 
 /// Authenticated user context — injected into request extensions.
 #[derive(Debug, Clone)]
@@ -111,7 +108,9 @@ fn is_public(path: &str) -> bool {
     if PUBLIC_ROUTES.contains(&path) {
         return true;
     }
-    PUBLIC_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+    PUBLIC_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
 }
 
 fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {

@@ -42,32 +42,58 @@ pub struct PainRow {
     pub personality_id: Option<String>,
 }
 
-pub async fn list_passions(pool: &PgPool, personality_id: Option<&str>) -> Result<Vec<PassionRow>, sqlx::Error> {
+pub async fn list_passions(
+    pool: &PgPool,
+    personality_id: Option<&str>,
+) -> Result<Vec<PassionRow>, sqlx::Error> {
     if let Some(pid) = personality_id {
-        sqlx::query_as::<_, PassionRow>("SELECT * FROM spirit.passions WHERE personality_id = $1 ORDER BY intensity DESC")
-            .bind(pid).fetch_all(pool).await
+        sqlx::query_as::<_, PassionRow>(
+            "SELECT * FROM spirit.passions WHERE personality_id = $1 ORDER BY intensity DESC",
+        )
+        .bind(pid)
+        .fetch_all(pool)
+        .await
     } else {
         sqlx::query_as::<_, PassionRow>("SELECT * FROM spirit.passions ORDER BY intensity DESC")
-            .fetch_all(pool).await
+            .fetch_all(pool)
+            .await
     }
 }
 
-pub async fn list_inspirations(pool: &PgPool, personality_id: Option<&str>) -> Result<Vec<InspirationRow>, sqlx::Error> {
+pub async fn list_inspirations(
+    pool: &PgPool,
+    personality_id: Option<&str>,
+) -> Result<Vec<InspirationRow>, sqlx::Error> {
     if let Some(pid) = personality_id {
-        sqlx::query_as::<_, InspirationRow>("SELECT * FROM spirit.inspirations WHERE personality_id = $1 ORDER BY impact DESC")
-            .bind(pid).fetch_all(pool).await
+        sqlx::query_as::<_, InspirationRow>(
+            "SELECT * FROM spirit.inspirations WHERE personality_id = $1 ORDER BY impact DESC",
+        )
+        .bind(pid)
+        .fetch_all(pool)
+        .await
     } else {
-        sqlx::query_as::<_, InspirationRow>("SELECT * FROM spirit.inspirations ORDER BY impact DESC")
-            .fetch_all(pool).await
+        sqlx::query_as::<_, InspirationRow>(
+            "SELECT * FROM spirit.inspirations ORDER BY impact DESC",
+        )
+        .fetch_all(pool)
+        .await
     }
 }
 
-pub async fn list_pains(pool: &PgPool, personality_id: Option<&str>) -> Result<Vec<PainRow>, sqlx::Error> {
+pub async fn list_pains(
+    pool: &PgPool,
+    personality_id: Option<&str>,
+) -> Result<Vec<PainRow>, sqlx::Error> {
     if let Some(pid) = personality_id {
-        sqlx::query_as::<_, PainRow>("SELECT * FROM spirit.pains WHERE personality_id = $1 ORDER BY severity DESC")
-            .bind(pid).fetch_all(pool).await
+        sqlx::query_as::<_, PainRow>(
+            "SELECT * FROM spirit.pains WHERE personality_id = $1 ORDER BY severity DESC",
+        )
+        .bind(pid)
+        .fetch_all(pool)
+        .await
     } else {
         sqlx::query_as::<_, PainRow>("SELECT * FROM spirit.pains ORDER BY severity DESC")
-            .fetch_all(pool).await
+            .fetch_all(pool)
+            .await
     }
 }

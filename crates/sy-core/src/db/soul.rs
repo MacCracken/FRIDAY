@@ -107,11 +107,13 @@ pub async fn activate_personality(
 ) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("UPDATE soul.personalities SET is_active = false, updated_at = $1 WHERE tenant_id = $2")
-        .bind(now_ms())
-        .bind(tenant_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE soul.personalities SET is_active = false, updated_at = $1 WHERE tenant_id = $2",
+    )
+    .bind(now_ms())
+    .bind(tenant_id)
+    .execute(&mut *tx)
+    .await?;
 
     let result = sqlx::query("UPDATE soul.personalities SET is_active = true, updated_at = $1 WHERE id = $2 AND tenant_id = $3")
         .bind(now_ms())
@@ -130,12 +132,13 @@ pub async fn delete_personality(
     id: &str,
     tenant_id: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result =
-        sqlx::query("DELETE FROM soul.personalities WHERE id = $1 AND tenant_id = $2 AND is_default = false")
-            .bind(id)
-            .bind(tenant_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query(
+        "DELETE FROM soul.personalities WHERE id = $1 AND tenant_id = $2 AND is_default = false",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 

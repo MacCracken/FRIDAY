@@ -55,7 +55,7 @@ impl Default for JwtConfig {
             issuer: DEFAULT_ISSUER.to_string(),
             audience: DEFAULT_AUDIENCE.to_string(),
             access_token_expiry_secs: 900,      // 15 min
-            refresh_token_expiry_secs: 604_800,  // 7 days
+            refresh_token_expiry_secs: 604_800, // 7 days
         }
     }
 }
@@ -89,7 +89,11 @@ pub fn issue_access_token(
 }
 
 /// Issue a new refresh token.
-pub fn issue_refresh_token(config: &JwtConfig, user_id: &str, role: &str) -> Result<String, String> {
+pub fn issue_refresh_token(
+    config: &JwtConfig,
+    user_id: &str,
+    role: &str,
+) -> Result<String, String> {
     let now = now_secs();
     let jti = uuid::Uuid::now_v7().to_string();
     let claims = TokenClaims {
@@ -142,7 +146,11 @@ fn try_validate(
     let mut validation = Validation::default();
     validation.set_issuer(&[issuer]);
     validation.set_audience(&[audience]);
-    let data = decode::<TokenClaims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)?;
+    let data = decode::<TokenClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )?;
     Ok(data.claims)
 }
 
@@ -152,7 +160,11 @@ fn try_validate_relaxed(
 ) -> Result<TokenClaims, jsonwebtoken::errors::Error> {
     let mut validation = Validation::default();
     validation.validate_aud = false;
-    let data = decode::<TokenClaims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)?;
+    let data = decode::<TokenClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )?;
     Ok(data.claims)
 }
 

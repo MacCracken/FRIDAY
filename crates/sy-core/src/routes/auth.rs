@@ -25,10 +25,7 @@ struct LoginRequest {
     remember_me: bool,
 }
 
-async fn login(
-    State(state): State<AppState>,
-    Json(body): Json<LoginRequest>,
-) -> impl IntoResponse {
+async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> impl IntoResponse {
     if body.password.len() < 8 {
         return (
             StatusCode::BAD_REQUEST,
@@ -38,8 +35,7 @@ async fn login(
     }
 
     // Verify password against configured admin password
-    let admin_password = std::env::var("SECUREYEOMAN_ADMIN_PASSWORD")
-        .unwrap_or_default();
+    let admin_password = std::env::var("SECUREYEOMAN_ADMIN_PASSWORD").unwrap_or_default();
 
     if admin_password.is_empty() {
         return (
@@ -77,7 +73,7 @@ async fn login(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Token generation failed: {e}")})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -88,7 +84,7 @@ async fn login(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Token generation failed: {e}")})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -124,22 +120,22 @@ async fn refresh(
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({"error": "Invalid refresh token"})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
     let permissions = claims.permissions;
-    let access_token =
-        match issue_access_token(jwt_config, &claims.sub, &claims.role, &permissions) {
-            Ok(t) => t,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("Token generation failed: {e}")})),
-                )
-                    .into_response()
-            }
-        };
+    let access_token = match issue_access_token(jwt_config, &claims.sub, &claims.role, &permissions)
+    {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Token generation failed: {e}")})),
+            )
+                .into_response();
+        }
+    };
 
     Json(serde_json::json!({
         "accessToken": access_token,

@@ -39,7 +39,11 @@ pub struct WorkflowRunRow {
     pub completed_at: Option<i64>,
 }
 
-pub async fn list_workflows(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<WorkflowRow>, sqlx::Error> {
+pub async fn list_workflows(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<WorkflowRow>, sqlx::Error> {
     sqlx::query_as::<_, WorkflowRow>(
         "SELECT * FROM workflow.definitions ORDER BY updated_at DESC LIMIT $1 OFFSET $2",
     )
@@ -49,7 +53,10 @@ pub async fn list_workflows(pool: &PgPool, limit: i64, offset: i64) -> Result<Ve
     .await
 }
 
-pub async fn get_workflow(pool: &PgPool, id: uuid::Uuid) -> Result<Option<WorkflowRow>, sqlx::Error> {
+pub async fn get_workflow(
+    pool: &PgPool,
+    id: uuid::Uuid,
+) -> Result<Option<WorkflowRow>, sqlx::Error> {
     sqlx::query_as::<_, WorkflowRow>("SELECT * FROM workflow.definitions WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)

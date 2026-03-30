@@ -46,12 +46,19 @@ pub async fn list_skills(
         sqlx::query_as::<_, MarketplaceSkillRow>(
             "SELECT * FROM marketplace.skills ORDER BY download_count DESC LIMIT $1 OFFSET $2",
         )
-        .bind(limit).bind(offset)
-        .fetch_all(pool).await
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
     }
 }
 
-pub async fn get_skill(pool: &PgPool, id: &str) -> Result<Option<MarketplaceSkillRow>, sqlx::Error> {
+pub async fn get_skill(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<MarketplaceSkillRow>, sqlx::Error> {
     sqlx::query_as::<_, MarketplaceSkillRow>("SELECT * FROM marketplace.skills WHERE id = $1")
-        .bind(id).fetch_optional(pool).await
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }

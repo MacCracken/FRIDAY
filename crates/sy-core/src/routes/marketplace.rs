@@ -26,25 +26,58 @@ struct SkillQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 20 }
+fn default_limit() -> i64 {
+    20
+}
 
-async fn list_skills(State(state): State<AppState>, Query(q): Query<SkillQuery>) -> impl IntoResponse {
+async fn list_skills(
+    State(state): State<AppState>,
+    Query(q): Query<SkillQuery>,
+) -> impl IntoResponse {
     let Some(pool) = state.db() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Database not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
-    match marketplace::list_skills(pool, q.category.as_deref(), q.installed, q.limit.min(100), q.offset).await {
+    match marketplace::list_skills(
+        pool,
+        q.category.as_deref(),
+        q.installed,
+        q.limit.min(100),
+        q.offset,
+    )
+    .await
+    {
         Ok(rows) => Json(serde_json::json!({"skills": rows, "total": rows.len()})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
 async fn get_skill(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Database not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
     match marketplace::get_skill(pool, &id).await {
         Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Skill not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Skill not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }

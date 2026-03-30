@@ -14,12 +14,19 @@ pub struct ConversationSummaryRow {
     pub created_at: i64,
 }
 
-pub async fn list_summaries(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<ConversationSummaryRow>, sqlx::Error> {
+pub async fn list_summaries(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ConversationSummaryRow>, sqlx::Error> {
     sqlx::query_as::<_, ConversationSummaryRow>("SELECT * FROM analytics.conversation_summaries ORDER BY created_at DESC LIMIT $1 OFFSET $2")
         .bind(limit).bind(offset).fetch_all(pool).await
 }
 
-pub async fn list_sentiments(pool: &PgPool, conversation_id: &str) -> Result<Vec<serde_json::Value>, sqlx::Error> {
+pub async fn list_sentiments(
+    pool: &PgPool,
+    conversation_id: &str,
+) -> Result<Vec<serde_json::Value>, sqlx::Error> {
     let rows: Vec<(serde_json::Value,)> = sqlx::query_as("SELECT row_to_json(t) FROM analytics.turn_sentiments t WHERE conversation_id = $1 ORDER BY created_at ASC")
         .bind(conversation_id).fetch_all(pool).await?;
     Ok(rows.into_iter().map(|r| r.0).collect())

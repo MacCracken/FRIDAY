@@ -50,7 +50,11 @@ pub async fn list_entries(
     }
 }
 
-pub async fn get_entry(pool: &PgPool, id: &str, tenant_id: &str) -> Result<Option<AuditEntryRow>, sqlx::Error> {
+pub async fn get_entry(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<Option<AuditEntryRow>, sqlx::Error> {
     sqlx::query_as::<_, AuditEntryRow>(
         "SELECT id, correlation_id, event, level, message, user_id, task_id, metadata, \"timestamp\", integrity_version, integrity_signature, integrity_previous_hash, tenant_id FROM audit.entries WHERE id = $1 AND tenant_id = $2",
     )
@@ -59,7 +63,48 @@ pub async fn get_entry(pool: &PgPool, id: &str, tenant_id: &str) -> Result<Optio
 }
 
 pub async fn count_entries(pool: &PgPool, tenant_id: &str) -> Result<i64, sqlx::Error> {
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit.entries WHERE tenant_id = $1")
-        .bind(tenant_id).fetch_one(pool).await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM audit.entries WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
+}
+
+/// Streaming export query — returns rows for memory-efficient export.
+/// Filters: from/to timestamps, userId. Capped at `limit`.
+pub async fn export_entries(
+    pool: &PgPool,
+    tenant_id: &str,
+    from: Option<i64>,
+    to: Option<i64>,
+    user_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<AuditEntryRow>, sqlx::Error> {
+    let from_ts = from.unwrap_or(0);
+    let to_ts = to.unwrap_or(i64::MAX);
+    let uid = user_id.unwrap_or("");
+    let has_user = user_id.is_some();
+    let cap = limit.min(1_000_000);
+
+    sqlx::query_as::<_, AuditEntryRow>(
+        r#"SELECT id, correlation_id, event, level, message, user_id, task_id, metadata,
+                  "timestamp", integrity_version, integrity_signature,
+                  integrity_previous_hash, tenant_id
+           FROM audit.entries
+           WHERE tenant_id = $1
+             AND "timestamp" >= $2
+             AND "timestamp" <= $3
+             AND ($4::bool = false OR user_id = $5)
+           ORDER BY "timestamp" DESC
+           LIMIT $6"#,
+    )
+    .bind(tenant_id)
+    .bind(from_ts)
+    .bind(to_ts)
+    .bind(has_user)
+    .bind(uid)
+    .bind(cap)
+    .fetch_all(pool)
+    .await
 }

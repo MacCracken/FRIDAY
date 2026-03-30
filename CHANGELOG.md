@@ -8,6 +8,13 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
+### Phase 7.3 — SSE Streaming Routes (partial)
+
+- **Audit export streaming** — `POST /api/v1/audit/export` streams entries as SSE events in JSONL, CSV, or syslog format. Formatters ported to Rust (JSONL, CSV with proper escaping, syslog RFC 5424)
+- **Event bridge SSE** — `GET /api/v1/events/bridge/stream` (long-lived SSE via tokio broadcast channel), `POST /api/v1/events/bridge/publish` (fan-out to all clients), `GET /api/v1/events/bridge/status`. Uses `axum::response::sse::Sse` with 15s keep-alive
+- **BridgeEvent broadcast** — Added `tokio::sync::broadcast` channel to AppState for event bridge fan-out
+- **Dependency updates** — reqwest 0.12 → 0.13 (rustls-tls → rustls feature rename), jsonwebtoken 9 → 10 (aws_lc_rs crypto provider), tokio-stream with sync feature, futures 0.3
+
 ### Phase 6 — Communication & Voice (dhvani replaces multimodal/comms)
 
 - **dhvani 1.0.0 integrated** — Voice synthesis (svara), G2P (shabda), audio DSP, analysis via NAPI bridge (`crates/sy-napi/src/dhvani.rs`)

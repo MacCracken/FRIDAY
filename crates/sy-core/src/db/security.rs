@@ -31,7 +31,10 @@ pub struct SraAssessmentRow {
     pub updated_at: i64,
 }
 
-pub async fn list_sra_assessments(pool: &PgPool, limit: i64) -> Result<Vec<SraAssessmentRow>, sqlx::Error> {
+pub async fn list_sra_assessments(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<SraAssessmentRow>, sqlx::Error> {
     sqlx::query_as::<_, SraAssessmentRow>("SELECT id, name, status, score, created_at, updated_at FROM security.sra_assessments ORDER BY created_at DESC LIMIT $1")
         .bind(limit).fetch_all(pool).await
 }

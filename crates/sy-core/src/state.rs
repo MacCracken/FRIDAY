@@ -1,9 +1,10 @@
 //! Application state shared across all handlers via axum State extractor.
 
+use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Instant;
-use sqlx::PgPool;
 use sy_types::CoreConfig;
+use tokio::sync::broadcast;
 
 use crate::auth::jwt::JwtConfig;
 use crate::auth::middleware::AuthContext;
@@ -14,12 +15,21 @@ pub struct AppState {
     inner: Arc<AppStateInner>,
 }
 
+/// Payload for the event bridge broadcast channel.
+#[derive(Clone, Debug)]
+pub struct BridgeEvent {
+    pub event: String,
+    pub data: String,
+    pub source: String,
+}
+
 struct AppStateInner {
     pub config: CoreConfig,
     pub jwt_config: JwtConfig,
     pub db_pool: Option<PgPool>,
     pub started_at: Instant,
     pub version: String,
+    pub bridge_tx: broadcast::Sender<BridgeEvent>,
 }
 
 impl AppState {
@@ -33,6 +43,8 @@ impl AppState {
             ..Default::default()
         };
 
+        let (bridge_tx, _) = broadcast::channel(1024);
+
         Self {
             inner: Arc::new(AppStateInner {
                 config,
@@ -40,6 +52,7 @@ impl AppState {
                 db_pool: None,
                 started_at: Instant::now(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                bridge_tx,
             }),
         }
     }
@@ -69,6 +82,16 @@ impl AppState {
 
     pub fn version(&self) -> &str {
         &self.inner.version
+    }
+
+    /// Get a new receiver for the event bridge broadcast channel.
+    pub fn bridge_subscribe(&self) -> broadcast::Receiver<BridgeEvent> {
+        self.inner.bridge_tx.subscribe()
+    }
+
+    /// Broadcast an event to all connected event bridge SSE clients.
+    pub fn bridge_broadcast(&self, event: BridgeEvent) -> usize {
+        self.inner.bridge_tx.send(event).unwrap_or(0)
     }
 
     /// Fastify fallback URL for the reverse proxy (during migration).

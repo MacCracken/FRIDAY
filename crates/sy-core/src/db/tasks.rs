@@ -47,8 +47,14 @@ pub async fn list_tasks(
     }
 }
 
-pub async fn get_task(pool: &PgPool, id: &str, tenant_id: &str) -> Result<Option<TaskRow>, sqlx::Error> {
+pub async fn get_task(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<Option<TaskRow>, sqlx::Error> {
     sqlx::query_as::<_, TaskRow>("SELECT * FROM task.tasks WHERE id = $1 AND tenant_id = $2")
-        .bind(id).bind(tenant_id)
-        .fetch_optional(pool).await
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await
 }

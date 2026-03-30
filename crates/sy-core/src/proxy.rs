@@ -14,10 +14,7 @@ use tracing::debug;
 use crate::state::AppState;
 
 /// Fallback handler — proxies the request to Fastify.
-pub async fn proxy_to_fastify(
-    State(state): State<AppState>,
-    req: Request<Body>,
-) -> Response<Body> {
+pub async fn proxy_to_fastify(State(state): State<AppState>, req: Request<Body>) -> Response<Body> {
     let Some(base_url) = state.fastify_url() else {
         // No Fastify fallback configured — return 404
         return Response::builder()
@@ -41,7 +38,9 @@ pub async fn proxy_to_fastify(
 
     // Forward headers (skip host — reqwest sets it)
     for (key, value) in req.headers() {
-        if key != "host" && let Ok(v) = value.to_str() {
+        if key != "host"
+            && let Ok(v) = value.to_str()
+        {
             builder = builder.header(key.as_str(), v);
         }
     }
@@ -52,7 +51,9 @@ pub async fn proxy_to_fastify(
         Err(_) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(r#"{"error":"Request body too large","statusCode":400}"#))
+                .body(Body::from(
+                    r#"{"error":"Request body too large","statusCode":400}"#,
+                ))
                 .unwrap_or_default();
         }
     };
@@ -71,9 +72,7 @@ pub async fn proxy_to_fastify(
             }
 
             let body = upstream.bytes().await.unwrap_or_default();
-            resp_builder
-                .body(Body::from(body))
-                .unwrap_or_default()
+            resp_builder.body(Body::from(body)).unwrap_or_default()
         }
         Err(err) => {
             tracing::error!(%err, %target_url, "Fastify proxy failed");

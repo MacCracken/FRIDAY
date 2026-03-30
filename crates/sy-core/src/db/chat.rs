@@ -84,7 +84,11 @@ pub async fn get_conversation(
     .await
 }
 
-pub async fn delete_conversation(pool: &PgPool, id: &str, tenant_id: &str) -> Result<bool, sqlx::Error> {
+pub async fn delete_conversation(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
     // Delete messages first, then conversation
     sqlx::query("DELETE FROM chat.messages WHERE conversation_id = $1")
         .bind(id)
@@ -99,7 +103,10 @@ pub async fn delete_conversation(pool: &PgPool, id: &str, tenant_id: &str) -> Re
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 pub async fn list_messages(

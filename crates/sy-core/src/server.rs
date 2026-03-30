@@ -59,7 +59,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::execution::router())
         .merge(crate::routes::proactive::router())
         .merge(crate::routes::extensions::router())
-        .merge(crate::routes::experiments::router());
+        .merge(crate::routes::experiments::router())
+        .merge(crate::routes::event_bridge::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);
@@ -68,7 +69,12 @@ pub fn build_router(state: AppState) -> Router {
     app.layer(axum_mw::from_fn_with_state(state.clone(), require_auth))
         .layer(SecurityHeadersLayer)
         .layer(CorrelationIdLayer)
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -104,7 +110,11 @@ mod tests {
         // Non-public route without auth → 401
         let app = build_router(test_state());
         let resp = app
-            .oneshot(Request::get("/api/v1/nonexistent").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), 401);

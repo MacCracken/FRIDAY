@@ -5,14 +5,15 @@
 
 pub mod a2a;
 pub mod agents;
-pub mod auth;
 pub mod alerts;
 pub mod analytics;
 pub mod audit;
+pub mod auth;
 pub mod backup;
 pub mod brain;
 pub mod chat;
 pub mod edge;
+pub mod event_bridge;
 pub mod execution;
 pub mod experiments;
 pub mod extensions;

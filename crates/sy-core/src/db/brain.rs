@@ -71,14 +71,16 @@ pub async fn insert_memory(
 }
 
 /// Get a memory by ID.
-pub async fn get_memory(pool: &PgPool, id: &str, tenant_id: &str) -> Result<Option<MemoryRow>, sqlx::Error> {
-    sqlx::query_as::<_, MemoryRow>(
-        "SELECT * FROM brain.memories WHERE id = $1 AND tenant_id = $2",
-    )
-    .bind(id)
-    .bind(tenant_id)
-    .fetch_optional(pool)
-    .await
+pub async fn get_memory(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<Option<MemoryRow>, sqlx::Error> {
+    sqlx::query_as::<_, MemoryRow>("SELECT * FROM brain.memories WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// List memories with optional type and personality filter.
@@ -98,7 +100,9 @@ pub async fn list_memories(
         param_idx += 1;
     }
     if personality_id.is_some() {
-        query.push_str(&format!(" AND (personality_id = ${param_idx} OR personality_id IS NULL)"));
+        query.push_str(&format!(
+            " AND (personality_id = ${param_idx} OR personality_id IS NULL)"
+        ));
         param_idx += 1;
     }
     let _ = param_idx; // suppress unused warning
@@ -237,7 +241,11 @@ pub async fn query_knowledge(
 }
 
 /// Delete a knowledge entry by ID.
-pub async fn delete_knowledge(pool: &PgPool, id: &str, tenant_id: &str) -> Result<bool, sqlx::Error> {
+pub async fn delete_knowledge(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM brain.knowledge WHERE id = $1 AND tenant_id = $2")
         .bind(id)
         .bind(tenant_id)
@@ -248,14 +256,16 @@ pub async fn delete_knowledge(pool: &PgPool, id: &str, tenant_id: &str) -> Resul
 
 /// Get brain stats (memory and knowledge counts).
 pub async fn get_stats(pool: &PgPool, tenant_id: &str) -> Result<BrainStats, sqlx::Error> {
-    let memory_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM brain.memories WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await?;
-    let knowledge_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM brain.knowledge WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await?;
+    let memory_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM brain.memories WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_one(pool)
+            .await?;
+    let knowledge_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM brain.knowledge WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_one(pool)
+            .await?;
 
     Ok(BrainStats {
         memories_total: memory_count.0,
