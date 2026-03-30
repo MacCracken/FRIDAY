@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phase 1-6 complete, Phase 4 (daimon) initial integration done. Phase 6 (dhvani) complete — voice synthesis, G2P, STT preprocessing, comms crypto via sy-crypto. Phase 7.0-7.2 complete — sy-core axum binary with **85 routes across 30 domain modules** (4,805 LoC), JWT+RBAC auth middleware, sqlx database layer covering all PostgreSQL schemas, reverse proxy to Fastify for unmigrated routes. 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.3 (AI/chat SSE streaming), 7.4 (WebSocket), 7.5 (integration proxies).
+**Status**: Phases 0-3, 5-6 complete (see Changelog). Phase 4 (daimon) initial integration done. Phase 7.0-7.2 complete — sy-core axum binary with **85 routes across 30 domain modules** (4,805 LoC), JWT+RBAC auth middleware, sqlx database layer covering all PostgreSQL schemas, reverse proxy to Fastify for unmigrated routes. 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.3 (AI/chat SSE streaming), 7.4 (WebSocket), 7.5 (integration proxies).
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
@@ -418,4 +418,4 @@ See [dependency-watch.md](dependency-watch.md) for tracked third-party dependenc
 
 ---
 
-*Last updated: 2026-03-19. See [Changelog](../../CHANGELOG.md) for full history of completed work.*
+*Last updated: 2026-03-30. See [Changelog](../../CHANGELOG.md) for full history of completed work.*
