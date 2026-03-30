@@ -239,16 +239,8 @@ export interface NativeModule {
     targetPeak: number,
     channels?: number | null
   ): Buffer;
-  dhvaniAnalyzeDynamics(
-    audio: Buffer,
-    sampleRate: number,
-    channels?: number | null
-  ): string;
-  dhvaniLoudnessLufs(
-    audio: Buffer,
-    sampleRate: number,
-    channels?: number | null
-  ): number;
+  dhvaniAnalyzeDynamics(audio: Buffer, sampleRate: number, channels?: number | null): string;
+  dhvaniLoudnessLufs(audio: Buffer, sampleRate: number, channels?: number | null): number;
   dhvaniIsSilent(
     audio: Buffer,
     sampleRate: number,

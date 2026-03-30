@@ -13,10 +13,7 @@ use dhvani::voice_synth::{PhonemeSequence, VoiceProfile};
 
 /// Helper: convert `&[f32]` samples to a byte Buffer (little-endian f32).
 fn samples_to_buffer(samples: &[f32]) -> Buffer {
-    let bytes: Vec<u8> = samples
-        .iter()
-        .flat_map(|s| s.to_le_bytes())
-        .collect();
+    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     bytes.into()
 }
 
@@ -98,7 +95,7 @@ pub fn dhvani_g2p_convert(text: String, language: Option<String>) -> Result<Stri
         Some(other) => {
             return Err(Error::from_reason(format!(
                 "Unsupported G2P language: {other}"
-            )))
+            )));
         }
     };
 
@@ -126,9 +123,7 @@ pub fn dhvani_synthesize_speech(
     let sr = sample_rate.unwrap_or(44100);
 
     let profile: VoiceProfile = match voice_profile_json {
-        Some(json) => {
-            serde_json::from_str(&json).map_err(|e| Error::from_reason(e.to_string()))?
-        }
+        Some(json) => serde_json::from_str(&json).map_err(|e| Error::from_reason(e.to_string()))?,
         None => VoiceProfile::new_male(),
     };
 
@@ -162,15 +157,12 @@ pub fn dhvani_synthesize_phonemes(
     let sr = sample_rate.unwrap_or(44100);
 
     let profile: VoiceProfile = match voice_profile_json {
-        Some(json) => {
-            serde_json::from_str(&json).map_err(|e| Error::from_reason(e.to_string()))?
-        }
+        Some(json) => serde_json::from_str(&json).map_err(|e| Error::from_reason(e.to_string()))?,
         None => VoiceProfile::new_male(),
     };
 
-    let events: Vec<dhvani::voice_synth::PhonemeEvent> =
-        serde_json::from_str(&phoneme_events_json)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
+    let events: Vec<dhvani::voice_synth::PhonemeEvent> = serde_json::from_str(&phoneme_events_json)
+        .map_err(|e| Error::from_reason(e.to_string()))?;
 
     let mut sequence = PhonemeSequence::new();
     for event in events {
@@ -286,11 +278,7 @@ pub fn dhvani_analyze_dynamics(
 
 /// Measure loudness in LUFS (EBU R128). Returns f64.
 #[napi]
-pub fn dhvani_loudness_lufs(
-    audio: Buffer,
-    sample_rate: u32,
-    channels: Option<u32>,
-) -> Result<f64> {
+pub fn dhvani_loudness_lufs(audio: Buffer, sample_rate: u32, channels: Option<u32>) -> Result<f64> {
     let ch = channels.unwrap_or(1);
     let samples = buffer_to_samples(&audio);
 
@@ -315,18 +303,17 @@ pub fn dhvani_is_silent(
     let buf = AudioBuffer::from_interleaved(samples, ch, sample_rate)
         .map_err(|e| Error::from_reason(e.to_string()))?;
 
-    Ok(dhvani::analysis::is_silent(&buf, threshold_db.unwrap_or(-60.0) as f32))
+    Ok(dhvani::analysis::is_silent(
+        &buf,
+        threshold_db.unwrap_or(-60.0) as f32,
+    ))
 }
 
 // ── Utility ──────────────────────────────────────────────────────────────────
 
 /// Convert PCM f32 audio buffer to WAV format (mono/stereo). Returns WAV bytes as Buffer.
 #[napi]
-pub fn dhvani_pcm_to_wav(
-    audio: Buffer,
-    sample_rate: u32,
-    channels: Option<u32>,
-) -> Result<Buffer> {
+pub fn dhvani_pcm_to_wav(audio: Buffer, sample_rate: u32, channels: Option<u32>) -> Result<Buffer> {
     let ch = channels.unwrap_or(1);
     let samples = buffer_to_samples(&audio);
 
