@@ -8,6 +8,15 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
+### Phase 7.4 — WebSocket Routes
+
+All 3 WebSocket endpoints migrated to axum.
+
+- **Metrics WebSocket** — `GET /ws/metrics` with JWT auth via `Sec-WebSocket-Protocol: token.<jwt>`. Channel subscription/unsubscription protocol, RBAC permission check per channel, broadcast via tokio broadcast channel, ping/pong handled by axum
+- **Collaborative editing** — `GET /ws/collab/{docId}` with JWT auth, docId format validation (`personality:<uuid>` | `skill:<uuid>`). Binary CRDT message relay between clients in the same room via per-room broadcast channels. Auto room cleanup when last client disconnects
+- **Video streaming** — `GET /ws/video/{sessionId}` with JWT auth. Subscribes to video frame events via bridge broadcast channel (filtered by `video:{sessionId}`), relays frames to connected clients
+- **ifran 1.2.0 unblocked** — sqlite feature gate landed in ifran 1.2.0. sy-core now uses `ifran = { version = "1.2", default-features = false }` — no more sqlite/sqlx conflict
+
 ### Phase 7.3 — SSE Streaming Routes
 
 All 4 SSE streaming endpoints migrated to axum.

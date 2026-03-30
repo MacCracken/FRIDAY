@@ -35,4 +35,6 @@ pub mod tenants;
 pub mod training;
 pub mod workflow;
 pub mod workspace;
+pub mod ws_collab;
 pub mod ws_metrics;
+pub mod ws_video;

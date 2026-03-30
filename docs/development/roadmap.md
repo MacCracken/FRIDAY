@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phases 0-3, 5-6 complete (see Changelog). Phase 4 (daimon) initial integration done. Phase 7.0-7.3 complete — sy-core axum binary with **89 routes across 32 domain modules**, JWT+RBAC auth middleware, sqlx database layer, reverse proxy to Fastify, SSE streaming (chat, ollama pull, audit export, event bridge). 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.4 (WebSocket), 7.5 (integration proxies).
+**Status**: Phases 0-3, 5-6 complete (see Changelog). Phase 4 (daimon) initial integration done. Phase 7.0-7.4 complete — sy-core axum binary with **92 routes across 35 domain modules**, JWT+RBAC auth middleware, sqlx database layer, reverse proxy to Fastify, SSE streaming (chat, ollama pull, audit export, event bridge), WebSocket (metrics, collab CRDT, video). 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.5 (integration proxies).
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
