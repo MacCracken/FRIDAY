@@ -19,7 +19,7 @@ sy-tee = { path = "../sy-tee" }
 bhava = { version = "1.2.0", features = ["presets"] }
 agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
 dhvani = { version = "1.0.0", features = ["voice", "g2p", "synthesis", "analysis"] }
-majra = { version = "1.0", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
+majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
 szal = { version = "1.0", features = ["majra"] }
 bote = { version = "0.50", features = ["bridge"] }
 chrono = "0.4"
