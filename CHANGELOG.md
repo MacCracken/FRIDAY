@@ -8,13 +8,20 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
-### Phase 7.5 — Integration Proxies (batch 1)
+### Phase 7.5 — Integration Proxies
 
-- **Integration proxy helper** — `src/integrations/proxy.rs` with reusable `proxy_get`, `proxy_post`, `resolve_bearer_token`, `resolve_config` helpers. Supports Bearer, Basic, and API key auth modes
-- **Todoist** — 6 routes: list/get/create/update/close tasks, list projects. Bearer token auth
-- **Jira** — 3 routes: search issues (JQL), get issue, list projects. Basic auth (email:apiToken)
-- **Linear** — 2 routes: list teams, list issues. GraphQL passthrough with API key auth
-- **Notion** — 3 routes: search, get page, get database. Bearer token with Notion-Version header
+9 integration adapters ported to axum with reusable proxy helper.
+
+- **Proxy helper** — `src/integrations/proxy.rs`: `proxy_get`, `proxy_post`, `resolve_bearer_token`, `resolve_config`. Supports Bearer, Basic, API key auth
+- **Todoist** — 6 routes (tasks CRUD, projects). Bearer token
+- **Jira** — 3 routes (search, get issue, projects). Basic auth (email:apiToken)
+- **Linear** — 2 routes (teams, issues). GraphQL + API key
+- **Notion** — 3 routes (search, pages, databases). Bearer + Notion-Version header
+- **Photisnadi** — 2 routes (widget data, health). Supabase API key
+- **Trading** — 6 routes (quote, history, search + BullShift positions/account/health). AlphaVantage/Finnhub API key
+- **Google Calendar** — 7 routes (calendars, events CRUD, freebusy). OAuth Bearer
+- **Gmail** — 7 routes (profile, messages, threads, send, drafts, labels). OAuth Bearer
+- **GitHub** — 16 routes (profile, repos, issues, pulls, comments, SSH keys, workflow runs, branches, commits). OAuth Bearer
 
 ### Phase 7.4 — WebSocket Routes
 

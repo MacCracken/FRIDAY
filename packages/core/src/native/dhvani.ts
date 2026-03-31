@@ -142,6 +142,96 @@ export function traitsToVoiceProfile(
   return config;
 }
 
+/**
+ * Body state signals from bhava 1.4.0 physiology/microbiology bridges.
+ * All values are 0.0–1.0 normalized unless noted.
+ */
+export interface BodyState {
+  /** Fatigue capacity (0 = exhausted, 1 = fully rested). From sharira. */
+  fatigue?: number;
+  /** Pain intensity (0 = none, 1 = severe). From sharira joint violation. */
+  pain?: number;
+  /** Arousal from gait/heart rate (0 = still, 1 = sprinting). From sharira. */
+  arousal?: number;
+  /** Sickness severity (0 = healthy, 1 = critically ill). From jivanu SEIR. */
+  sickness?: number;
+  /** Drug sedation level (0 = alert, 1 = fully sedated). From jivanu metabolism. */
+  sedation?: number;
+  /** Emotional valence from mood (-1 = negative, 0 = neutral, 1 = positive). From bodh. */
+  valence?: number;
+}
+
+/**
+ * Apply body state modulations on top of a personality-derived voice profile.
+ *
+ * Body state affects voice in ways personality traits don't capture:
+ * - Fatigue → slower rate, breathier, lower vibrato energy
+ * - Pain → increased tension (shimmer), compressed f0 range
+ * - Arousal → higher pitch, faster rate, more vibrato
+ * - Sickness → flattened affect (reduced f0 range), breathier, lower energy
+ * - Sedation → dramatically lower pitch, minimal vibrato, very breathy
+ * - Valence → positive expands f0 range, negative compresses it
+ *
+ * These are additive modulations — they shift the profile from its personality baseline.
+ */
+export function applyBodyState(profile: VoiceProfileConfig, body: BodyState): VoiceProfileConfig {
+  const out = { ...profile };
+
+  // Fatigue: exhaustion makes voice breathier, lower energy vibrato
+  if (body.fatigue !== undefined) {
+    const tiredness = 1.0 - body.fatigue; // 0=rested, 1=exhausted
+    out.breathiness = (out.breathiness ?? 0.02) + tiredness * 0.15;
+    out.vibrato_depth = Math.max(0, (out.vibrato_depth ?? 0.04) - tiredness * 0.03);
+    out.vibrato_rate = (out.vibrato_rate ?? 5.0) - tiredness * 1.0;
+  }
+
+  // Pain: tension in voice, more shimmer, compressed range
+  if (body.pain !== undefined && body.pain > 0) {
+    out.shimmer = (out.shimmer ?? 0.02) + body.pain * 0.04;
+    out.jitter = (out.jitter ?? 0.01) + body.pain * 0.02;
+    out.f0_range = Math.max(10, (out.f0_range ?? 40) - body.pain * 15);
+  }
+
+  // Arousal: higher pitch, more vibrato, wider range
+  if (body.arousal !== undefined) {
+    out.base_f0 = (out.base_f0 ?? 120) + body.arousal * 20;
+    out.f0_range = (out.f0_range ?? 40) + body.arousal * 10;
+    out.vibrato_depth = (out.vibrato_depth ?? 0.04) + body.arousal * 0.02;
+  }
+
+  // Sickness: cytokine-driven flat affect, breathy, low energy
+  if (body.sickness !== undefined && body.sickness > 0) {
+    out.f0_range = Math.max(5, (out.f0_range ?? 40) * (1.0 - body.sickness * 0.6));
+    out.breathiness = (out.breathiness ?? 0.02) + body.sickness * 0.2;
+    out.vibrato_depth = Math.max(0, (out.vibrato_depth ?? 0.04) * (1.0 - body.sickness * 0.5));
+    out.base_f0 = (out.base_f0 ?? 120) - body.sickness * 10;
+  }
+
+  // Sedation: dramatically slower, lower, minimal expression
+  if (body.sedation !== undefined && body.sedation > 0) {
+    out.base_f0 = (out.base_f0 ?? 120) * (1.0 - body.sedation * 0.2);
+    out.f0_range = Math.max(5, (out.f0_range ?? 40) * (1.0 - body.sedation * 0.7));
+    out.breathiness = Math.min(1.0, (out.breathiness ?? 0.02) + body.sedation * 0.3);
+    out.vibrato_depth = Math.max(0, (out.vibrato_depth ?? 0.04) * (1.0 - body.sedation * 0.8));
+  }
+
+  // Valence: positive mood opens up the voice, negative compresses
+  if (body.valence !== undefined) {
+    out.f0_range = Math.max(10, (out.f0_range ?? 40) + body.valence * 8);
+    out.vibrato_depth = Math.max(0, (out.vibrato_depth ?? 0.04) + body.valence * 0.01);
+  }
+
+  // Clamp all values to safe ranges
+  out.breathiness = Math.max(0, Math.min(1.0, out.breathiness ?? 0.02));
+  out.vibrato_rate = Math.max(3.0, Math.min(8.0, out.vibrato_rate ?? 5.0));
+  out.vibrato_depth = Math.max(0, Math.min(0.15, out.vibrato_depth ?? 0.04));
+  out.jitter = Math.max(0.005, Math.min(0.05, out.jitter ?? 0.01));
+  out.shimmer = Math.max(0.01, Math.min(0.08, out.shimmer ?? 0.02));
+  out.f0_range = Math.max(5, Math.min(100, out.f0_range ?? 40));
+
+  return out;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface VoiceProfile {

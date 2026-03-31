@@ -105,6 +105,28 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 - [ ] **Transfer repositories to `yeoman.maccracken`** — Transfer `secureyeoman` and `secureyeoman-community-repo` to the `yeoman.maccracken` GitHub account. This will be the public-facing org. Update all references: README badges, install scripts (`curl -fsSL https://secureyeoman.ai/install`), Docker image paths (GHCR), Helm chart repo URLs, community sync default URL, and CI/CD workflow `GITHUB_REPOSITORY` refs.
 - [ ] **Post-transfer fixups** — Update `package.json` repository fields, CHANGELOG links, ADR cross-references, dashboard "Report Issue" URLs, and any hardcoded GitHub URLs in docs or code. Verify GitHub redirect from old org works for existing clones.
 
+### Website Redesign — secureyeoman.ai (P4 — v1.0.0 launch)
+
+Current site demonstrates depth but overwhelms. Redesign for the 1.0.0 launch.
+
+**Narrative arc** (current is backwards — features first, philosophy last):
+- [ ] **Hero: philosophy first** — Lead with sovereignty, local-first, zero CVEs. "Your AI, your rules, your hardware." Move "485 tools" stat below the fold.
+- [ ] **Section 2: the problem** — OpenClaw crisis narrative (currently buried at bottom). Why sovereignty matters *now*. This builds trust before feature depth.
+- [ ] **Section 3: how we solve it** — 3–4 pillars max (privacy, security, intelligence, voice). Not 11 categories with bullet lists.
+- [ ] **Section 4: see it in action** — Screenshot/demo of dashboard. One "Get Started" CTA.
+- [ ] **Section 5: feature depth** — Accordion/progressive disclosure for the full capability list. Developers who want depth can expand; casual visitors aren't overwhelmed.
+
+**UX fixes:**
+- [ ] **Single primary CTA** — "Get Started" in hero only. "View on GitHub" secondary. Remove scattered duplicate CTAs.
+- [ ] **Comparison table → cards** — Replace 5-column table with card-based "vs OpenClaw" layout. Mobile-friendly, progressive disclosure per feature.
+- [ ] **Deployment tabs → single recommended** — Show `curl | sh` as default. "Other install methods" as expandable section.
+- [ ] **Separate developer/executive paths** — Developer lands on main page. Executive briefing becomes `/enterprise` or linked from a single "For Enterprise" button.
+
+**Technical:**
+- [ ] **Lazy-load below-fold sections** — Feature lists, comparison, executive briefing don't need to render on initial load.
+- [ ] **Reduce JS weight** — Audit bundle size. Static sections don't need React hydration.
+- [ ] **Mobile-first responsive** — Test comparison section, deployment tabs, feature lists at 375px.
+
 ### Payment & Monetization (P4 — post-launch)
 
 **Architecture**: Separate `secureyeoman-licensing` repo (`../secureyeoman-licensing/`). Lightweight Fastify + SQLite service that receives payment provider webhooks, mints Ed25519-signed keys, and serves key retrieval API. SY dashboard opens provider checkout in-app, polls licensing service for key after purchase, auto-applies via `POST /api/v1/license/key`.

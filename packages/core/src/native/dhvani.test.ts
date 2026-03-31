@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { native, nativeAvailable } from './index.js';
 import {
+  applyBodyState,
   voiceProfileMale,
   voiceProfileFemale,
   voiceProfileFromConfig,
@@ -95,6 +96,81 @@ describe('traitsToVoiceProfile', () => {
   it('handles unknown trait values gracefully', () => {
     const config = traitsToVoiceProfile({ formality: 'unknown_value' });
     expect(config.base_f0).toBe(120); // no offset for unknown
+  });
+});
+
+// ── Body State Modulation (pure TS, always runs) ────────────────────────
+
+describe('applyBodyState', () => {
+  it('fatigue makes voice breathier and reduces vibrato', () => {
+    const base = traitsToVoiceProfile({});
+    const tired = applyBodyState(base, { fatigue: 0.2 }); // 80% tired
+    expect(tired.breathiness!).toBeGreaterThan(base.breathiness!);
+    expect(tired.vibrato_depth!).toBeLessThan(base.vibrato_depth!);
+  });
+
+  it('pain increases shimmer and jitter', () => {
+    const base = traitsToVoiceProfile({});
+    const hurt = applyBodyState(base, { pain: 0.7 });
+    expect(hurt.shimmer!).toBeGreaterThan(base.shimmer!);
+    expect(hurt.jitter!).toBeGreaterThan(base.jitter!);
+    expect(hurt.f0_range!).toBeLessThan(base.f0_range!);
+  });
+
+  it('arousal raises pitch and widens range', () => {
+    const base = traitsToVoiceProfile({});
+    const excited = applyBodyState(base, { arousal: 0.8 });
+    expect(excited.base_f0!).toBeGreaterThan(base.base_f0!);
+    expect(excited.f0_range!).toBeGreaterThan(base.f0_range!);
+  });
+
+  it('sickness flattens affect dramatically', () => {
+    const base = traitsToVoiceProfile({});
+    const sick = applyBodyState(base, { sickness: 0.9 });
+    expect(sick.f0_range!).toBeLessThan(base.f0_range! * 0.5);
+    expect(sick.breathiness!).toBeGreaterThan(base.breathiness!);
+    expect(sick.base_f0!).toBeLessThan(base.base_f0!);
+  });
+
+  it('sedation drops everything', () => {
+    const base = traitsToVoiceProfile({});
+    const sedated = applyBodyState(base, { sedation: 1.0 });
+    expect(sedated.base_f0!).toBeLessThan(base.base_f0!);
+    expect(sedated.f0_range!).toBeLessThan(15);
+    expect(sedated.breathiness!).toBeGreaterThan(0.25);
+    expect(sedated.vibrato_depth!).toBeLessThan(0.01);
+  });
+
+  it('positive valence opens voice, negative compresses', () => {
+    const base = traitsToVoiceProfile({});
+    const happy = applyBodyState(base, { valence: 1.0 });
+    const sad = applyBodyState(base, { valence: -1.0 });
+    expect(happy.f0_range!).toBeGreaterThan(base.f0_range!);
+    expect(sad.f0_range!).toBeLessThan(base.f0_range!);
+  });
+
+  it('combined T.Ron tired + in pain produces strained voice', () => {
+    const tron = traitsToVoiceProfile({
+      formality: 'formal',
+      humor: 'deadpan',
+      confidence: 'authoritative',
+      precision: 'meticulous',
+    });
+    const strained = applyBodyState(tron, { fatigue: 0.3, pain: 0.5 });
+    // Authoritative baseline + fatigue + pain = low pitch, breathy, shimmery
+    expect(strained.base_f0!).toBeLessThan(120);
+    expect(strained.breathiness!).toBeGreaterThan(tron.breathiness!);
+    expect(strained.shimmer!).toBeGreaterThan(tron.shimmer!);
+  });
+
+  it('clamps all values to safe ranges', () => {
+    const extreme = applyBodyState(
+      { base: 'male', breathiness: 0.9 },
+      { fatigue: 0.0, sickness: 1.0, sedation: 1.0 }
+    );
+    expect(extreme.breathiness!).toBeLessThanOrEqual(1.0);
+    expect(extreme.vibrato_depth!).toBeGreaterThanOrEqual(0);
+    expect(extreme.f0_range!).toBeGreaterThanOrEqual(5);
   });
 });
 

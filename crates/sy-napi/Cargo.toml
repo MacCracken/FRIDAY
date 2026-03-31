@@ -16,7 +16,7 @@ sy-privacy = { path = "../sy-privacy" }
 sy-audit = { path = "../sy-audit" }
 sy-sandbox = { path = "../sy-sandbox" }
 sy-tee = { path = "../sy-tee" }
-bhava = { version = "1.2.0", features = ["presets"] }
+bhava = { version = "1.4.0", features = ["presets", "psychology", "sociology", "physiology", "microbiology"] }
 agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
 dhvani = { version = "1.0.0", features = ["voice", "g2p", "synthesis", "analysis"] }
 majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }

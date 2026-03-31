@@ -68,7 +68,12 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::todoist::router())
         .merge(crate::routes::jira::router())
         .merge(crate::routes::linear::router())
-        .merge(crate::routes::notion::router());
+        .merge(crate::routes::notion::router())
+        .merge(crate::routes::photisnadi::router())
+        .merge(crate::routes::trading::router())
+        .merge(crate::routes::google_calendar::router())
+        .merge(crate::routes::gmail::router())
+        .merge(crate::routes::github::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);
