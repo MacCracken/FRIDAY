@@ -79,3 +79,11 @@ pub mod routing_rules;
 pub mod terminal;
 pub mod users;
 pub mod voice;
+
+pub mod agent_replay;
+pub mod autonomy;
+pub mod capture;
+pub mod comms;
+pub mod compliance;
+pub mod reports;
+pub mod video_stream;

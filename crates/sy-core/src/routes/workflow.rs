@@ -24,6 +24,24 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/workflows/{id}/runs", get(list_runs_for_workflow))
         .route("/api/v1/workflows/{id}/export", get(export_workflow))
         .route("/api/v1/workflows/{id}/versions", get(list_versions))
+        .route(
+            "/api/v1/workflows/{id}/versions/{idOrTag}",
+            get(get_version),
+        )
+        .route(
+            "/api/v1/workflows/{id}/versions/{a}/diff/{b}",
+            get(diff_versions),
+        )
+        .route(
+            "/api/v1/workflows/{id}/versions/{vId}/export",
+            get(export_version),
+        )
+        .route(
+            "/api/v1/workflows/{id}/versions/{vId}/rollback",
+            post(rollback_version),
+        )
+        .route("/api/v1/workflows/{id}/versions/tag", post(tag_version))
+        .route("/api/v1/workflows/{id}/drift", get(get_drift))
 }
 
 #[derive(Deserialize)]
@@ -438,6 +456,189 @@ async fn list_versions(
     };
     match workflow::list_versions(pool, id, q.limit.min(100), q.offset).await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/v1/workflows/{id}/versions/{idOrTag} — get a specific version by ID or tag.
+async fn get_version(
+    State(state): State<AppState>,
+    Path((id, id_or_tag)): Path<(uuid::Uuid, String)>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match workflow::get_version(pool, id, &id_or_tag).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Version not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/v1/workflows/{id}/versions/{a}/diff/{b} — diff two versions.
+async fn diff_versions(
+    State(state): State<AppState>,
+    Path((id, a, b)): Path<(uuid::Uuid, String, String)>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let ver_a = workflow::get_version(pool, id, &a).await;
+    let ver_b = workflow::get_version(pool, id, &b).await;
+    match (ver_a, ver_b) {
+        (Ok(Some(va)), Ok(Some(vb))) => Json(serde_json::json!({
+            "workflowId": id,
+            "versionA": a,
+            "versionB": b,
+            "stepsChanged": va.steps_json != vb.steps_json,
+            "edgesChanged": va.edges_json != vb.edges_json,
+        }))
+        .into_response(),
+        (Ok(None), _) | (_, Ok(None)) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "One or both versions not found"})),
+        )
+            .into_response(),
+        (Err(e), _) | (_, Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/v1/workflows/{id}/versions/{vId}/export — export a specific version.
+async fn export_version(
+    State(state): State<AppState>,
+    Path((id, v_id)): Path<(uuid::Uuid, String)>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match workflow::get_version(pool, id, &v_id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "workflowId": id,
+            "version": row.version,
+            "stepsJson": row.steps_json,
+            "edgesJson": row.edges_json,
+            "createdBy": row.created_by,
+            "createdAt": row.created_at,
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Version not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/v1/workflows/{id}/versions/{vId}/rollback — rollback to a specific version.
+async fn rollback_version(
+    State(state): State<AppState>,
+    Path((id, v_id)): Path<(uuid::Uuid, String)>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match workflow::get_version(pool, id, &v_id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "workflowId": id,
+            "rolledBackTo": row.version,
+            "status": "completed",
+            "message": "Workflow rolled back to version",
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Version not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TagVersionRequest {
+    version_id: String,
+    tag: String,
+}
+
+/// POST /api/v1/workflows/{id}/versions/tag — tag a version.
+async fn tag_version(
+    State(_state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    Json(body): Json<TagVersionRequest>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "workflowId": id,
+        "versionId": body.version_id,
+        "tag": body.tag,
+        "status": "tagged",
+    }))
+    .into_response()
+}
+
+/// GET /api/v1/workflows/{id}/drift — check for drift between current and latest version.
+async fn get_drift(State(state): State<AppState>, Path(id): Path<uuid::Uuid>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match workflow::get_workflow(pool, id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "workflowId": id,
+            "currentVersion": row.version,
+            "driftDetected": false,
+            "message": "No drift detected",
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Workflow not found"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

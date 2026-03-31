@@ -59,6 +59,14 @@ pub fn router() -> Router<AppState> {
             "/api/v1/github/repos/{owner}/{repo}/commits",
             get(list_commits),
         )
+        .route(
+            "/api/v1/github/repos/{owner}/{repo}/forks",
+            post(create_fork),
+        )
+        .route(
+            "/api/v1/github/repos/{owner}/{repo}/sync-fork",
+            post(sync_fork),
+        )
 }
 
 async fn resolve_auth(state: &AppState) -> Result<AuthMode, (StatusCode, Json<serde_json::Value>)> {
@@ -338,6 +346,27 @@ async fn list_commits(
         &state,
         &format!("/repos/{owner}/{repo}/commits"),
         qs.as_deref(),
+    )
+    .await
+}
+
+async fn create_fork(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    gh_post(&state, &format!("/repos/{owner}/{repo}/forks"), &body).await
+}
+
+async fn sync_fork(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    gh_post(
+        &state,
+        &format!("/repos/{owner}/{repo}/merge-upstream"),
+        &body,
     )
     .await
 }

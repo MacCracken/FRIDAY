@@ -103,7 +103,14 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::browser::router())
         .merge(crate::routes::ecosystem::router())
         .merge(crate::routes::editor::router())
-        .merge(crate::routes::terminal::router());
+        .merge(crate::routes::terminal::router())
+        .merge(crate::routes::video_stream::router())
+        .merge(crate::routes::agent_replay::router())
+        .merge(crate::routes::autonomy::router())
+        .merge(crate::routes::capture::router())
+        .merge(crate::routes::comms::router())
+        .merge(crate::routes::compliance::router())
+        .merge(crate::routes::reports::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);

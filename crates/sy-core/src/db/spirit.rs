@@ -42,6 +42,30 @@ pub struct PainRow {
     pub personality_id: Option<String>,
 }
 
+pub async fn get_passion(pool: &PgPool, id: &str) -> Result<Option<PassionRow>, sqlx::Error> {
+    sqlx::query_as::<_, PassionRow>("SELECT * FROM spirit.passions WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn get_inspiration(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<InspirationRow>, sqlx::Error> {
+    sqlx::query_as::<_, InspirationRow>("SELECT * FROM spirit.inspirations WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn get_pain(pool: &PgPool, id: &str) -> Result<Option<PainRow>, sqlx::Error> {
+    sqlx::query_as::<_, PainRow>("SELECT * FROM spirit.pains WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn list_passions(
     pool: &PgPool,
     personality_id: Option<&str>,

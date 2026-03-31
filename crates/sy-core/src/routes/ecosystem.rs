@@ -23,6 +23,10 @@ pub fn router() -> Router<AppState> {
             post(disable_service),
         )
         .route("/api/v1/ecosystem/services/{id}/probe", post(probe_service))
+        .route(
+            "/api/v1/ecosystem/services/agnos/sandbox-profiles",
+            get(agnos_sandbox_profiles),
+        )
 }
 
 /// Static registry of known ecosystem services.
@@ -109,4 +113,17 @@ async fn probe_service(Path(id): Path<String>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+/// GET /api/v1/ecosystem/services/agnos/sandbox-profiles — list AGNOS sandbox profiles.
+async fn agnos_sandbox_profiles() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "profiles": [
+            {"id": "default", "name": "Default", "isolation": "namespace", "allowNetwork": true},
+            {"id": "strict", "name": "Strict", "isolation": "vm", "allowNetwork": false},
+            {"id": "dev", "name": "Development", "isolation": "namespace", "allowNetwork": true},
+        ],
+        "total": 3,
+    }))
+    .into_response()
 }

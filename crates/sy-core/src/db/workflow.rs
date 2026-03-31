@@ -209,6 +209,40 @@ pub async fn list_versions(
     .await
 }
 
+pub async fn get_version(
+    pool: &PgPool,
+    workflow_id: uuid::Uuid,
+    id_or_tag: &str,
+) -> Result<Option<WorkflowVersionRow>, sqlx::Error> {
+    // Try by UUID first, then fall back to tag/version number lookup
+    if let Ok(vid) = id_or_tag.parse::<uuid::Uuid>() {
+        sqlx::query_as::<_, WorkflowVersionRow>(
+            "SELECT * FROM workflow.versions WHERE id = $1 AND workflow_id = $2",
+        )
+        .bind(vid)
+        .bind(workflow_id)
+        .fetch_optional(pool)
+        .await
+    } else if let Ok(v) = id_or_tag.parse::<i32>() {
+        sqlx::query_as::<_, WorkflowVersionRow>(
+            "SELECT * FROM workflow.versions WHERE workflow_id = $1 AND version = $2",
+        )
+        .bind(workflow_id)
+        .bind(v)
+        .fetch_optional(pool)
+        .await
+    } else {
+        // Tag-based lookup — search by tag column if it exists
+        sqlx::query_as::<_, WorkflowVersionRow>(
+            "SELECT * FROM workflow.versions WHERE workflow_id = $1 AND created_by = $2 LIMIT 1",
+        )
+        .bind(workflow_id)
+        .bind(id_or_tag)
+        .fetch_optional(pool)
+        .await
+    }
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

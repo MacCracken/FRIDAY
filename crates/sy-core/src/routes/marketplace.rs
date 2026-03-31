@@ -32,6 +32,10 @@ pub fn router() -> Router<AppState> {
             "/api/v1/marketplace/community/personalities/install",
             post(install_community_personality),
         )
+        .route(
+            "/api/v1/marketplace/community/personalities/avatar/{path}",
+            get(community_personality_avatar),
+        )
 }
 
 #[derive(Deserialize)]
@@ -325,6 +329,21 @@ async fn install_community_personality(
         )
             .into_response(),
     }
+}
+
+/// GET /api/v1/marketplace/community/personalities/avatar/{path} — serve personality avatar.
+async fn community_personality_avatar(Path(path): Path<String>) -> impl IntoResponse {
+    // In production this would serve the avatar file from storage.
+    // For now return a placeholder response.
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "path": path,
+            "contentType": "image/png",
+            "message": "Avatar storage not yet connected",
+        })),
+    )
+        .into_response()
 }
 
 async fn community_sync(State(state): State<AppState>) -> impl IntoResponse {
