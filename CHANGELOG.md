@@ -10,7 +10,7 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ### Phase 7.5 — Integration Proxies
 
-9 integration adapters ported to axum with reusable proxy helper.
+All 12 integration adapters ported to axum (52 proxy routes + reusable helper).
 
 - **Proxy helper** — `src/integrations/proxy.rs`: `proxy_get`, `proxy_post`, `resolve_bearer_token`, `resolve_config`. Supports Bearer, Basic, API key auth
 - **Todoist** — 6 routes (tasks CRUD, projects). Bearer token
@@ -22,6 +22,14 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 - **Google Calendar** — 7 routes (calendars, events CRUD, freebusy). OAuth Bearer
 - **Gmail** — 7 routes (profile, messages, threads, send, drafts, labels). OAuth Bearer
 - **GitHub** — 16 routes (profile, repos, issues, pulls, comments, SSH keys, workflow runs, branches, commits). OAuth Bearer
+- **Ifran** — 37 routes (models, inference, training, eval, experiments, RLHF, fleet, marketplace, lineage, bridge). Internal proxy with SSE relay for streaming inference/training
+- **Forge** — 13 routes (connections CRUD, repos, branches, pulls, releases, pipelines). Multi-provider with in-memory registry
+- **Twitter** — 9 routes (profile, timeline, mentions, search, tweets, users, post, like, retweet). Bearer + OAuth 2.0 user token
+
+### Ecosystem Crate Updates
+
+- **bhava 1.4.0** — Psychology (bodh), sociology (sangha), physiology (sharira), microbiology (jivanu) bridge modules. 1117 tests, 37 modules
+- **Body state → voice prosody** — `applyBodyState()` maps fatigue, pain, arousal, sickness, sedation, valence to dhvani VoiceProfile modulations. 8 new tests
 
 ### Phase 7.4 — WebSocket Routes
 

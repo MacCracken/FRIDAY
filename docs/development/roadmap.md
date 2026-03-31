@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phases 0-3, 5-6 complete (see Changelog). Phase 4 (daimon) initial integration done. Phase 7.0-7.4 complete — sy-core axum binary with **92 routes across 35 domain modules**, JWT+RBAC auth middleware, sqlx database layer, reverse proxy to Fastify, SSE streaming (chat, ollama pull, audit export, event bridge), WebSocket (metrics, collab CRDT, video). 10 Rust crates in workspace (sy-core + sy-types added). Next: Phase 7.5 (integration proxies).
+**Status**: Phases 0-3, 5-6 complete. Phase 7.0-7.5 complete — sy-core axum binary with **210 routes across 48 modules**, JWT+RBAC auth, sqlx DB layer, SSE streaming, WebSocket, 12 integration proxy adapters. See Changelog for details. Phase 4 (daimon) in progress. Next: stub route completion, then Phase 8 (dashboard stays React) and Phase 9 (edge unification).
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
@@ -168,7 +168,7 @@ Current site demonstrates depth but overwhelms. Redesign for the 1.0.0 launch.
 | majra | 1.0.1 | pub/sub (3 tiers), ratelimit, heartbeat, barrier, queue |
 | szal | 1.0.1 | condition eval, template resolution, flow validation, step builder |
 | bote | 0.50.0 | tool registry, schema validation, JSON-RPC protocol |
-| bhava | 1.2.0 | personality engine, traits, mood, spirit |
+| bhava | 1.4.0 | personality engine, traits, mood, spirit + psychology (bodh), sociology (sangha), physiology (sharira), microbiology (jivanu) |
 | agnosai | 1.0.0 | crew orchestration, model routing, agent scoring |
 | ai-hwaccel | 1.0.0 | hardware accelerator detection (GPU, TPU, NPU, ASIC) via sy-hwprobe |
 | dhvani | 1.0.0 | voice synthesis (svara), G2P (shabda), audio DSP, analysis, PCM→WAV. TTS/STT providers + bhava trait→prosody mapping |

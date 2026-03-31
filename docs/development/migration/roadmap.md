@@ -62,18 +62,14 @@
 
 ## Phase 7 — Core Engine (Rust binary replaces Bun)
 
-**After Phases 1-6, the remaining TS in core is**:
-- HTTP gateway (Fastify) → replace with axum (like shruti-ai serve.rs)
-- Integration adapters (31 platforms) → keep as Rust HTTP clients or TS plugins
-- Config management → Rust + TOML
-- CLI → Rust (clap)
+**Done (7.0-7.5)**: axum gateway with **210 routes across 48 modules** — CRUD, SSE streaming, WebSocket, 12 integration proxy adapters. JWT+RBAC auth, sqlx DB layer, reverse proxy fallback to Fastify.
+
+**Remaining:**
 
 | # | Item | Notes |
 |---|------|-------|
-| 1 | Replace Fastify gateway with axum HTTP server | Same endpoints, Rust performance |
 | 2 | Migrate config to TOML (AGNOS convention) | Drop JS config parsing |
 | 3 | Build `secureyeoman` Rust binary | Single binary: agent engine + API + MCP |
-| 4 | Move integrations to plugin system | 31 adapters as loadable modules or HTTP bridges |
 | 5 | sy-napi becomes optional (only for TS plugin runtime) | Bridge shrinks to plugin boundary |
 
 **Result**: SY is a single Rust binary (~12MB). Bun/Node is optional — only needed if TS plugins are loaded.
@@ -169,7 +165,7 @@ Phase 4 (daimon)    ← brain becomes thin client, removes vector store deps
     ↓
 Phase 6 (dhvani)    ✅
     ↓
-Phase 7 (core)      ← the final swap: Bun → axum, TS → Rust CLI
+Phase 7 (core)      ✅ (210 routes, 48 modules — config + CLI remaining)
     ↓
 Phase 9 (edge)      ← unify main + edge into one binary
     ↓
@@ -186,7 +182,7 @@ Phase 10 (flatten)  ← single flat crate, semver 1.0.0
 - [ ] Agent creation < 0.1ms (down from ~200ms)
 - [ ] Zero GC pauses during operation
 - [ ] All 180+ MCP tools functional
-- [ ] All 31 integrations functional (via plugin or native)
+- [ ] All 12 integration adapters functional in Rust (✅ proxy routes done, access mode enforcement pending)
 - [ ] Dashboard connects to Rust API without changes
 - [ ] sy-edge is a build profile, not a separate binary
 - [ ] T.Ron speaks with personality-driven voice
@@ -194,4 +190,4 @@ Phase 10 (flatten)  ← single flat crate, semver 1.0.0
 
 ---
 
-*Last Updated: 2026-03-30 — Phases 0-3, 5-6 complete*
+*Last Updated: 2026-03-30 — Phases 0-3, 5-7 complete (core engine: 210 routes, config + CLI remaining)*
