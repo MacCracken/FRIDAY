@@ -44,6 +44,7 @@ pub mod tenants;
 pub mod todoist;
 pub mod trading;
 pub mod training;
+pub mod twitter;
 pub mod workflow;
 pub mod workspace;
 pub mod ws_collab;
