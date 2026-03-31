@@ -17,6 +17,16 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/admin/tenants/{id}", get(get_tenant))
         .route("/api/v1/admin/tenants/{id}", put(update_tenant))
         .route("/api/v1/admin/tenants/{id}", delete(delete_tenant))
+        .route("/api/v1/admin/tenants/{id}/quotas", get(get_tenant_quotas))
+        .route("/api/v1/admin/tenants/{id}/usage", get(get_tenant_usage))
+        .route(
+            "/api/v1/admin/tenants/{id}/usage/reset",
+            post(reset_tenant_usage),
+        )
+        .route(
+            "/api/v1/admin/tenants/{id}/usage/tokens",
+            get(get_tenant_token_usage),
+        )
 }
 
 async fn list_tenants(State(state): State<AppState>) -> impl IntoResponse {
@@ -124,6 +134,93 @@ async fn update_tenant(
             Json(serde_json::json!({"error": "Tenant not found"})),
         )
             .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_tenant_quotas(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match tenants::get_tenant_quotas(pool, &id).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_tenant_usage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match tenants::get_tenant_usage(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => {
+            Json(serde_json::json!({"tenantId": id, "tokens": 0, "requests": 0})).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn reset_tenant_usage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match tenants::reset_tenant_usage(pool, &id).await {
+        Ok(_) => Json(serde_json::json!({"tenantId": id, "reset": true})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_tenant_token_usage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match tenants::get_tenant_token_usage(pool, &id).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

@@ -92,7 +92,18 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::outbound_webhooks::router())
         .merge(crate::routes::shruti::router())
         .merge(crate::routes::webhook_transforms::router())
-        .merge(crate::routes::scim::router());
+        .merge(crate::routes::scim::router())
+        .merge(crate::routes::diagnostics::router())
+        .merge(crate::routes::replay_jobs::router())
+        .merge(crate::routes::routing_rules::router())
+        .merge(crate::routes::events::router())
+        .merge(crate::routes::personalities::router())
+        .merge(crate::routes::users::router())
+        .merge(crate::routes::voice::router())
+        .merge(crate::routes::browser::router())
+        .merge(crate::routes::ecosystem::router())
+        .merge(crate::routes::editor::router())
+        .merge(crate::routes::terminal::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);

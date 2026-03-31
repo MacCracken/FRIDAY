@@ -43,3 +43,13 @@ pub mod responsible_ai;
 pub mod risk_assessment;
 pub mod simulation;
 pub mod webhook_transforms;
+
+pub mod browser;
+pub mod diagnostics;
+pub mod editor;
+pub mod events;
+pub mod personalities;
+pub mod replay_jobs;
+pub mod routing_rules;
+pub mod users;
+pub mod voice;

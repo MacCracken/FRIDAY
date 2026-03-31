@@ -69,6 +69,81 @@ pub async fn delete_tenant(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error>
     Ok(result.rows_affected() > 0)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantQuotaRow {
+    pub tenant_id: String,
+    pub resource: String,
+    pub limit_value: i64,
+    pub current_value: i64,
+}
+
+pub async fn get_tenant_quotas(
+    pool: &PgPool,
+    tenant_id: &str,
+) -> Result<Vec<TenantQuotaRow>, sqlx::Error> {
+    sqlx::query_as::<_, TenantQuotaRow>(
+        "SELECT tenant_id, resource, limit_value, current_value FROM auth.tenant_quotas WHERE tenant_id = $1 ORDER BY resource ASC",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantUsageRow {
+    pub tenant_id: String,
+    pub tokens: i64,
+    pub requests: i64,
+    pub updated_at: i64,
+}
+
+pub async fn get_tenant_usage(
+    pool: &PgPool,
+    tenant_id: &str,
+) -> Result<Option<TenantUsageRow>, sqlx::Error> {
+    sqlx::query_as::<_, TenantUsageRow>(
+        "SELECT tenant_id, tokens, requests, updated_at FROM auth.tenant_usage WHERE tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn reset_tenant_usage(pool: &PgPool, tenant_id: &str) -> Result<(), sqlx::Error> {
+    let now = now_ms();
+    sqlx::query(
+        "UPDATE auth.tenant_usage SET tokens = 0, requests = 0, updated_at = $2 WHERE tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantTokenUsageRow {
+    pub tenant_id: String,
+    pub model: String,
+    pub tokens: i64,
+    pub period: String,
+}
+
+pub async fn get_tenant_token_usage(
+    pool: &PgPool,
+    tenant_id: &str,
+) -> Result<Vec<TenantTokenUsageRow>, sqlx::Error> {
+    sqlx::query_as::<_, TenantTokenUsageRow>(
+        "SELECT tenant_id, model, tokens, period FROM auth.tenant_token_usage WHERE tenant_id = $1 ORDER BY period DESC",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

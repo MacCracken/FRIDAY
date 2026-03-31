@@ -81,6 +81,40 @@ pub struct McpConfigRow {
     pub value: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCredentialRow {
+    pub server_id: String,
+    pub key: String,
+    pub created_at: i64,
+}
+
+pub async fn list_server_credentials(
+    pool: &PgPool,
+    server_id: &str,
+) -> Result<Vec<McpCredentialRow>, sqlx::Error> {
+    sqlx::query_as::<_, McpCredentialRow>(
+        "SELECT server_id, key, created_at FROM mcp.server_credentials WHERE server_id = $1 ORDER BY key ASC",
+    )
+    .bind(server_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_server_credential(
+    pool: &PgPool,
+    server_id: &str,
+    key: &str,
+) -> Result<bool, sqlx::Error> {
+    let result =
+        sqlx::query("DELETE FROM mcp.server_credentials WHERE server_id = $1 AND key = $2")
+            .bind(server_id)
+            .bind(key)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn get_config(pool: &PgPool) -> Result<Vec<McpConfigRow>, sqlx::Error> {
     sqlx::query_as::<_, McpConfigRow>("SELECT key, value FROM mcp.config ORDER BY key ASC")
         .fetch_all(pool)

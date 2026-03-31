@@ -87,6 +87,38 @@ pub async fn run_experiment(
     .await
 }
 
+pub async fn abort_experiment(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<ChaosExperimentRow>, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, ChaosExperimentRow>(
+        "UPDATE chaos.experiments SET status = 'aborted', updated_at = $2 WHERE id = $1 AND status = 'running' RETURNING *",
+    )
+    .bind(id)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn schedule_experiment(
+    pool: &PgPool,
+    id: &str,
+    cron: Option<&str>,
+    run_at: Option<i64>,
+) -> Result<Option<ChaosExperimentRow>, sqlx::Error> {
+    let now = now_ms();
+    let schedule = serde_json::json!({"cron": cron, "runAt": run_at});
+    sqlx::query_as::<_, ChaosExperimentRow>(
+        "UPDATE chaos.experiments SET status = 'scheduled', config = config || $3, updated_at = $2 WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(now)
+    .bind(schedule)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn delete_experiment(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM chaos.experiments WHERE id = $1")
         .bind(id)

@@ -33,7 +33,12 @@ const PUBLIC_ROUTES: &[&str] = &[
 ];
 
 /// Prefixes that bypass auth (dynamic paths like /oauth/:provider).
-const PUBLIC_PREFIXES: &[&str] = &["/api/v1/auth/oauth/", "/api/v1/federation/marketplace/"];
+const PUBLIC_PREFIXES: &[&str] = &[
+    "/api/v1/auth/oauth/",
+    "/api/v1/auth/sso/callback/",
+    "/api/v1/auth/sso/saml/",
+    "/api/v1/federation/marketplace/",
+];
 
 /// Authenticated user context — injected into request extensions.
 #[derive(Debug, Clone)]

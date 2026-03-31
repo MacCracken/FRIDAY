@@ -20,6 +20,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/conversations/{id}", delete(delete_conversation))
         .route("/api/v1/conversations/{id}/messages", get(list_messages))
         .route("/api/v1/chat/stream", post(chat_stream))
+        .route("/api/v1/chat", post(chat_complete))
+        .route("/api/v1/chat/feedback", post(chat_feedback))
+        .route("/api/v1/chat/remember", post(chat_remember))
 }
 
 #[derive(Deserialize)]
@@ -320,4 +323,168 @@ async fn chat_stream(
     Sse::new(tokio_stream::iter(events))
         .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
         .into_response()
+}
+
+// ── Non-streaming Chat ──────────────────────────────────────────────────
+
+/// POST /api/v1/chat — non-streaming chat completion.
+///
+/// Proxies to hoosh's /v1/chat/completions with stream:false and returns the
+/// full response body.
+async fn chat_complete(
+    State(_state): State<AppState>,
+    Json(body): Json<ChatStreamRequest>,
+) -> impl IntoResponse {
+    if body.message.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "message is required"})),
+        )
+            .into_response();
+    }
+
+    let base_url = hoosh_base_url();
+    let url = format!("{base_url}/v1/chat/completions");
+
+    let mut messages = Vec::with_capacity(body.history.len() + 1);
+    for msg in &body.history {
+        messages.push(serde_json::json!({
+            "role": msg.role,
+            "content": msg.content,
+        }));
+    }
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": body.message,
+    }));
+
+    let model = body.model.as_deref().unwrap_or("default");
+
+    let oai_body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": false,
+    });
+
+    let client = reqwest::Client::new();
+    match client.post(&url).json(&oai_body).send().await {
+        Ok(r) if r.status().is_success() => {
+            let oai: serde_json::Value = match r.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"error": format!("Failed to parse LLM response: {e}")})),
+                    )
+                        .into_response();
+                }
+            };
+            let content = oai
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let response_model = oai.get("model").and_then(|m| m.as_str()).unwrap_or(model);
+            Json(serde_json::json!({
+                "content": content,
+                "model": response_model,
+                "provider": "hoosh",
+            }))
+            .into_response()
+        }
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let err = r.text().await.unwrap_or_default();
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": format!("LLM error ({status}): {err}")})),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": format!("Failed to connect to LLM: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Chat Feedback ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatFeedbackRequest {
+    message_id: String,
+    rating: String,
+    comment: Option<String>,
+}
+
+/// POST /api/v1/chat/feedback — submit response feedback.
+async fn chat_feedback(
+    State(state): State<AppState>,
+    Json(body): Json<ChatFeedbackRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chat::save_feedback(
+        pool,
+        &body.message_id,
+        &body.rating,
+        body.comment.as_deref(),
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Chat Remember ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatRememberRequest {
+    message_id: String,
+    label: Option<String>,
+}
+
+/// POST /api/v1/chat/remember — save message as memory.
+async fn chat_remember(
+    State(state): State<AppState>,
+    Json(body): Json<ChatRememberRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chat::save_memory(pool, &body.message_id, body.label.as_deref()).await {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
 }

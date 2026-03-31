@@ -18,6 +18,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chaos/experiments/{id}/run", post(run_experiment))
         .route("/api/v1/chaos/experiments/{id}", delete(delete_experiment))
         .route("/api/v1/chaos/config", get(chaos_config))
+        .route(
+            "/api/v1/chaos/experiments/{id}/abort",
+            post(abort_experiment),
+        )
+        .route(
+            "/api/v1/chaos/experiments/{id}/results",
+            get(get_experiment_results),
+        )
+        .route(
+            "/api/v1/chaos/experiments/{id}/schedule",
+            post(schedule_experiment),
+        )
+        .route("/api/v1/chaos/status", get(chaos_engine_status))
 }
 
 #[derive(Deserialize)]
@@ -173,6 +186,108 @@ async fn delete_experiment(
         )
             .into_response(),
     }
+}
+
+async fn abort_experiment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chaos::abort_experiment(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Experiment not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_experiment_results(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chaos::get_experiment(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "id": row.id,
+            "status": row.status,
+            "result": row.result,
+        }))
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Experiment not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleExperimentRequest {
+    cron: Option<String>,
+    run_at: Option<i64>,
+}
+
+async fn schedule_experiment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ScheduleExperimentRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chaos::schedule_experiment(pool, &id, body.cron.as_deref(), body.run_at).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Experiment not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn chaos_engine_status(State(state): State<AppState>) -> impl IntoResponse {
+    let db_available = state.db().is_some();
+    Json(serde_json::json!({
+        "status": if db_available { "running" } else { "degraded" },
+        "dbConnected": db_available,
+        "maxConcurrentExperiments": 2,
+        "safetyEnabled": true,
+    }))
+    .into_response()
 }
 
 async fn chaos_config(State(_s): State<AppState>) -> impl IntoResponse {

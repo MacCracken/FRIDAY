@@ -109,6 +109,63 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatFeedbackRow {
+    pub id: String,
+    pub message_id: String,
+    pub rating: String,
+    pub comment: Option<String>,
+    pub created_at: i64,
+}
+
+pub async fn save_feedback(
+    pool: &PgPool,
+    message_id: &str,
+    rating: &str,
+    comment: Option<&str>,
+) -> Result<ChatFeedbackRow, sqlx::Error> {
+    let id = uuid::Uuid::now_v7().to_string();
+    let now = now_ms();
+    sqlx::query_as::<_, ChatFeedbackRow>(
+        "INSERT INTO chat.feedback (id, message_id, rating, comment, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+    )
+    .bind(&id)
+    .bind(message_id)
+    .bind(rating)
+    .bind(comment)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMemoryRow {
+    pub id: String,
+    pub message_id: String,
+    pub label: Option<String>,
+    pub created_at: i64,
+}
+
+pub async fn save_memory(
+    pool: &PgPool,
+    message_id: &str,
+    label: Option<&str>,
+) -> Result<ChatMemoryRow, sqlx::Error> {
+    let id = uuid::Uuid::now_v7().to_string();
+    let now = now_ms();
+    sqlx::query_as::<_, ChatMemoryRow>(
+        "INSERT INTO chat.memories (id, message_id, label, created_at) VALUES ($1, $2, $3, $4) RETURNING *",
+    )
+    .bind(&id)
+    .bind(message_id)
+    .bind(label)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn list_messages(
     pool: &PgPool,
     conversation_id: &str,

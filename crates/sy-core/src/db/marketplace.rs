@@ -149,6 +149,39 @@ pub async fn trigger_community_sync(pool: &PgPool) -> Result<CommunitySyncStatus
     .await
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunityPersonalityRow {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub installed: Option<bool>,
+    pub published_at: i64,
+}
+
+pub async fn list_community_personalities(
+    pool: &PgPool,
+) -> Result<Vec<CommunityPersonalityRow>, sqlx::Error> {
+    sqlx::query_as::<_, CommunityPersonalityRow>(
+        "SELECT id, name, description, author, installed, published_at FROM marketplace.community_personalities ORDER BY name ASC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn install_community_personality(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<CommunityPersonalityRow>, sqlx::Error> {
+    sqlx::query_as::<_, CommunityPersonalityRow>(
+        "UPDATE marketplace.community_personalities SET installed = true WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

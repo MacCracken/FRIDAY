@@ -62,7 +62,7 @@
 
 ## Phase 7 — Core Engine (Rust binary replaces Bun)
 
-**Done (7.0-7.5+)**: axum gateway with **328 routes across 49 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters. JWT+RBAC auth, sqlx DB layer, reverse proxy fallback to Fastify.
+**Done (7.0-7.5+)**: axum gateway with **505 routes across 74 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters, auth (OAuth/SSO/SAML/WebAuthn), training, security, simulation, and 60+ sub-domain modules. JWT+RBAC auth, sqlx DB layer, reverse proxy fallback to Fastify.
 
 **Remaining:**
 
@@ -165,7 +165,7 @@ Phase 4 (daimon)    ← brain becomes thin client, removes vector store deps
     ↓
 Phase 6 (dhvani)    ✅
     ↓
-Phase 7 (core)      ✅ (328 routes, 49 modules — config + CLI remaining)
+Phase 7 (core)      ✅ (505 routes, 74 modules — config + CLI remaining)
     ↓
 Phase 9 (edge)      ← unify main + edge into one binary
     ↓

@@ -171,6 +171,84 @@ pub async fn get_config(pool: &PgPool) -> Result<Vec<ExtensionConfigRow>, sqlx::
     .await
 }
 
+/// Delete a hook by ID.
+pub async fn delete_hook(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM extensions.hooks WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Get a single hook by ID.
+pub async fn get_hook(pool: &PgPool, id: &str) -> Result<Option<ExtensionHookRow>, sqlx::Error> {
+    sqlx::query_as::<_, ExtensionHookRow>(
+        "SELECT id, extension_id, event, handler, created_at FROM extensions.hooks WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Hook execution log row.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct HookLogRow {
+    pub id: String,
+    pub hook_id: String,
+    pub status: String,
+    pub executed_at: i64,
+}
+
+/// List hook execution log entries.
+pub async fn get_hooks_log(pool: &PgPool) -> Result<Vec<HookLogRow>, sqlx::Error> {
+    sqlx::query_as::<_, HookLogRow>(
+        "SELECT id, hook_id, status, executed_at FROM extensions.hook_log ORDER BY executed_at DESC LIMIT 100",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Update a webhook.
+pub async fn update_webhook(
+    pool: &PgPool,
+    id: &str,
+    url: Option<&str>,
+    secret: Option<&str>,
+    events: Option<&serde_json::Value>,
+) -> Result<Option<ExtensionWebhookRow>, sqlx::Error> {
+    // Build dynamic update — at minimum touch the row to confirm it exists.
+    let now = now_ms();
+    if let Some(u) = url {
+        sqlx::query("UPDATE extensions.webhooks SET url = $2 WHERE id = $1")
+            .bind(id)
+            .bind(u)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(s) = secret {
+        sqlx::query("UPDATE extensions.webhooks SET secret = $2 WHERE id = $1")
+            .bind(id)
+            .bind(s)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(e) = events {
+        sqlx::query("UPDATE extensions.webhooks SET events = $2 WHERE id = $1")
+            .bind(id)
+            .bind(e)
+            .execute(pool)
+            .await?;
+    }
+    let _ = now;
+    sqlx::query_as::<_, ExtensionWebhookRow>(
+        "SELECT id, extension_id, url, secret, events, created_at FROM extensions.webhooks WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -23,6 +23,15 @@ pub fn router() -> Router<AppState> {
             get(community_status),
         )
         .route("/api/v1/marketplace/community/sync", post(community_sync))
+        .route("/api/v1/marketplace", get(list_marketplace))
+        .route(
+            "/api/v1/marketplace/community/personalities",
+            get(list_community_personalities),
+        )
+        .route(
+            "/api/v1/marketplace/community/personalities/install",
+            post(install_community_personality),
+        )
 }
 
 #[derive(Deserialize)]
@@ -229,6 +238,87 @@ async fn community_status(State(state): State<AppState>) -> impl IntoResponse {
     match marketplace::get_community_sync_status(pool).await {
         Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
         Ok(None) => Json(serde_json::json!({"status": "never_synced"})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_marketplace(
+    State(state): State<AppState>,
+    Query(q): Query<SkillQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match marketplace::list_skills(
+        pool,
+        q.category.as_deref(),
+        q.installed,
+        q.limit.min(100),
+        q.offset,
+    )
+    .await
+    {
+        Ok(rows) => Json(serde_json::json!({"items": rows, "total": rows.len()})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_community_personalities(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match marketplace::list_community_personalities(pool).await {
+        Ok(rows) => {
+            Json(serde_json::json!({"personalities": rows, "total": rows.len()})).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallPersonalityRequest {
+    personality_id: String,
+}
+
+async fn install_community_personality(
+    State(state): State<AppState>,
+    Json(body): Json<InstallPersonalityRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match marketplace::install_community_personality(pool, &body.personality_id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Personality not found"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

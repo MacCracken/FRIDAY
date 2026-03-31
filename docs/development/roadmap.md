@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phases 0-3, 5-7 substantially complete. sy-core axum binary with **328 routes across 49 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters. See Changelog for details. Phase 4 (daimon) in progress. Remaining Phase 7: config → TOML, CLI → clap. Then Phase 9 (edge unification) and Phase 10 (flatten → 1.0.0).
+**Status**: Phases 0-3, 5-7 substantially complete. sy-core axum binary with **505 routes across 74 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters, auth (OAuth/SSO/SAML/WebAuthn), training, security, simulation, and 60+ sub-domain modules. Phase 4 (daimon) in progress. Remaining Phase 7: config → TOML, CLI → clap. Then Phase 9 (edge unification) and Phase 10 (flatten → 1.0.0).
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
