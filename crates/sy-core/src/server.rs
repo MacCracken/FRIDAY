@@ -64,7 +64,11 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::models::router())
         .merge(crate::routes::ws_metrics::router())
         .merge(crate::routes::ws_collab::router())
-        .merge(crate::routes::ws_video::router());
+        .merge(crate::routes::ws_video::router())
+        .merge(crate::routes::todoist::router())
+        .merge(crate::routes::jira::router())
+        .merge(crate::routes::linear::router())
+        .merge(crate::routes::notion::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);

@@ -8,6 +8,14 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
+### Phase 7.5 — Integration Proxies (batch 1)
+
+- **Integration proxy helper** — `src/integrations/proxy.rs` with reusable `proxy_get`, `proxy_post`, `resolve_bearer_token`, `resolve_config` helpers. Supports Bearer, Basic, and API key auth modes
+- **Todoist** — 6 routes: list/get/create/update/close tasks, list projects. Bearer token auth
+- **Jira** — 3 routes: search issues (JQL), get issue, list projects. Basic auth (email:apiToken)
+- **Linear** — 2 routes: list teams, list issues. GraphQL passthrough with API key auth
+- **Notion** — 3 routes: search, get page, get database. Bearer token with Notion-Version header
+
 ### Phase 7.4 — WebSocket Routes
 
 All 3 WebSocket endpoints migrated to axum.

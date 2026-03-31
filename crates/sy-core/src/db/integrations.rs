@@ -67,6 +67,19 @@ pub async fn create_integration(
     .fetch_one(pool).await
 }
 
+/// Find the first enabled integration for a given platform.
+pub async fn find_enabled_by_platform(
+    pool: &PgPool,
+    platform: &str,
+) -> Result<Option<IntegrationRow>, sqlx::Error> {
+    sqlx::query_as::<_, IntegrationRow>(
+        "SELECT * FROM integration.integrations WHERE platform = $1 AND enabled = true LIMIT 1",
+    )
+    .bind(platform)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn delete_integration(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM integration.integrations WHERE id = $1")
         .bind(id)

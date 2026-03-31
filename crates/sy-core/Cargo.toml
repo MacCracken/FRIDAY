@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
+base64 = "0.22"
 
 [dev-dependencies]
 http-body-util = "0.1"

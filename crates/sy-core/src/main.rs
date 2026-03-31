@@ -10,6 +10,7 @@
 
 mod auth;
 mod db;
+mod integrations;
 mod middleware;
 mod proxy;
 mod routes;
