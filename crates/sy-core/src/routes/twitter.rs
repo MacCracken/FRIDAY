@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/twitter/tweets/{tweetId}/retweet",
             post(retweet_tweet),
         )
+        .route("/api/v1/twitter/media/upload", post(media_upload))
 }
 
 /// Resolve Bearer token for read-only v2 API calls.
@@ -362,4 +363,14 @@ async fn retweet_tweet(
     )
     .await
     .into_response()
+}
+
+/// Media upload — requires OAuth 1.0a (v1.1 API), not yet supported in Rust.
+async fn media_upload() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": "Media upload requires OAuth 1.0a (Twitter API v1.1), not yet supported in Rust"
+        })),
+    )
 }

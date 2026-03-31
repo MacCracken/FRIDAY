@@ -29,6 +29,41 @@ pub async fn list_workspaces(
     .await
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceMemberRow {
+    pub workspace_id: String,
+    pub user_id: String,
+    pub role: String,
+    pub joined_at: i64,
+}
+
+pub async fn list_members(
+    pool: &PgPool,
+    workspace_id: &str,
+) -> Result<Vec<WorkspaceMemberRow>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceMemberRow>(
+        "SELECT workspace_id, user_id, role, joined_at FROM workspace.members WHERE workspace_id = $1 ORDER BY joined_at ASC",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn remove_member(
+    pool: &PgPool,
+    workspace_id: &str,
+    user_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result =
+        sqlx::query("DELETE FROM workspace.members WHERE workspace_id = $1 AND user_id = $2")
+            .bind(workspace_id)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn get_workspace(
     pool: &PgPool,
     id: &str,

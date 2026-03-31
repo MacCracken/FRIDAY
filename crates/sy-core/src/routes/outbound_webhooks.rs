@@ -1,28 +1,25 @@
-//! Notification routes — user notification listing and management.
+//! Outbound webhook routes — CRUD for outbound webhook configurations.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::db::notifications;
+use crate::db::outbound_webhooks;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/notifications", get(list_notifications))
-        .route("/api/v1/notifications/count", get(count_unread))
-        .route("/api/v1/notifications/{id}", get(get_notification))
-        .route("/api/v1/notifications/{id}/read", post(mark_read))
-        .route("/api/v1/notifications/read-all", post(mark_all_read))
+        .route("/api/v1/outbound-webhooks", get(list_webhooks))
+        .route("/api/v1/outbound-webhooks", post(create_webhook))
+        .route("/api/v1/outbound-webhooks/{id}", get(get_webhook))
+        .route("/api/v1/outbound-webhooks/{id}", delete(delete_webhook))
 }
 
 #[derive(Deserialize)]
-struct NotificationQuery {
-    #[serde(default)]
-    unread_only: bool,
+struct WebhookQuery {
     #[serde(default = "default_limit")]
     limit: i64,
     #[serde(default)]
@@ -30,12 +27,12 @@ struct NotificationQuery {
 }
 
 fn default_limit() -> i64 {
-    20
+    50
 }
 
-async fn list_notifications(
+async fn list_webhooks(
     State(state): State<AppState>,
-    Query(q): Query<NotificationQuery>,
+    Query(q): Query<WebhookQuery>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
@@ -44,7 +41,7 @@ async fn list_notifications(
         )
             .into_response();
     };
-    match notifications::list_notifications(pool, q.unread_only, q.limit.min(100), q.offset).await {
+    match outbound_webhooks::list_webhooks(pool, q.limit.min(200), q.offset).await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -54,27 +51,18 @@ async fn list_notifications(
     }
 }
 
-async fn count_unread(State(state): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = state.db() else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "Database not available"})),
-        )
-            .into_response();
-    };
-    match notifications::count_unread(pool).await {
-        Ok(count) => Json(serde_json::json!({"unread": count})).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateWebhookRequest {
+    url: String,
+    events: Vec<String>,
+    secret: Option<String>,
+    description: Option<String>,
 }
 
-async fn get_notification(
+async fn create_webhook(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Json(body): Json<CreateWebhookRequest>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
@@ -83,11 +71,20 @@ async fn get_notification(
         )
             .into_response();
     };
-    match notifications::get_notification(pool, &id).await {
-        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Notification not found"})),
+    let id = uuid::Uuid::now_v7().to_string();
+    match outbound_webhooks::create_webhook(
+        pool,
+        &id,
+        &body.url,
+        &body.events,
+        body.secret.as_deref(),
+        body.description.as_deref(),
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
         )
             .into_response(),
         Err(e) => (
@@ -98,26 +95,7 @@ async fn get_notification(
     }
 }
 
-async fn mark_read(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = state.db() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match notifications::mark_read(pool, &id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Notification not found or already read"})),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
-}
-
-async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
+async fn get_webhook(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -125,8 +103,35 @@ async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response();
     };
-    match notifications::mark_all_read(pool).await {
-        Ok(count) => Json(serde_json::json!({"marked": count})).into_response(),
+    match outbound_webhooks::get_webhook(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Webhook not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match outbound_webhooks::delete_webhook(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Webhook not found"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

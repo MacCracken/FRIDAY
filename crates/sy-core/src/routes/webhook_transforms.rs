@@ -1,28 +1,25 @@
-//! Notification routes — user notification listing and management.
+//! Webhook transform routes — CRUD for webhook payload transformations.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::db::notifications;
+use crate::db::webhook_transforms;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/notifications", get(list_notifications))
-        .route("/api/v1/notifications/count", get(count_unread))
-        .route("/api/v1/notifications/{id}", get(get_notification))
-        .route("/api/v1/notifications/{id}/read", post(mark_read))
-        .route("/api/v1/notifications/read-all", post(mark_all_read))
+        .route("/api/v1/webhook-transforms", get(list_transforms))
+        .route("/api/v1/webhook-transforms", post(create_transform))
+        .route("/api/v1/webhook-transforms/{id}", get(get_transform))
+        .route("/api/v1/webhook-transforms/{id}", delete(delete_transform))
 }
 
 #[derive(Deserialize)]
-struct NotificationQuery {
-    #[serde(default)]
-    unread_only: bool,
+struct TransformQuery {
     #[serde(default = "default_limit")]
     limit: i64,
     #[serde(default)]
@@ -30,12 +27,12 @@ struct NotificationQuery {
 }
 
 fn default_limit() -> i64 {
-    20
+    50
 }
 
-async fn list_notifications(
+async fn list_transforms(
     State(state): State<AppState>,
-    Query(q): Query<NotificationQuery>,
+    Query(q): Query<TransformQuery>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
@@ -44,7 +41,7 @@ async fn list_notifications(
         )
             .into_response();
     };
-    match notifications::list_notifications(pool, q.unread_only, q.limit.min(100), q.offset).await {
+    match webhook_transforms::list_transforms(pool, q.limit.min(200), q.offset).await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -54,27 +51,18 @@ async fn list_notifications(
     }
 }
 
-async fn count_unread(State(state): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = state.db() else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "Database not available"})),
-        )
-            .into_response();
-    };
-    match notifications::count_unread(pool).await {
-        Ok(count) => Json(serde_json::json!({"unread": count})).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTransformRequest {
+    name: String,
+    source_event: String,
+    template: serde_json::Value,
+    description: Option<String>,
 }
 
-async fn get_notification(
+async fn create_transform(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Json(body): Json<CreateTransformRequest>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
@@ -83,11 +71,20 @@ async fn get_notification(
         )
             .into_response();
     };
-    match notifications::get_notification(pool, &id).await {
-        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Notification not found"})),
+    let id = uuid::Uuid::now_v7().to_string();
+    match webhook_transforms::create_transform(
+        pool,
+        &id,
+        &body.name,
+        &body.source_event,
+        &body.template,
+        body.description.as_deref(),
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
         )
             .into_response(),
         Err(e) => (
@@ -98,26 +95,7 @@ async fn get_notification(
     }
 }
 
-async fn mark_read(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = state.db() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match notifications::mark_read(pool, &id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Notification not found or already read"})),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
-}
-
-async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
+async fn get_transform(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -125,8 +103,35 @@ async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response();
     };
-    match notifications::mark_all_read(pool).await {
-        Ok(count) => Json(serde_json::json!({"marked": count})).into_response(),
+    match webhook_transforms::get_transform(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Transform not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_transform(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match webhook_transforms::delete_transform(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Transform not found"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

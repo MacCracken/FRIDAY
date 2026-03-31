@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/trading/quote", get(quote))
         .route("/api/v1/trading/history", get(history))
+        .route("/api/v1/trading/historical", get(historical))
         .route("/api/v1/trading/search", get(search))
         .route("/api/v1/trading/bullshift/positions", get(bs_positions))
         .route("/api/v1/trading/bullshift/account", get(bs_account))
@@ -153,6 +154,52 @@ async fn history(Query(q): Query<HistoryQuery>) -> impl IntoResponse {
     let params = match &provider {
         MarketProvider::AlphaVantage(_) => vec![
             ("function", "TIME_SERIES_DAILY"),
+            ("symbol", symbol.as_str()),
+            ("outputsize", "compact"),
+        ],
+        MarketProvider::Finnhub(_) => vec![("symbol", symbol.as_str())],
+    };
+    match market_fetch(&provider, &params).await {
+        Ok(data) => Json(data).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct HistoricalQuery {
+    symbol: Option<String>,
+    interval: Option<String>,
+}
+
+/// Alias for /history with symbol+interval params.
+async fn historical(Query(q): Query<HistoricalQuery>) -> impl IntoResponse {
+    let Some(symbol) = q.symbol else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Missing symbol"})),
+        )
+            .into_response();
+    };
+    let Some(provider) = get_market_provider() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "No market data API key configured"})),
+        )
+            .into_response();
+    };
+    let interval = q.interval.as_deref().unwrap_or("daily");
+    let function = match interval {
+        "weekly" => "TIME_SERIES_WEEKLY",
+        "monthly" => "TIME_SERIES_MONTHLY",
+        _ => "TIME_SERIES_DAILY",
+    };
+    let params = match &provider {
+        MarketProvider::AlphaVantage(_) => vec![
+            ("function", function),
             ("symbol", symbol.as_str()),
             ("outputsize", "compact"),
         ],

@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/gmail/messages/{messageId}", get(get_message))
         .route("/api/v1/gmail/threads/{threadId}", get(get_thread))
         .route("/api/v1/gmail/messages/send", post(send_message))
+        .route("/api/v1/gmail/send", post(send_message))
         .route("/api/v1/gmail/drafts", post(create_draft))
         .route("/api/v1/gmail/labels", get(list_labels))
 }

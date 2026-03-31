@@ -53,10 +53,17 @@ pub mod ws_metrics;
 pub mod ws_video;
 
 pub mod chaos;
+pub mod dashboards;
 pub mod desktop;
+pub mod group_chat;
 pub mod intent;
+pub mod license;
 pub mod observability;
+pub mod outbound_webhooks;
 pub mod provider_accounts;
 pub mod responsible_ai;
 pub mod risk_assessment;
+pub mod scim;
+pub mod shruti;
 pub mod simulation;
+pub mod webhook_transforms;

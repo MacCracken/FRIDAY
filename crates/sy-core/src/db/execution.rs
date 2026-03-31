@@ -104,6 +104,17 @@ pub async fn get_session(
     .await
 }
 
+/// Approve a pending execution — transitions status from `pending` to `approved`.
+pub async fn approve_execution(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE execution.history SET status = 'approved' WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Delete a session by ID.
 pub async fn delete_session(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM execution.sessions WHERE id = $1")

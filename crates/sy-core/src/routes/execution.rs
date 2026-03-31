@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/execution/sessions/{id}", get(get_session))
         .route("/api/v1/execution/sessions/{id}", delete(delete_session))
         .route("/api/v1/execution/config", get(get_config))
+        .route("/api/v1/execution/approve/{id}", post(approve_execution))
 }
 
 #[derive(Deserialize)]
@@ -151,6 +152,32 @@ async fn delete_session(
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Session not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn approve_execution(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match execution::approve_execution(pool, &id).await {
+        Ok(true) => Json(serde_json::json!({"id": id, "status": "approved"})).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Execution not found or not in pending state"})),
         )
             .into_response(),
         Err(e) => (

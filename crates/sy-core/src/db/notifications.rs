@@ -40,6 +40,24 @@ pub async fn list_notifications(
     }
 }
 
+pub async fn get_notification(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<NotificationRow>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationRow>("SELECT * FROM public.notifications WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn count_unread(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM public.notifications WHERE read_at IS NULL")
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
+}
+
 pub async fn mark_read(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let now = now_ms();
     let result = sqlx::query(
