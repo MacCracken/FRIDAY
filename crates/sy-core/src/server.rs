@@ -77,7 +77,15 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::github::router())
         .merge(crate::routes::ifran_proxy::router())
         .merge(crate::routes::forge::router())
-        .merge(crate::routes::twitter::router());
+        .merge(crate::routes::twitter::router())
+        .merge(crate::routes::simulation::router())
+        .merge(crate::routes::risk_assessment::router())
+        .merge(crate::routes::desktop::router())
+        .merge(crate::routes::responsible_ai::router())
+        .merge(crate::routes::provider_accounts::router())
+        .merge(crate::routes::observability::router())
+        .merge(crate::routes::intent::router())
+        .merge(crate::routes::chaos::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);

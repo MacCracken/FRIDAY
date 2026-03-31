@@ -8,6 +8,29 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
+### Phase 7 — Route Expansion (328 routes, 49 modules)
+
+Core domain routes fleshed out from stubs to full CRUD:
+
+- **Training** — 15 routes: jobs CRUD+cancel, distillation, A/B tests, approvals, curated datasets
+- **Security** — 14 routes: events, policy, scans, ATHI threat scenarios+summary, access review campaigns, TLS
+- **Workflow** — 12 routes: get, run, runs, import/export, versions, delete
+- **Soul** — 14 routes: personalities full CRUD+activate+disable, config, onboarding, skills CRUD
+- **Brain** — 15 routes: memories CRUD+search, documents CRUD, cognitive stats, consolidation
+- **Auth** — 11 routes: login/refresh/logout/me + API keys CRUD, users CRUD, settings
+- **Agents** — 11 routes: CRUD + config, delegate, delegations active/cancel
+- **Proactive** — 10 routes: status, suggestions approve/dismiss, triggers CRUD, patterns
+- **Edge** — 9 routes: nodes register/heartbeat/status/decommission, deployments CRUD
+- **Sandbox** — 8 routes: status, config, profiles, scans trigger/list/get, quarantine approve
+- **Marketplace** — 8 routes: list, get, install, uninstall, publish, community status/sync
+- **MCP** — 9 routes: tools list/call, config, health, resources, servers detail/health
+- **Experiments** — 6 routes: list, create, get, delete, start, stop
+- **Execution** — 6 routes: history, run, sessions CRUD, config
+- **Backup** — 5 routes: list, create, get, restore, delete
+- **Tenants** — 5 routes: list, create, get, update, delete
+- **Federation** — 5 routes: peers CRUD, features, health
+- **Extensions** — 8 routes: extensions CRUD, hooks, webhooks, config
+
 ### Phase 7.5 — Integration Proxies
 
 All 12 integration adapters ported to axum (52 proxy routes + reusable helper).

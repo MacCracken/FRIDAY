@@ -30,3 +30,12 @@ pub mod tenants;
 pub mod training;
 pub mod workflow;
 pub mod workspace;
+
+pub mod chaos;
+pub mod desktop;
+pub mod intent;
+pub mod observability;
+pub mod provider_accounts;
+pub mod responsible_ai;
+pub mod risk_assessment;
+pub mod simulation;
