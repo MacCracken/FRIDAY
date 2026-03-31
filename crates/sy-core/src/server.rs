@@ -58,6 +58,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::tenants::router())
         .merge(crate::routes::execution::router())
         .merge(crate::routes::proactive::router())
+        .merge(crate::routes::sandbox::router())
         .merge(crate::routes::extensions::router())
         .merge(crate::routes::experiments::router())
         .merge(crate::routes::event_bridge::router())

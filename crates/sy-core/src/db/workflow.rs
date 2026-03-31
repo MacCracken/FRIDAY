@@ -1,4 +1,4 @@
-//! Workflow storage — definitions and runs via PostgreSQL.
+//! Workflow storage — definitions, runs, and versions via PostgreSQL.
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -37,6 +37,18 @@ pub struct WorkflowRunRow {
     pub created_at: i64,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowVersionRow {
+    pub id: uuid::Uuid,
+    pub workflow_id: uuid::Uuid,
+    pub version: i32,
+    pub steps_json: serde_json::Value,
+    pub edges_json: serde_json::Value,
+    pub created_by: String,
+    pub created_at: i64,
 }
 
 pub async fn list_workflows(
@@ -93,6 +105,30 @@ pub async fn delete_workflow(pool: &PgPool, id: uuid::Uuid) -> Result<bool, sqlx
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn import_workflow(
+    pool: &PgPool,
+    name: &str,
+    description: Option<&str>,
+    steps_json: &serde_json::Value,
+    edges_json: &serde_json::Value,
+    source: &str,
+) -> Result<WorkflowRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, WorkflowRow>(
+        "INSERT INTO workflow.definitions (name, description, steps_json, edges_json, source, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $6)
+         RETURNING *",
+    )
+    .bind(name)
+    .bind(description)
+    .bind(steps_json)
+    .bind(edges_json)
+    .bind(source)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn list_runs(
     pool: &PgPool,
     workflow_id: Option<uuid::Uuid>,
@@ -119,6 +155,22 @@ pub async fn list_runs(
     }
 }
 
+pub async fn list_runs_for_workflow(
+    pool: &PgPool,
+    workflow_id: uuid::Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<WorkflowRunRow>, sqlx::Error> {
+    sqlx::query_as::<_, WorkflowRunRow>(
+        "SELECT * FROM workflow.runs WHERE workflow_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(workflow_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn create_run(
     pool: &PgPool,
     workflow_id: uuid::Uuid,
@@ -139,6 +191,22 @@ pub async fn get_run(pool: &PgPool, id: uuid::Uuid) -> Result<Option<WorkflowRun
         .bind(id)
         .fetch_optional(pool)
         .await
+}
+
+pub async fn list_versions(
+    pool: &PgPool,
+    workflow_id: uuid::Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<WorkflowVersionRow>, sqlx::Error> {
+    sqlx::query_as::<_, WorkflowVersionRow>(
+        "SELECT * FROM workflow.versions WHERE workflow_id = $1 ORDER BY version DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(workflow_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
 }
 
 fn now_ms() -> i64 {
