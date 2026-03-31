@@ -63,6 +63,11 @@ pub async fn get_profile(pool: &PgPool, id: &str) -> Result<Option<AgentProfileR
         .await
 }
 
+/// Get an agent by ID (alias for get_profile, used by /agents/{id} route).
+pub async fn get_agent(pool: &PgPool, id: &str) -> Result<Option<AgentProfileRow>, sqlx::Error> {
+    get_profile(pool, id).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_profile(
     pool: &PgPool,
@@ -124,9 +129,65 @@ pub async fn list_delegations(
     }
 }
 
+/// List active delegations (status = 'running').
+pub async fn list_active_delegations(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DelegationRow>, sqlx::Error> {
+    sqlx::query_as::<_, DelegationRow>(
+        "SELECT * FROM agents.delegations WHERE status = 'running' ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_delegation(pool: &PgPool, id: &str) -> Result<Option<DelegationRow>, sqlx::Error> {
     sqlx::query_as::<_, DelegationRow>("SELECT * FROM agents.delegations WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await
+}
+
+/// Create a new delegation.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_delegation(
+    pool: &PgPool,
+    id: &str,
+    profile_id: &str,
+    task: &str,
+    context: Option<&str>,
+    initiated_by: Option<&str>,
+    max_depth: i32,
+    token_budget: i32,
+    timeout_ms: i32,
+) -> Result<DelegationRow, sqlx::Error> {
+    sqlx::query_as::<_, DelegationRow>(
+        "INSERT INTO agents.delegations (id, profile_id, task, context, status, depth, max_depth, token_budget, tokens_used_prompt, tokens_used_completion, timeout_ms, initiated_by)
+         VALUES ($1, $2, $3, $4, 'running', 0, $5, $6, 0, 0, $7, $8)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(profile_id)
+    .bind(task)
+    .bind(context)
+    .bind(max_depth)
+    .bind(token_budget)
+    .bind(timeout_ms)
+    .bind(initiated_by)
+    .fetch_one(pool)
+    .await
+}
+
+/// Cancel a delegation by ID.
+pub async fn cancel_delegation(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE agents.delegations SET status = 'cancelled', completed_at = NOW() WHERE id = $1 AND status = 'running'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }

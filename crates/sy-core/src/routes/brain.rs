@@ -5,7 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -18,13 +18,23 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/brain/memories", post(create_memory))
         .route("/api/v1/brain/memories", get(list_memories))
         .route("/api/v1/brain/memories/{id}", get(get_memory))
+        .route("/api/v1/brain/memories/{id}", put(update_memory))
         .route("/api/v1/brain/memories/{id}", delete(delete_memory))
+        // Search
+        .route("/api/v1/brain/search", get(search_memories))
         // Knowledge
         .route("/api/v1/brain/knowledge", post(create_knowledge))
         .route("/api/v1/brain/knowledge", get(query_knowledge))
         .route("/api/v1/brain/knowledge/{id}", delete(delete_knowledge))
+        // Documents
+        .route("/api/v1/brain/documents", get(list_documents))
+        .route("/api/v1/brain/documents", post(create_document))
+        .route("/api/v1/brain/documents/{id}", delete(delete_document))
         // Stats
         .route("/api/v1/brain/stats", get(get_stats))
+        .route("/api/v1/brain/cognitive-stats", get(get_cognitive_stats))
+        // Consolidation
+        .route("/api/v1/brain/consolidation/run", post(run_consolidation))
 }
 
 // ── Memory handlers ────────────────────────────────────────────────────────
@@ -152,6 +162,52 @@ async fn get_memory(State(state): State<AppState>, Path(id): Path<String>) -> im
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateMemoryRequest {
+    content: String,
+    #[serde(default = "default_importance")]
+    importance: f64,
+    #[serde(default)]
+    context: serde_json::Value,
+}
+
+async fn update_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateMemoryRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match brain::update_memory(
+        pool,
+        &id,
+        &body.content,
+        body.importance,
+        &body.context,
+        "default",
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Memory not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 async fn delete_memory(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -163,6 +219,36 @@ async fn delete_memory(State(state): State<AppState>, Path(id): Path<String>) ->
             Json(serde_json::json!({"error": "Memory not found"})),
         )
             .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchQuery {
+    q: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+
+async fn search_memories(
+    State(state): State<AppState>,
+    Query(q): Query<SearchQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let query_text = q.q.as_deref().unwrap_or("");
+    match brain::search_memories(pool, "default", query_text, q.limit.min(100)).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -286,6 +372,111 @@ async fn delete_knowledge(
     }
 }
 
+// ── Document handlers ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListDocumentsQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+async fn list_documents(
+    State(state): State<AppState>,
+    Query(q): Query<ListDocumentsQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match brain::list_documents(pool, "default", q.limit.min(1000), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateDocumentRequest {
+    title: String,
+    content: String,
+    #[serde(default)]
+    source: String,
+    #[serde(default = "default_doc_type")]
+    doc_type: String,
+}
+
+fn default_doc_type() -> String {
+    "text".to_string()
+}
+
+async fn create_document(
+    State(state): State<AppState>,
+    Json(body): Json<CreateDocumentRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match brain::create_document(
+        pool,
+        &id,
+        &body.title,
+        &body.content,
+        &body.source,
+        &body.doc_type,
+        "default",
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match brain::delete_document(pool, &id, "default").await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Document not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 // ── Stats ──────────────────────────────────────────────────────────────────
 
 async fn get_stats(State(state): State<AppState>) -> impl IntoResponse {
@@ -304,4 +495,30 @@ async fn get_stats(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+async fn get_cognitive_stats(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match brain::get_cognitive_stats(pool, "default").await {
+        Ok(stats) => Json(serde_json::to_value(stats).unwrap()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn run_consolidation(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(_pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    // Trigger memory consolidation — currently a no-op acknowledgement
+    StatusCode::NO_CONTENT.into_response()
 }

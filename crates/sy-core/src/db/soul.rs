@@ -31,6 +31,21 @@ pub struct PersonalityRow {
     pub version: i32,
 }
 
+/// Skill row from soul.skills table.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub personality_id: String,
+    pub enabled: bool,
+    pub config: serde_json::Value,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub tenant_id: String,
+}
+
 /// List all personalities.
 pub async fn list_personalities(
     pool: &PgPool,
@@ -99,6 +114,49 @@ pub async fn create_personality(
     .await
 }
 
+/// Update an existing personality.
+pub async fn update_personality(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    description: &str,
+    system_prompt: &str,
+    traits: &serde_json::Value,
+    tenant_id: &str,
+) -> Result<Option<PersonalityRow>, sqlx::Error> {
+    sqlx::query_as::<_, PersonalityRow>(
+        "UPDATE soul.personalities SET name = $1, description = $2, system_prompt = $3, traits = $4, updated_at = $5
+         WHERE id = $6 AND tenant_id = $7
+         RETURNING *",
+    )
+    .bind(name)
+    .bind(description)
+    .bind(system_prompt)
+    .bind(traits)
+    .bind(now_ms())
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Disable a personality (set enabled/is_active = false).
+pub async fn disable_personality(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE soul.personalities SET is_active = false, updated_at = $1 WHERE id = $2 AND tenant_id = $3",
+    )
+    .bind(now_ms())
+    .bind(id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Activate a personality (deactivates all others in the tenant).
 pub async fn activate_personality(
     pool: &PgPool,
@@ -139,6 +197,59 @@ pub async fn delete_personality(
     .bind(tenant_id)
     .execute(pool)
     .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// List skills for the active personality.
+pub async fn list_skills(
+    pool: &PgPool,
+    personality_id: &str,
+    tenant_id: &str,
+) -> Result<Vec<SkillRow>, sqlx::Error> {
+    sqlx::query_as::<_, SkillRow>(
+        "SELECT * FROM soul.skills WHERE personality_id = $1 AND tenant_id = $2 ORDER BY name ASC",
+    )
+    .bind(personality_id)
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a skill.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_skill(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    description: &str,
+    personality_id: &str,
+    config: &serde_json::Value,
+    tenant_id: &str,
+) -> Result<SkillRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, SkillRow>(
+        "INSERT INTO soul.skills (id, name, description, personality_id, enabled, config, created_at, updated_at, tenant_id)
+         VALUES ($1, $2, $3, $4, true, $5, $6, $6, $7)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(description)
+    .bind(personality_id)
+    .bind(config)
+    .bind(now)
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Delete a skill by ID.
+pub async fn delete_skill(pool: &PgPool, id: &str, tenant_id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM soul.skills WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected() > 0)
 }
 

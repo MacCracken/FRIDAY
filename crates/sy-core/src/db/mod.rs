@@ -5,6 +5,7 @@ pub mod agents;
 pub mod alerts;
 pub mod analytics;
 pub mod audit;
+pub mod auth;
 pub mod backup;
 pub mod brain;
 pub mod chat;
