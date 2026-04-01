@@ -5,7 +5,7 @@
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -17,7 +17,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/terminal/health", get(terminal_health))
         .route("/api/v1/terminal/tech-stack", get(detect_tech_stack))
         .route("/api/v1/terminal/worktrees", get(list_worktrees))
+        .route("/api/v1/terminal/worktrees", post(create_worktree))
         .route("/api/v1/terminal/worktrees/{id}", get(get_worktree))
+        .route("/api/v1/terminal/worktrees/{id}", delete(delete_worktree))
 }
 
 #[derive(Deserialize)]
@@ -87,6 +89,50 @@ async fn get_worktree(Path(id): Path<String>) -> impl IntoResponse {
         "id": id,
         "worktree": serde_json::Value::Null,
         "message": "Worktree lookup not yet connected to sandbox",
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateWorktreeRequest {
+    name: String,
+}
+
+/// POST /api/v1/terminal/worktrees — create a new git worktree.
+///
+/// Placeholder — in production this would run `git worktree add`
+/// inside the sandbox and return the new worktree path.
+async fn create_worktree(Json(body): Json<CreateWorktreeRequest>) -> impl IntoResponse {
+    if body.name.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "name is required"})),
+        )
+            .into_response();
+    }
+    let id = uuid::Uuid::now_v7().to_string();
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": id,
+            "name": body.name,
+            "message": "Worktree creation not yet connected to sandbox",
+            "stub": true,
+        })),
+    )
+        .into_response()
+}
+
+/// DELETE /api/v1/terminal/worktrees/{id} — remove a git worktree.
+///
+/// Placeholder — in production this would run `git worktree remove`
+/// inside the sandbox.
+async fn delete_worktree(Path(id): Path<String>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "id": id,
+        "removed": false,
+        "message": "Worktree removal not yet connected to sandbox",
+        "stub": true,
     }))
     .into_response()
 }

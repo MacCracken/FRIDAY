@@ -80,6 +80,8 @@ pub mod terminal;
 pub mod users;
 pub mod voice;
 
+pub mod admin_settings;
+
 pub mod agent_replay;
 pub mod autonomy;
 pub mod capture;

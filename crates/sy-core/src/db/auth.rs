@@ -279,6 +279,69 @@ pub async fn get_role(
         .await
 }
 
+/// Create a new role.
+pub async fn create_role(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    description: &str,
+    permissions: &serde_json::Value,
+    tenant_id: &str,
+) -> Result<RoleRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, RoleRow>(
+        "INSERT INTO auth.roles (id, name, description, permissions, is_system, created_at, updated_at, tenant_id)
+         VALUES ($1, $2, $3, $4, false, $5, $5, $6)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(description)
+    .bind(permissions)
+    .bind(now)
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Update a role's mutable fields (name, description, permissions).
+pub async fn update_role(
+    pool: &PgPool,
+    id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    permissions: Option<&serde_json::Value>,
+    tenant_id: &str,
+) -> Result<Option<RoleRow>, sqlx::Error> {
+    sqlx::query_as::<_, RoleRow>(
+        "UPDATE auth.roles
+         SET name        = COALESCE($1, name),
+             description = COALESCE($2, description),
+             permissions = COALESCE($3, permissions),
+             updated_at  = $4
+         WHERE id = $5 AND tenant_id = $6
+         RETURNING *",
+    )
+    .bind(name)
+    .bind(description)
+    .bind(permissions)
+    .bind(now_ms())
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Delete a role by ID.
+pub async fn delete_role(pool: &PgPool, id: &str, tenant_id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM auth.roles WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 // ── Role Assignments ─────────────────────────────────────────────────────
 
 /// List all role assignments.
@@ -307,6 +370,46 @@ pub async fn get_user_role_assignments(
     .bind(tenant_id)
     .fetch_all(pool)
     .await
+}
+
+/// Create a role assignment.
+pub async fn create_role_assignment(
+    pool: &PgPool,
+    id: &str,
+    user_id: &str,
+    role_id: &str,
+    assigned_by: &str,
+    tenant_id: &str,
+) -> Result<RoleAssignmentRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, RoleAssignmentRow>(
+        "INSERT INTO auth.role_assignments (id, user_id, role_id, assigned_by, created_at, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(role_id)
+    .bind(assigned_by)
+    .bind(now)
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Delete all role assignments for a user.
+pub async fn delete_role_assignment(
+    pool: &PgPool,
+    user_id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result =
+        sqlx::query("DELETE FROM auth.role_assignments WHERE user_id = $1 AND tenant_id = $2")
+            .bind(user_id)
+            .bind(tenant_id)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ── OAuth Tokens ─────────────────────────────────────────────────────────
@@ -391,6 +494,20 @@ pub async fn delete_oauth_token(
     Ok(result.rows_affected() > 0)
 }
 
+/// Delete an OAuth token by its primary ID.
+pub async fn delete_oauth_token_by_id(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM auth.oauth_tokens WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Update OAuth token timestamps (for refresh).
 pub async fn update_oauth_token(
     pool: &PgPool,
@@ -443,6 +560,95 @@ pub async fn get_sso_provider(
     .bind(tenant_id)
     .fetch_optional(pool)
     .await
+}
+
+/// Create an SSO provider.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_sso_provider(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    protocol: &str,
+    issuer_url: &str,
+    client_id: &str,
+    metadata_url: Option<&str>,
+    acs_url: Option<&str>,
+    config: &serde_json::Value,
+    tenant_id: &str,
+) -> Result<SsoProviderRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, SsoProviderRow>(
+        "INSERT INTO auth.sso_providers (id, name, protocol, issuer_url, client_id, metadata_url, acs_url, enabled, config, created_at, updated_at, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $9, $10)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(protocol)
+    .bind(issuer_url)
+    .bind(client_id)
+    .bind(metadata_url)
+    .bind(acs_url)
+    .bind(config)
+    .bind(now)
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Update an SSO provider's mutable fields.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_sso_provider(
+    pool: &PgPool,
+    id: &str,
+    name: Option<&str>,
+    issuer_url: Option<&str>,
+    client_id: Option<&str>,
+    metadata_url: Option<&str>,
+    acs_url: Option<&str>,
+    enabled: Option<bool>,
+    config: Option<&serde_json::Value>,
+    tenant_id: &str,
+) -> Result<Option<SsoProviderRow>, sqlx::Error> {
+    sqlx::query_as::<_, SsoProviderRow>(
+        "UPDATE auth.sso_providers
+         SET name         = COALESCE($1, name),
+             issuer_url   = COALESCE($2, issuer_url),
+             client_id    = COALESCE($3, client_id),
+             metadata_url = COALESCE($4, metadata_url),
+             acs_url      = COALESCE($5, acs_url),
+             enabled      = COALESCE($6, enabled),
+             config       = COALESCE($7, config),
+             updated_at   = $8
+         WHERE id = $9 AND tenant_id = $10
+         RETURNING *",
+    )
+    .bind(name)
+    .bind(issuer_url)
+    .bind(client_id)
+    .bind(metadata_url)
+    .bind(acs_url)
+    .bind(enabled)
+    .bind(config)
+    .bind(now_ms())
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Delete an SSO provider.
+pub async fn delete_sso_provider(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM auth.sso_providers WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ── WebAuthn Credentials ─────────────────────────────────────────────────

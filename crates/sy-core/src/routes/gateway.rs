@@ -2,17 +2,45 @@
 
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway", get(overview))
+        .route("/api/v1/gateway", post(gateway_proxy))
         .route("/api/v1/gateway/info", get(info))
         .route("/api/v1/gateway/version", get(version))
         .route("/api/v1/ecosystem/services", get(ecosystem_services))
+}
+
+/// POST /api/v1/gateway — proxy a chat/completion request to the configured LLM backend.
+///
+/// Accepts messages, model, and optional personalityId.  Full streaming is
+/// deferred until the Ifran integration is wired; for now returns a placeholder
+/// response so the frontend contract is satisfied.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GatewayProxyRequest {
+    messages: serde_json::Value,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    personality_id: Option<String>,
+}
+
+async fn gateway_proxy(Json(body): Json<GatewayProxyRequest>) -> impl IntoResponse {
+    let model = body.model.unwrap_or_else(|| "default".to_string());
+    Json(serde_json::json!({
+        "message": "Gateway proxy not yet connected to LLM backend",
+        "model": model,
+        "personalityId": body.personality_id,
+        "messageCount": body.messages.as_array().map(|a| a.len()).unwrap_or(0),
+        "stub": true,
+    }))
 }
 
 /// Gateway overview — combined info, version, and services in one response.

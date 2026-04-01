@@ -35,12 +35,20 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/users/{id}", put(update_user_role))
         // Roles
         .route("/api/v1/auth/roles", get(list_roles))
+        .route("/api/v1/auth/roles", post(create_role))
         .route("/api/v1/auth/roles/{id}", get(get_role))
+        .route("/api/v1/auth/roles/{id}", put(update_role))
+        .route("/api/v1/auth/roles/{id}", delete(delete_role))
         // Role assignments
         .route("/api/v1/auth/assignments", get(list_role_assignments))
+        .route("/api/v1/auth/assignments", post(create_assignment))
         .route(
             "/api/v1/auth/assignments/{userId}",
             get(get_user_role_assignments),
+        )
+        .route(
+            "/api/v1/auth/assignments/{userId}",
+            delete(delete_assignment),
         )
         // Federation auth
         .route("/api/v1/auth/federation/token", post(federation_token))
@@ -53,6 +61,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/oauth/tokens", get(list_oauth_tokens))
         .route("/api/v1/auth/oauth/tokens/{id}", get(get_oauth_token))
         .route(
+            "/api/v1/auth/oauth/tokens/{id}",
+            delete(delete_oauth_token_by_id),
+        )
+        .route(
             "/api/v1/auth/oauth/tokens/{id}/refresh",
             post(refresh_oauth_token),
         )
@@ -63,7 +75,13 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/oauth/{provider}", get(oauth_initiate))
         // SSO/SAML
         .route("/api/v1/auth/sso/providers", get(list_sso_providers))
+        .route("/api/v1/auth/sso/providers", post(create_sso_provider))
         .route("/api/v1/auth/sso/providers/{id}", get(get_sso_provider))
+        .route("/api/v1/auth/sso/providers/{id}", put(update_sso_provider))
+        .route(
+            "/api/v1/auth/sso/providers/{id}",
+            delete(delete_sso_provider),
+        )
         .route("/api/v1/auth/sso/authorize/{id}", get(sso_authorize))
         .route("/api/v1/auth/sso/callback/{id}", get(sso_callback))
         .route("/api/v1/auth/sso/exchange", post(sso_exchange))
@@ -657,6 +675,180 @@ async fn get_role(State(state): State<AppState>, Path(id): Path<String>) -> impl
     }
 }
 
+// ── Role write handlers ──────────────────────────────────────────────────
+
+const BUILTIN_ROLE_NAMES: &[&str] = &["admin", "viewer", "operator", "auditor", "superadmin"];
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateRoleRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_permissions")]
+    permissions: serde_json::Value,
+}
+
+async fn create_role(
+    State(state): State<AppState>,
+    Json(body): Json<CreateRoleRequest>,
+) -> impl IntoResponse {
+    // Block creation of roles that shadow builtins
+    if BUILTIN_ROLE_NAMES.contains(&body.name.to_lowercase().as_str()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(
+                serde_json::json!({"error": "Cannot create a role with a reserved built-in name"}),
+            ),
+        )
+            .into_response();
+    }
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match auth::create_role(
+        pool,
+        &id,
+        &body.name,
+        &body.description,
+        &body.permissions,
+        "default",
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRoleRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    permissions: Option<serde_json::Value>,
+}
+
+async fn update_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateRoleRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    // Fetch first to check is_system
+    match auth::get_role(pool, &id, "default").await {
+        Ok(Some(existing)) if existing.is_system => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Cannot modify a system role"})),
+            )
+                .into_response();
+        }
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Role not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+        Ok(Some(_)) => {}
+    }
+    match auth::update_role(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.description.as_deref(),
+        body.permissions.as_ref(),
+        "default",
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Role not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_role(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match auth::get_role(pool, &id, "default").await {
+        Ok(Some(existing)) if existing.is_system => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Cannot delete a system role"})),
+            )
+                .into_response();
+        }
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Role not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+        Ok(Some(_)) => {}
+    }
+    match auth::delete_role(pool, &id, "default").await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Role not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 // ── Role Assignments ─────────────────────────────────────────────────────
 
 async fn list_role_assignments(State(state): State<AppState>) -> impl IntoResponse {
@@ -690,6 +882,73 @@ async fn get_user_role_assignments(
     };
     match auth::get_user_role_assignments(pool, &user_id, "default").await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Role assignment write handlers ───────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateAssignmentRequest {
+    user_id: String,
+    role_id: String,
+}
+
+async fn create_assignment(
+    State(state): State<AppState>,
+    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
+    Json(body): Json<CreateAssignmentRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match auth::create_role_assignment(
+        pool,
+        &id,
+        &body.user_id,
+        &body.role_id,
+        &auth_ctx.user_id,
+        "default",
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_assignment(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match auth::delete_role_assignment(pool, &user_id, "default").await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "No role assignments found for this user"})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -933,6 +1192,28 @@ async fn get_oauth_token(
     }
 }
 
+async fn delete_oauth_token_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match auth::delete_oauth_token_by_id(pool, &id, "default").await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "OAuth token not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 async fn refresh_oauth_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1002,6 +1283,145 @@ async fn get_sso_provider(
     match auth::get_sso_provider(pool, &id, "default").await {
         Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
         Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "SSO provider not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// NOTE: SSO write operations are license-gated in the TypeScript implementation.
+// These routes are wired but the license check should be enforced at the middleware
+// layer once the licensing crate integration is in place.
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSsoProviderRequest {
+    name: String,
+    protocol: String,
+    issuer_url: String,
+    client_id: String,
+    #[serde(default)]
+    metadata_url: Option<String>,
+    #[serde(default)]
+    acs_url: Option<String>,
+    #[serde(default)]
+    config: serde_json::Value,
+}
+
+async fn create_sso_provider(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSsoProviderRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match auth::create_sso_provider(
+        pool,
+        &id,
+        &body.name,
+        &body.protocol,
+        &body.issuer_url,
+        &body.client_id,
+        body.metadata_url.as_deref(),
+        body.acs_url.as_deref(),
+        &body.config,
+        "default",
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSsoProviderRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    issuer_url: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    metadata_url: Option<String>,
+    #[serde(default)]
+    acs_url: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+}
+
+async fn update_sso_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateSsoProviderRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match auth::update_sso_provider(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.issuer_url.as_deref(),
+        body.client_id.as_deref(),
+        body.metadata_url.as_deref(),
+        body.acs_url.as_deref(),
+        body.enabled,
+        body.config.as_ref(),
+        "default",
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "SSO provider not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_sso_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match auth::delete_sso_provider(pool, &id, "default").await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "SSO provider not found"})),
         )
