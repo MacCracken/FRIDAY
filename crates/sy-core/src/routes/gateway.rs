@@ -14,7 +14,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/gateway", post(gateway_proxy))
         .route("/api/v1/gateway/info", get(info))
         .route("/api/v1/gateway/version", get(version))
-        .route("/api/v1/ecosystem/services", get(ecosystem_services))
+    // NOTE: /api/v1/ecosystem/services lives in ecosystem.rs
 }
 
 /// POST /api/v1/gateway — proxy a chat/completion request to the configured LLM backend.

@@ -9,6 +9,7 @@
 //! Fastify server via a built-in reverse proxy.
 
 mod auth;
+mod brain;
 mod db;
 mod integrations;
 mod middleware;

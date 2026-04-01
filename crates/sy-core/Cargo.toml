@@ -34,6 +34,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 base64 = "0.22"
+thiserror = "2"
 
 [dev-dependencies]
 http-body-util = "0.1"

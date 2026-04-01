@@ -431,6 +431,19 @@ pub struct BrainStats {
     pub knowledge_total: i64,
 }
 
+/// Touch a memory — increment access count and update last_accessed_at.
+pub async fn touch_memory(pool: &PgPool, id: &str, tenant_id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE brain.memories SET access_count = access_count + 1, last_accessed_at = $1, updated_at = $1 WHERE id = $2 AND tenant_id = $3",
+    )
+    .bind(now_ms())
+    .bind(id)
+    .bind(tenant_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -229,45 +229,7 @@ pub fn router() -> Router<AppState> {
         )
         // ── TLS ──
         .route("/api/v1/security/tls", get(get_tls_status))
-        // ── WebAuthn ──
-        .route(
-            "/api/v1/auth/webauthn/register/options",
-            post(webauthn_register_options),
-        )
-        .route(
-            "/api/v1/auth/webauthn/register/verify",
-            post(webauthn_register_verify),
-        )
-        .route(
-            "/api/v1/auth/webauthn/authenticate/options",
-            post(webauthn_authenticate_options),
-        )
-        .route(
-            "/api/v1/auth/webauthn/authenticate/verify",
-            post(webauthn_authenticate_verify),
-        )
-        .route(
-            "/api/v1/auth/webauthn/credentials",
-            get(list_webauthn_credentials),
-        )
-        .route(
-            "/api/v1/auth/webauthn/credentials/{id}",
-            delete(delete_webauthn_credential),
-        )
-        // ── Break-glass ──
-        .route("/api/v1/auth/break-glass", post(activate_break_glass))
-        .route(
-            "/api/v1/admin/break-glass/sessions",
-            get(list_break_glass_sessions),
-        )
-        .route(
-            "/api/v1/admin/break-glass/revoke/{id}",
-            post(revoke_break_glass_session),
-        )
-        .route(
-            "/api/v1/admin/break-glass/rotate",
-            post(rotate_recovery_key),
-        )
+        // NOTE: WebAuthn and break-glass routes live in auth.rs (they're /api/v1/auth/* paths)
         // ── Key rotation ──
         .route("/api/v1/admin/key-rotation", get(get_rotation_status))
         .route(
