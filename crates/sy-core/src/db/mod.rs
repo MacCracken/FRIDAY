@@ -56,7 +56,10 @@ pub mod voice;
 
 pub mod agent_replay;
 pub mod autonomy;
+pub mod batch;
 pub mod capture;
 pub mod compliance;
+pub mod models;
 pub mod reports;
 pub mod video_stream;
+pub mod webhook_timeline;

@@ -3,7 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -15,7 +15,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/webhook-transforms", get(list_transforms))
         .route("/api/v1/webhook-transforms", post(create_transform))
         .route("/api/v1/webhook-transforms/{id}", get(get_transform))
+        .route("/api/v1/webhook-transforms/{id}", put(update_transform))
         .route("/api/v1/webhook-transforms/{id}", delete(delete_transform))
+        // /api/v1/integrations/webhook-transforms aliases
+        .route(
+            "/api/v1/integrations/webhook-transforms",
+            get(list_transforms).post(create_transform),
+        )
+        .route(
+            "/api/v1/integrations/webhook-transforms/{id}",
+            get(get_transform)
+                .put(update_transform)
+                .delete(delete_transform),
+        )
 }
 
 #[derive(Deserialize)]
@@ -104,6 +116,53 @@ async fn get_transform(State(state): State<AppState>, Path(id): Path<String>) ->
             .into_response();
     };
     match webhook_transforms::get_transform(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Transform not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTransformRequest {
+    name: Option<String>,
+    source_event: Option<String>,
+    template: Option<serde_json::Value>,
+    description: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn update_transform(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTransformRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match webhook_transforms::update_transform(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.source_event.as_deref(),
+        body.template.as_ref(),
+        body.description.as_deref(),
+        body.enabled,
+    )
+    .await
+    {
         Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,

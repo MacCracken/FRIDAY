@@ -181,3 +181,87 @@ pub async fn list_messages(
     .fetch_all(pool)
     .await
 }
+
+/// Update the title of a conversation. Returns the updated row or None if not found.
+pub async fn update_conversation_title(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+    title: &str,
+) -> Result<Option<ConversationRow>, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, ConversationRow>(
+        "UPDATE chat.conversations SET title = $3, updated_at = $4 WHERE id = $1 AND tenant_id = $2 RETURNING *",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(title)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Branch a conversation from a given message index. Copies the parent conversation row
+/// (with updated id/timestamps) and records the fork origin. Messages are NOT copied
+/// here — the caller may seed the branch separately.
+pub async fn branch_conversation(
+    pool: &PgPool,
+    new_id: &str,
+    parent_id: &str,
+    fork_message_index: i32,
+    title: &str,
+    tenant_id: &str,
+) -> Result<ConversationRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, ConversationRow>(
+        "INSERT INTO chat.conversations
+             (id, title, personality_id, message_count, created_at, updated_at, tenant_id,
+              parent_conversation_id, fork_message_index, branch_label, strategy_id)
+         SELECT $1, $3, personality_id, 0, $4, $4, $5,
+                $2, $6, NULL, strategy_id
+         FROM chat.conversations
+         WHERE id = $2 AND tenant_id = $5
+         RETURNING *",
+    )
+    .bind(new_id)
+    .bind(parent_id)
+    .bind(title)
+    .bind(now)
+    .bind(tenant_id)
+    .bind(fork_message_index)
+    .fetch_one(pool)
+    .await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationExport {
+    pub conversation: ConversationRow,
+    pub messages: Vec<MessageRow>,
+    pub format: String,
+    pub exported_at: i64,
+}
+
+/// Fetch a conversation and all its messages for export.
+pub async fn export_conversation(
+    pool: &PgPool,
+    id: &str,
+    tenant_id: &str,
+    format: &str,
+) -> Result<Option<ConversationExport>, sqlx::Error> {
+    let Some(conversation) = get_conversation(pool, id, tenant_id).await? else {
+        return Ok(None);
+    };
+    let messages = sqlx::query_as::<_, MessageRow>(
+        "SELECT * FROM chat.messages WHERE conversation_id = $1 ORDER BY created_at ASC",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(ConversationExport {
+        conversation,
+        messages,
+        format: format.to_string(),
+        exported_at: now_ms(),
+    }))
+}

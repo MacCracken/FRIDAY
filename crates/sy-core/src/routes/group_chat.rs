@@ -3,7 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -17,6 +17,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/group-chat/channels/{channelId}/{platform}/messages",
             get(list_messages),
         )
+        .route("/api/v1/group-chats/{id}/messages", post(send_message))
 }
 
 #[derive(Deserialize)]
@@ -85,4 +86,43 @@ async fn list_messages(
         )
             .into_response(),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendMessageRequest {
+    content: String,
+    sender_name: Option<String>,
+    platform: Option<String>,
+}
+
+async fn send_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SendMessageRequest>,
+) -> impl IntoResponse {
+    let Some(_pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let msg_id = uuid::Uuid::now_v7().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": msg_id,
+            "channelId": id,
+            "content": body.content,
+            "senderName": body.sender_name,
+            "platform": body.platform.unwrap_or_else(|| "unknown".to_string()),
+            "createdAt": now,
+        })),
+    )
+        .into_response()
 }

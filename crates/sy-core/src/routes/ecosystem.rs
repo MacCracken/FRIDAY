@@ -13,6 +13,7 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/v1/ecosystem/services", get(list_services))
         .route("/api/v1/ecosystem/services/{id}", get(get_service))
         .route(
             "/api/v1/ecosystem/services/{id}/enable",
@@ -27,6 +28,19 @@ pub fn router() -> Router<AppState> {
             "/api/v1/ecosystem/services/agnos/sandbox-profiles",
             get(agnos_sandbox_profiles),
         )
+}
+
+async fn list_services() -> impl IntoResponse {
+    let registry = known_services();
+    let services: Vec<serde_json::Value> = registry
+        .as_object()
+        .map(|m| m.values().cloned().collect())
+        .unwrap_or_default();
+    let total = services.len();
+    Json(serde_json::json!({
+        "services": services,
+        "total": total,
+    }))
 }
 
 /// Static registry of known ecosystem services.

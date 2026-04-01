@@ -37,3 +37,79 @@ pub async fn get_rule(pool: &PgPool, id: &str) -> Result<Option<RoutingRuleRow>,
         .fetch_optional(pool)
         .await
 }
+
+pub async fn create_rule(
+    pool: &PgPool,
+    id: &str,
+    name: &str,
+    description: Option<&str>,
+    condition: &serde_json::Value,
+    action: &serde_json::Value,
+    priority: i32,
+) -> Result<RoutingRuleRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, RoutingRuleRow>(
+        "INSERT INTO routing.rules (id, name, description, condition, action, priority, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, true, $7, $7)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(description)
+    .bind(condition)
+    .bind(action)
+    .bind(priority)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn update_rule(
+    pool: &PgPool,
+    id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    condition: Option<&serde_json::Value>,
+    action: Option<&serde_json::Value>,
+    priority: Option<i32>,
+    enabled: Option<bool>,
+) -> Result<Option<RoutingRuleRow>, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, RoutingRuleRow>(
+        "UPDATE routing.rules
+         SET name        = COALESCE($2, name),
+             description = COALESCE($3, description),
+             condition   = COALESCE($4, condition),
+             action      = COALESCE($5, action),
+             priority    = COALESCE($6, priority),
+             enabled     = COALESCE($7, enabled),
+             updated_at  = $8
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(description)
+    .bind(condition)
+    .bind(action)
+    .bind(priority)
+    .bind(enabled)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn delete_rule(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM routing.rules WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}

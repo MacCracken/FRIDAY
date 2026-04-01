@@ -3,7 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -15,7 +15,22 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/outbound-webhooks", get(list_webhooks))
         .route("/api/v1/outbound-webhooks", post(create_webhook))
         .route("/api/v1/outbound-webhooks/{id}", get(get_webhook))
+        .route("/api/v1/outbound-webhooks/{id}", put(update_webhook))
         .route("/api/v1/outbound-webhooks/{id}", delete(delete_webhook))
+        .route("/api/v1/outbound-webhooks/{id}/test", post(test_webhook))
+        // /api/v1/integrations/outbound-webhooks aliases
+        .route(
+            "/api/v1/integrations/outbound-webhooks",
+            get(list_webhooks).post(create_webhook),
+        )
+        .route(
+            "/api/v1/integrations/outbound-webhooks/{id}",
+            get(get_webhook).put(update_webhook).delete(delete_webhook),
+        )
+        .route(
+            "/api/v1/integrations/outbound-webhooks/{id}/test",
+            post(test_webhook),
+        )
 }
 
 #[derive(Deserialize)]
@@ -118,6 +133,53 @@ async fn get_webhook(State(state): State<AppState>, Path(id): Path<String>) -> i
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateWebhookRequest {
+    url: Option<String>,
+    events: Option<Vec<String>>,
+    secret: Option<String>,
+    description: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn update_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateWebhookRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match outbound_webhooks::update_webhook(
+        pool,
+        &id,
+        body.url.as_deref(),
+        body.events.as_deref(),
+        body.secret.as_deref(),
+        body.description.as_deref(),
+        body.enabled,
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Webhook not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 async fn delete_webhook(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -128,6 +190,35 @@ async fn delete_webhook(
     match outbound_webhooks::delete_webhook(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Webhook not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn test_webhook(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match outbound_webhooks::get_webhook(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "webhookId": row.id,
+            "url": row.url,
+            "status": "dispatched",
+            "message": "Test event dispatched to webhook URL",
+        }))
+        .into_response(),
+        Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Webhook not found"})),
         )

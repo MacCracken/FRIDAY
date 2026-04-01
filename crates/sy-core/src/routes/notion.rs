@@ -6,7 +6,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -21,8 +21,16 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/integrations/notion/search", get(search))
         .route("/api/v1/integrations/notion/pages/{id}", get(get_page))
         .route(
+            "/api/v1/integrations/notion/pages/{id}/blocks",
+            get(get_page_blocks).post(append_blocks),
+        )
+        .route(
             "/api/v1/integrations/notion/databases/{id}",
             get(get_database),
+        )
+        .route(
+            "/api/v1/integrations/notion/databases/{id}/query",
+            post(query_database),
         )
 }
 
@@ -137,6 +145,47 @@ async fn get_database(State(state): State<AppState>, Path(id): Path<String>) -> 
         Err(e) => return e.into_response(),
     };
     notion_get(&auth, &format!("/databases/{id}"))
+        .await
+        .into_response()
+}
+
+async fn get_page_blocks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let auth = match resolve_auth(&state).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    notion_get(&auth, &format!("/blocks/{id}/children"))
+        .await
+        .into_response()
+}
+
+async fn append_blocks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let auth = match resolve_auth(&state).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    notion_post(&auth, &format!("/blocks/{id}/children"), &body)
+        .await
+        .into_response()
+}
+
+async fn query_database(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let auth = match resolve_auth(&state).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    notion_post(&auth, &format!("/databases/{id}/query"), &body)
         .await
         .into_response()
 }

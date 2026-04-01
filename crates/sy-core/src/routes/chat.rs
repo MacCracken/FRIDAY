@@ -19,10 +19,16 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/conversations/{id}", get(get_conversation))
         .route("/api/v1/conversations/{id}", delete(delete_conversation))
         .route("/api/v1/conversations/{id}/messages", get(list_messages))
+        .route(
+            "/api/v1/conversations/{id}/title",
+            post(update_conversation_title),
+        )
         .route("/api/v1/chat/stream", post(chat_stream))
         .route("/api/v1/chat", post(chat_complete))
         .route("/api/v1/chat/feedback", post(chat_feedback))
         .route("/api/v1/chat/remember", post(chat_remember))
+        .route("/api/v1/chat/export", post(export_conversation))
+        .route("/api/v1/chat/branch", post(branch_conversation))
 }
 
 #[derive(Deserialize)]
@@ -479,6 +485,136 @@ async fn chat_remember(
         Ok(row) => (
             StatusCode::CREATED,
             Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Conversation Export ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportConversationRequest {
+    conversation_id: String,
+    personality_id: Option<String>,
+    #[serde(default = "default_export_format")]
+    format: String,
+}
+
+fn default_export_format() -> String {
+    "json".to_string()
+}
+
+/// POST /api/v1/chat/export — export a conversation with all messages.
+async fn export_conversation(
+    State(state): State<AppState>,
+    Json(body): Json<ExportConversationRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let _ = body.personality_id; // reserved for future filtering
+    match chat::export_conversation(pool, &body.conversation_id, "default", &body.format).await {
+        Ok(Some(export)) => Json(serde_json::to_value(export).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Conversation not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Conversation Branch ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchConversationRequest {
+    conversation_id: String,
+    /// Zero-based index of the message to branch from.
+    fork_message_index: i32,
+    #[serde(default = "default_branch_title")]
+    title: String,
+}
+
+fn default_branch_title() -> String {
+    "Branched Conversation".to_string()
+}
+
+/// POST /api/v1/chat/branch — create a new conversation branched from an existing one.
+async fn branch_conversation(
+    State(state): State<AppState>,
+    Json(body): Json<BranchConversationRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let new_id = uuid::Uuid::now_v7().to_string();
+    match chat::branch_conversation(
+        pool,
+        &new_id,
+        &body.conversation_id,
+        body.fork_message_index,
+        &body.title,
+        "default",
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Conversation Title Update ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct UpdateTitleRequest {
+    title: String,
+}
+
+/// POST /api/v1/conversations/{id}/title — update conversation title.
+async fn update_conversation_title(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTitleRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match chat::update_conversation_title(pool, &id, "default", &body.title).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Conversation not found"})),
         )
             .into_response(),
         Err(e) => (

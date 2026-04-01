@@ -6,7 +6,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -20,6 +20,15 @@ pub fn router() -> Router<AppState> {
             get(search_issues),
         )
         .route("/api/v1/integrations/jira/issues/{key}", get(get_issue))
+        .route("/api/v1/integrations/jira/issues/{key}", put(update_issue))
+        .route(
+            "/api/v1/integrations/jira/issues/{issueKey}/transitions",
+            get(list_transitions).post(execute_transition),
+        )
+        .route(
+            "/api/v1/integrations/jira/issues/{issueKey}/comments",
+            get(list_comments).post(add_comment),
+        )
         .route("/api/v1/integrations/jira/projects", get(list_projects))
 }
 
@@ -103,6 +112,114 @@ async fn get_issue(State(state): State<AppState>, Path(key): Path<String>) -> im
         &format!("/issue/{key}"),
         &auth,
         None,
+    )
+    .await
+    .into_response()
+}
+
+async fn update_issue(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let (base_url, auth) = match resolve_jira(&state).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    let url = format!("{base_url}/rest/api/3/issue/{key}");
+    let client = reqwest::Client::new();
+    let mut req = client.put(&url).json(&body);
+    if let AuthMode::Basic(ref encoded) = auth {
+        req = req.header("Authorization", format!("Basic {encoded}"));
+    }
+    match req.send().await {
+        Ok(res) if res.status().is_success() => StatusCode::NO_CONTENT.into_response(),
+        Ok(res) => {
+            let s = res.status().as_u16();
+            let data = res.text().await.unwrap_or_default();
+            (
+                StatusCode::from_u16(s).unwrap_or(StatusCode::BAD_GATEWAY),
+                Json(serde_json::json!({"error": data})),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_transitions(
+    State(state): State<AppState>,
+    Path(issue_key): Path<String>,
+) -> impl IntoResponse {
+    let (base_url, auth) = match resolve_jira(&state).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    proxy::proxy_get(
+        &format!("{base_url}/rest/api/3"),
+        &format!("/issue/{issue_key}/transitions"),
+        &auth,
+        None,
+    )
+    .await
+    .into_response()
+}
+
+async fn execute_transition(
+    State(state): State<AppState>,
+    Path(issue_key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let (base_url, auth) = match resolve_jira(&state).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    proxy::proxy_post(
+        &format!("{base_url}/rest/api/3"),
+        &format!("/issue/{issue_key}/transitions"),
+        &auth,
+        &body,
+    )
+    .await
+    .into_response()
+}
+
+async fn list_comments(
+    State(state): State<AppState>,
+    Path(issue_key): Path<String>,
+) -> impl IntoResponse {
+    let (base_url, auth) = match resolve_jira(&state).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    proxy::proxy_get(
+        &format!("{base_url}/rest/api/3"),
+        &format!("/issue/{issue_key}/comment"),
+        &auth,
+        None,
+    )
+    .await
+    .into_response()
+}
+
+async fn add_comment(
+    State(state): State<AppState>,
+    Path(issue_key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let (base_url, auth) = match resolve_jira(&state).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    proxy::proxy_post(
+        &format!("{base_url}/rest/api/3"),
+        &format!("/issue/{issue_key}/comment"),
+        &auth,
+        &body,
     )
     .await
     .into_response()

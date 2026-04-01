@@ -66,6 +66,39 @@ pub async fn create_webhook(
     .await
 }
 
+pub async fn update_webhook(
+    pool: &PgPool,
+    id: &str,
+    url: Option<&str>,
+    events: Option<&[String]>,
+    secret: Option<&str>,
+    description: Option<&str>,
+    enabled: Option<bool>,
+) -> Result<Option<OutboundWebhookRow>, sqlx::Error> {
+    let now = now_ms();
+    let events_json = events.map(|e| serde_json::to_value(e).unwrap_or_default());
+    sqlx::query_as::<_, OutboundWebhookRow>(
+        "UPDATE public.outbound_webhooks
+         SET url         = COALESCE($2, url),
+             events      = COALESCE($3, events),
+             secret      = COALESCE($4, secret),
+             description = COALESCE($5, description),
+             enabled     = COALESCE($6, enabled),
+             updated_at  = $7
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(url)
+    .bind(events_json)
+    .bind(secret)
+    .bind(description)
+    .bind(enabled)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn delete_webhook(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM public.outbound_webhooks WHERE id = $1")
         .bind(id)

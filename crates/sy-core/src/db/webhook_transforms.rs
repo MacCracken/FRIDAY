@@ -66,6 +66,38 @@ pub async fn create_transform(
     .await
 }
 
+pub async fn update_transform(
+    pool: &PgPool,
+    id: &str,
+    name: Option<&str>,
+    source_event: Option<&str>,
+    template: Option<&serde_json::Value>,
+    description: Option<&str>,
+    enabled: Option<bool>,
+) -> Result<Option<WebhookTransformRow>, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, WebhookTransformRow>(
+        "UPDATE public.webhook_transforms
+         SET name         = COALESCE($2, name),
+             source_event = COALESCE($3, source_event),
+             template     = COALESCE($4, template),
+             description  = COALESCE($5, description),
+             enabled      = COALESCE($6, enabled),
+             updated_at   = $7
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(source_event)
+    .bind(template)
+    .bind(description)
+    .bind(enabled)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn delete_transform(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM public.webhook_transforms WHERE id = $1")
         .bind(id)

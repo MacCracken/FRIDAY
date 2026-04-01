@@ -83,9 +83,12 @@ pub mod voice;
 pub mod admin_settings;
 
 pub mod agent_replay;
+pub mod ai_batch;
 pub mod autonomy;
 pub mod capture;
+pub mod cicd_timeline;
 pub mod comms;
 pub mod compliance;
+pub mod integrations_forge;
 pub mod reports;
 pub mod video_stream;
