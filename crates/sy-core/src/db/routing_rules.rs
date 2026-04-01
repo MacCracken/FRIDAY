@@ -64,6 +64,7 @@ pub async fn create_rule(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_rule(
     pool: &PgPool,
     id: &str,

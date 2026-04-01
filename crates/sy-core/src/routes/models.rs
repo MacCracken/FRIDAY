@@ -452,7 +452,7 @@ async fn model_health(State(_state): State<AppState>) -> impl IntoResponse {
         .get(&url)
         .send()
         .await
-        .map_or(false, |r| r.status().is_success());
+        .is_ok_and(|r| r.status().is_success());
     Json(serde_json::json!({
         "status": if ollama_ok { "ok" } else { "degraded" },
         "ollama": if ollama_ok { "ok" } else { "unavailable" },

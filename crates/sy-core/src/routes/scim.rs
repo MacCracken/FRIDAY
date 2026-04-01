@@ -174,7 +174,7 @@ async fn list_users(
     let Some(pool) = s.db() else {
         return err_unavailable();
     };
-    let limit = q.count.min(200).max(1);
+    let limit = q.count.clamp(1, 200);
     let offset = (q.start_index - 1).max(0);
 
     let (total, rows) = tokio::try_join!(
@@ -311,7 +311,7 @@ async fn list_groups(
     let Some(pool) = s.db() else {
         return err_unavailable();
     };
-    let limit = q.count.min(200).max(1);
+    let limit = q.count.clamp(1, 200);
     let offset = (q.start_index - 1).max(0);
 
     let (total, rows) = tokio::try_join!(

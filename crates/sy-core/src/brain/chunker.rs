@@ -36,7 +36,7 @@ impl Default for ChunkOptions {
 /// Estimate token count from text (≈ 4 chars per token for English).
 #[inline]
 fn estimate_tokens(text: &str) -> usize {
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 /// Split text on sentence boundaries. Handles `.`, `!`, `?` followed by
@@ -59,11 +59,11 @@ fn split_sentences(text: &str) -> Vec<&str> {
                     .iter()
                     .position(|b| !b.is_ascii_whitespace())
                     .map(|p| after + p);
-                if let Some(pos) = next_non_ws {
-                    if bytes[pos].is_ascii_uppercase() {
-                        sentences.push(&text[start..=i]);
-                        start = pos;
-                    }
+                if let Some(pos) = next_non_ws
+                    && bytes[pos].is_ascii_uppercase()
+                {
+                    sentences.push(&text[start..=i]);
+                    start = pos;
                 }
             }
         }

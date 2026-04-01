@@ -55,14 +55,14 @@ async fn update_settings(
     Json(body): Json<UpdateSettingsRequest>,
 ) -> impl IntoResponse {
     // Validate any fields that need it
-    if let Some(max) = body.max_sessions_per_user {
-        if max == 0 {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "maxSessionsPerUser must be greater than 0"})),
-            )
-                .into_response();
-        }
+    if let Some(max) = body.max_sessions_per_user
+        && max == 0
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "maxSessionsPerUser must be greater than 0"})),
+        )
+            .into_response();
     }
 
     Json(serde_json::json!({

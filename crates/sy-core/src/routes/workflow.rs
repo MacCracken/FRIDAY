@@ -215,11 +215,65 @@ async fn run_workflow(
         }
     };
     match workflow::create_run(pool, id, &wf.name, body.input.as_ref(), &body.triggered_by).await {
-        Ok(row) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(row).unwrap()),
-        )
-            .into_response(),
+        Ok(row) => {
+            // Spawn async workflow execution (fire-and-forget)
+            let run_id = row.id;
+            let pool = pool.clone();
+            let wf_id = wf.id.to_string();
+            let wf_name = wf.name.clone();
+            let steps_json = wf.steps_json.clone();
+            let input = body.input.clone();
+            tokio::spawn(async move {
+                // Mark as running
+                let _ = workflow::update_run_status(&pool, run_id, "running", None, None).await;
+
+                // Build definition from workflow row
+                let steps: Vec<crate::orchestration::workflow::WorkflowStep> =
+                    serde_json::from_value(steps_json).unwrap_or_default();
+                let def = crate::orchestration::workflow::WorkflowDefinition {
+                    id: wf_id,
+                    name: wf_name,
+                    steps,
+                    input: input.unwrap_or(serde_json::json!({})),
+                };
+
+                // Execute the workflow DAG
+                let engine = crate::orchestration::workflow::WorkflowEngine::new(
+                    crate::orchestration::delegation::EchoDelegate,
+                );
+                match engine.execute(&def).await {
+                    Ok(result) => {
+                        let output = serde_json::to_value(&result.final_output).ok();
+                        let _ = workflow::update_run_status(
+                            &pool,
+                            run_id,
+                            "completed",
+                            output.as_ref(),
+                            None,
+                        )
+                        .await;
+                        tracing::info!(run_id = %run_id, steps = result.steps_completed, "workflow completed");
+                    }
+                    Err(e) => {
+                        let _ = workflow::update_run_status(
+                            &pool,
+                            run_id,
+                            "failed",
+                            None,
+                            Some(&e.to_string()),
+                        )
+                        .await;
+                        tracing::error!(run_id = %run_id, error = %e, "workflow failed");
+                    }
+                }
+            });
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(row).unwrap()),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

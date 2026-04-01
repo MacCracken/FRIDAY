@@ -525,6 +525,7 @@ pub async fn create_council_template(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_council_template(
     pool: &PgPool,
     id: &str,

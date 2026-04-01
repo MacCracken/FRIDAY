@@ -228,7 +228,7 @@ fn resolve_path(path: &str, context: &WorkflowContext) -> String {
         return String::new();
     }
 
-    let root_value = match parts[0] {
+    match parts[0] {
         "steps" => {
             if parts.len() < 2 {
                 return String::new();
@@ -242,19 +242,17 @@ fn resolve_path(path: &str, context: &WorkflowContext) -> String {
                     if parts.len() >= 3 && parts[2] == "output" {
                         walk_json(&result.output, &parts[3..])
                     } else if parts.len() >= 3 && parts[2] == "status" {
-                        return result.status.clone();
+                        result.status.clone()
                     } else {
                         walk_json(&result.output, &parts[2..])
                     }
                 }
-                None => return String::new(),
+                None => String::new(),
             }
         }
         "input" => walk_json(&context.input, &parts[1..]),
-        _ => return String::new(),
-    };
-
-    root_value
+        _ => String::new(),
+    }
 }
 
 /// Walk a JSON value by dot-path segments.
@@ -605,8 +603,10 @@ mod tests {
 
     #[test]
     fn resolve_template_basic() {
-        let mut ctx = WorkflowContext::default();
-        ctx.input = serde_json::json!({"name": "test"});
+        let mut ctx = WorkflowContext {
+            input: serde_json::json!({"name": "test"}),
+            ..Default::default()
+        };
         ctx.steps.insert(
             "s1".into(),
             StepResult {

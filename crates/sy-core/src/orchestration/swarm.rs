@@ -324,7 +324,6 @@ fn parse_roles(roles_json: &serde_json::Value) -> Vec<SwarmRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestration::delegation::EchoDelegate;
 
     fn test_roles() -> Vec<SwarmRole> {
         vec![

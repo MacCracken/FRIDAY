@@ -243,6 +243,54 @@ pub async fn get_version(
     }
 }
 
+/// Update a workflow run status, output, and error.
+pub async fn update_run_status(
+    pool: &PgPool,
+    id: uuid::Uuid,
+    status: &str,
+    output_json: Option<&serde_json::Value>,
+    error: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let now = now_ms();
+    let (started, completed) = match status {
+        "running" => (Some(now), None),
+        "completed" | "failed" | "cancelled" => (None, Some(now)),
+        _ => (None, None),
+    };
+
+    if let Some(started_at) = started {
+        sqlx::query(
+            "UPDATE workflow.runs SET status = $1, started_at = COALESCE(started_at, $2), output_json = COALESCE($3, output_json), error = $4 WHERE id = $5",
+        )
+        .bind(status)
+        .bind(started_at)
+        .bind(output_json)
+        .bind(error)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    } else if let Some(completed_at) = completed {
+        sqlx::query(
+            "UPDATE workflow.runs SET status = $1, completed_at = $2, output_json = COALESCE($3, output_json), error = $4 WHERE id = $5",
+        )
+        .bind(status)
+        .bind(completed_at)
+        .bind(output_json)
+        .bind(error)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query("UPDATE workflow.runs SET status = $1 WHERE id = $2")
+            .bind(status)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

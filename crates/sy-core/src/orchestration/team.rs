@@ -240,28 +240,28 @@ fn parse_assignment(
     let json_start = response.find('{');
     let json_end = response.rfind('}');
 
-    if let (Some(start), Some(end)) = (json_start, json_end) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&response[start..=end]) {
-            let assigned: Vec<String> = v
-                .get("assignTo")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .filter(|name| valid_profiles.contains(name))
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+    if let (Some(start), Some(end)) = (json_start, json_end)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&response[start..=end])
+    {
+        let assigned: Vec<String> = v
+            .get("assignTo")
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|name| valid_profiles.contains(name))
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
-            let reasoning = v
-                .get("reasoning")
-                .and_then(|r| r.as_str())
-                .unwrap_or("")
-                .to_string();
+        let reasoning = v
+            .get("reasoning")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .to_string();
 
-            return (assigned, reasoning);
-        }
+        return (assigned, reasoning);
     }
 
     (

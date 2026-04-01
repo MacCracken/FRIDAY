@@ -1,6 +1,7 @@
 //! Gateway routes — system info, version, ecosystem services.
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -33,14 +34,53 @@ struct GatewayProxyRequest {
 }
 
 async fn gateway_proxy(Json(body): Json<GatewayProxyRequest>) -> impl IntoResponse {
-    let model = body.model.unwrap_or_else(|| "default".to_string());
-    Json(serde_json::json!({
-        "message": "Gateway proxy not yet connected to LLM backend",
-        "model": model,
-        "personalityId": body.personality_id,
-        "messageCount": body.messages.as_array().map(|a| a.len()).unwrap_or(0),
-        "stub": true,
-    }))
+    let model = body.model.clone().unwrap_or_else(|| "default".to_string());
+
+    // Try to proxy to Hoosh/AGNOS LLM Gateway
+    let hoosh_url = std::env::var("HOOSH_URL")
+        .or_else(|_| std::env::var("AGNOS_GATEWAY_URL"))
+        .unwrap_or_else(|_| "http://127.0.0.1:8088".to_string());
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(format!("{hoosh_url}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": body.messages,
+            "stream": false,
+        }))
+        .timeout(std::time::Duration::from_secs(120));
+
+    if let Ok(key) = std::env::var("AGNOS_GATEWAY_API_KEY") {
+        req = req.bearer_auth(key);
+    }
+
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let data: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!(null));
+            Json(data).into_response()
+        }
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let err_body = resp.text().await.unwrap_or_default();
+            (
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                Json(serde_json::json!({"error": err_body})),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            // Hoosh not available — return stub
+            Json(serde_json::json!({
+                "message": "LLM gateway not reachable",
+                "model": model,
+                "personalityId": body.personality_id,
+                "messageCount": body.messages.as_array().map(|a| a.len()).unwrap_or(0),
+                "stub": true,
+            }))
+            .into_response()
+        }
+    }
 }
 
 /// Gateway overview — combined info, version, and services in one response.
