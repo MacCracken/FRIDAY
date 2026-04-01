@@ -36,6 +36,16 @@ async fn resolve_auth(state: &AppState) -> Result<AuthMode, (StatusCode, Json<se
 }
 
 async fn profile(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.gmail() {
+        return match client.get_profile().await {
+            Ok(p) => Json(serde_json::to_value(p).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -58,6 +68,16 @@ async fn list_messages(
     State(state): State<AppState>,
     Query(q): Query<MessagesQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.gmail() {
+        return match client.list_messages(q.q.as_deref(), q.max_results).await {
+            Ok(msgs) => Json(serde_json::to_value(msgs).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -95,6 +115,16 @@ async fn get_message(
     Path(message_id): Path<String>,
     Query(q): Query<MessageQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.gmail() {
+        return match client.get_message(&message_id).await {
+            Ok(msg) => Json(serde_json::to_value(msg).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -127,6 +157,36 @@ async fn send_message(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.gmail() {
+        let to = body
+            .get("to")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let subject = body
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let text = body
+            .get("body")
+            .or_else(|| body.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return match client.send_message(&to, &subject, &text).await {
+            Ok(msg) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(msg).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -150,6 +210,16 @@ async fn create_draft(
 }
 
 async fn list_labels(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.gmail() {
+        return match client.list_labels().await {
+            Ok(labels) => Json(serde_json::to_value(labels).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),

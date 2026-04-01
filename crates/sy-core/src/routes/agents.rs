@@ -730,11 +730,30 @@ async fn execute_swarm(
     )
     .await
     {
-        Ok(row) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(row).unwrap()),
-        )
-            .into_response(),
+        Ok(row) => {
+            // Fire-and-forget: transition to running asynchronously.
+            let pool = pool.clone();
+            let run_id = id.clone();
+            tokio::spawn(async move {
+                tracing::info!(run_id = %run_id, "swarm execution would start here");
+                match agents::start_swarm_run(&pool, &run_id).await {
+                    Ok(true) => {
+                        tracing::info!(run_id = %run_id, "swarm run transitioned to running")
+                    }
+                    Ok(false) => {
+                        tracing::warn!(run_id = %run_id, "swarm run not found or already past pending")
+                    }
+                    Err(e) => {
+                        tracing::error!(run_id = %run_id, error = %e, "failed to transition swarm run to running")
+                    }
+                }
+            });
+            (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(row).unwrap()),
+            )
+                .into_response()
+        }
         Err(e) => err_internal(&e),
     }
 }
@@ -950,11 +969,30 @@ async fn convene_council(
     )
     .await
     {
-        Ok(row) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(row).unwrap()),
-        )
-            .into_response(),
+        Ok(row) => {
+            // Fire-and-forget: transition to running asynchronously.
+            let pool = pool.clone();
+            let run_id = id.clone();
+            tokio::spawn(async move {
+                tracing::info!(run_id = %run_id, "council deliberation would start here");
+                match agents::start_council_run(&pool, &run_id).await {
+                    Ok(true) => {
+                        tracing::info!(run_id = %run_id, "council run transitioned to running")
+                    }
+                    Ok(false) => {
+                        tracing::warn!(run_id = %run_id, "council run not found or already past pending")
+                    }
+                    Err(e) => {
+                        tracing::error!(run_id = %run_id, error = %e, "failed to transition council run to running")
+                    }
+                }
+            });
+            (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(row).unwrap()),
+            )
+                .into_response()
+        }
         Err(e) => err_internal(&e),
     }
 }
@@ -1124,11 +1162,30 @@ async fn run_team(
     )
     .await
     {
-        Ok(row) => (
-            StatusCode::ACCEPTED,
-            Json(serde_json::to_value(row).unwrap()),
-        )
-            .into_response(),
+        Ok(row) => {
+            // Fire-and-forget: transition to running asynchronously.
+            let pool = pool.clone();
+            let spawn_run_id = run_id.clone();
+            tokio::spawn(async move {
+                tracing::info!(run_id = %spawn_run_id, "team execution would start here");
+                match agents::start_team_run(&pool, &spawn_run_id).await {
+                    Ok(true) => {
+                        tracing::info!(run_id = %spawn_run_id, "team run transitioned to running")
+                    }
+                    Ok(false) => {
+                        tracing::warn!(run_id = %spawn_run_id, "team run not found or already past pending")
+                    }
+                    Err(e) => {
+                        tracing::error!(run_id = %spawn_run_id, error = %e, "failed to transition team run to running")
+                    }
+                }
+            });
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::to_value(row).unwrap()),
+            )
+                .into_response()
+        }
         Err(e) => err_internal(&e),
     }
 }

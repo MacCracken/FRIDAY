@@ -65,6 +65,16 @@ struct EventsQuery {
 }
 
 async fn list_calendars(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.google_calendar() {
+        return match client.list_calendars().await {
+            Ok(cals) => Json(serde_json::to_value(cals).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -78,6 +88,20 @@ async fn list_events(
     State(state): State<AppState>,
     Query(q): Query<EventsQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.google_calendar() {
+        let cal_id = q.calendar_id.as_deref().unwrap_or("primary");
+        return match client
+            .list_events(cal_id, q.time_min.as_deref(), q.time_max.as_deref())
+            .await
+        {
+            Ok(events) => Json(serde_json::to_value(events).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -132,6 +156,50 @@ async fn create_event(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    use crate::integrations::google_calendar::EventDateTime;
+
+    if let Some(client) = state.google_calendar() {
+        let summary = body
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Untitled Event");
+        let start: EventDateTime = body
+            .get("start")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(EventDateTime {
+                date_time: None,
+                date: None,
+                time_zone: None,
+            });
+        let end: EventDateTime = body
+            .get("end")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(EventDateTime {
+                date_time: None,
+                date: None,
+                time_zone: None,
+            });
+        let description = body.get("description").and_then(|v| v.as_str());
+        let cal_id = body
+            .get("calendarId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("primary");
+        return match client
+            .create_event(cal_id, summary, &start, &end, description)
+            .await
+        {
+            Ok(event) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(event).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -164,6 +232,16 @@ async fn delete_event(
     State(state): State<AppState>,
     Path(event_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.google_calendar() {
+        return match client.delete_event("primary", &event_id).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),

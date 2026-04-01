@@ -14,9 +14,13 @@ use crate::brain::embedding::{
 use crate::brain::manager::{BrainConfig, BrainManager};
 use crate::brain::vector::InMemoryVectorStore;
 use crate::integrations::github::GitHubClient;
+use crate::integrations::gmail::GmailClient;
+use crate::integrations::google_calendar::GoogleCalendarClient;
 use crate::integrations::jira::JiraClient;
+use crate::integrations::linear::LinearClient;
 use crate::integrations::notion::NotionClient;
 use crate::integrations::todoist::TodoistClient;
+use crate::integrations::twitter::TwitterClient;
 
 /// Type-erased brain manager for use in AppState.
 /// Uses dynamic dispatch so AppState doesn't need generics.
@@ -94,9 +98,13 @@ struct AppStateInner {
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
+    pub gmail_client: Option<Arc<GmailClient>>,
+    pub google_calendar_client: Option<Arc<GoogleCalendarClient>>,
     pub jira_client: Option<Arc<JiraClient>>,
+    pub linear_client: Option<Arc<LinearClient>>,
     pub notion_client: Option<Arc<NotionClient>>,
     pub todoist_client: Option<Arc<TodoistClient>>,
+    pub twitter_client: Option<Arc<TwitterClient>>,
 }
 
 impl AppState {
@@ -141,6 +149,29 @@ impl AppState {
             Arc::new(TodoistClient::new(token))
         });
 
+        let gmail_client = std::env::var("GMAIL_OAUTH_TOKEN").ok().map(|token| {
+            tracing::info!("Gmail integration client initialized from GMAIL_OAUTH_TOKEN");
+            Arc::new(GmailClient::new(token))
+        });
+
+        let google_calendar_client =
+            std::env::var("GOOGLE_CALENDAR_OAUTH_TOKEN").ok().map(|token| {
+                tracing::info!(
+                    "Google Calendar integration client initialized from GOOGLE_CALENDAR_OAUTH_TOKEN"
+                );
+                Arc::new(GoogleCalendarClient::new(token))
+            });
+
+        let twitter_client = std::env::var("TWITTER_BEARER_TOKEN").ok().map(|token| {
+            tracing::info!("Twitter integration client initialized from TWITTER_BEARER_TOKEN");
+            Arc::new(TwitterClient::new(token))
+        });
+
+        let linear_client = std::env::var("LINEAR_API_KEY").ok().map(|key| {
+            tracing::info!("Linear integration client initialized from LINEAR_API_KEY");
+            Arc::new(LinearClient::new(key))
+        });
+
         Self {
             inner: Arc::new(AppStateInner {
                 config,
@@ -151,9 +182,13 @@ impl AppState {
                 bridge_tx,
                 brain: None,
                 github_client,
+                gmail_client,
+                google_calendar_client,
                 jira_client,
+                linear_client,
                 notion_client,
                 todoist_client,
+                twitter_client,
             }),
         }
     }
@@ -203,6 +238,26 @@ impl AppState {
     /// Get the Todoist typed client (initialized from `TODOIST_API_KEY` env var).
     pub fn todoist(&self) -> Option<&Arc<TodoistClient>> {
         self.inner.todoist_client.as_ref()
+    }
+
+    /// Get the Gmail typed client (initialized from `GMAIL_OAUTH_TOKEN` env var).
+    pub fn gmail(&self) -> Option<&Arc<GmailClient>> {
+        self.inner.gmail_client.as_ref()
+    }
+
+    /// Get the Google Calendar typed client (initialized from `GOOGLE_CALENDAR_OAUTH_TOKEN` env var).
+    pub fn google_calendar(&self) -> Option<&Arc<GoogleCalendarClient>> {
+        self.inner.google_calendar_client.as_ref()
+    }
+
+    /// Get the Twitter typed client (initialized from `TWITTER_BEARER_TOKEN` env var).
+    pub fn twitter(&self) -> Option<&Arc<TwitterClient>> {
+        self.inner.twitter_client.as_ref()
+    }
+
+    /// Get the Linear typed client (initialized from `LINEAR_API_KEY` env var).
+    pub fn linear(&self) -> Option<&Arc<LinearClient>> {
+        self.inner.linear_client.as_ref()
     }
 
     /// Create the embedding provider based on environment configuration.

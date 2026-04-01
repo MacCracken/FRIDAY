@@ -70,6 +70,16 @@ async fn resolve_user_token(
 }
 
 async fn profile(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.twitter() {
+        return match client.get_me().await {
+            Ok(user) => Json(serde_json::to_value(user).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_bearer(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -198,16 +208,26 @@ struct SearchQuery {
 }
 
 async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> impl IntoResponse {
-    let auth = match resolve_bearer(&state).await {
-        Ok(a) => a,
-        Err(e) => return e.into_response(),
-    };
     let Some(ref query) = q.query else {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "Missing query parameter"})),
         )
             .into_response();
+    };
+    if let Some(client) = state.twitter() {
+        return match client.search_tweets(query, q.max_results).await {
+            Ok(tweets) => Json(serde_json::to_value(tweets).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
+    let auth = match resolve_bearer(&state).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
     };
     let mut params = vec![format!(
         "query={}",
@@ -269,6 +289,24 @@ async fn post_tweet(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.twitter() {
+        let text = body
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        return match client.post_tweet(text).await {
+            Ok(tweet) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(tweet).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_user_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),

@@ -424,6 +424,18 @@ pub async fn cancel_swarm_run(pool: &PgPool, id: &str) -> Result<bool, sqlx::Err
     Ok(result.rows_affected() > 0)
 }
 
+/// Transition a swarm run to `running` status, setting `started_at`.
+/// No-ops if the run is not in `pending` state.
+pub async fn start_swarm_run(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE agents.swarm_runs SET status = 'running', started_at = NOW() WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 // ── Council Templates & Runs ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -623,6 +635,18 @@ pub async fn cancel_council_run(pool: &PgPool, id: &str) -> Result<bool, sqlx::E
     Ok(result.rows_affected() > 0)
 }
 
+/// Transition a council run to `running` status, setting `started_at`.
+/// No-ops if the run is not in `pending` state.
+pub async fn start_council_run(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE agents.council_runs SET status = 'running', started_at = NOW() WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 // ── Teams ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -776,6 +800,18 @@ pub async fn create_team_run(
     .bind(token_budget)
     .fetch_one(pool)
     .await
+}
+
+/// Transition a team run to `running` status, setting `started_at`.
+/// No-ops if the run is not in `pending` state.
+pub async fn start_team_run(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE agents.team_runs SET status = 'running', started_at = NOW() WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ── Profile Skills ─────────────────────────────────────────────────────────
