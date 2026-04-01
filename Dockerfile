@@ -9,7 +9,7 @@
 # Then build this image:
 #   docker build -t secureyeoman .
 
-FROM ghcr.io/maccracken/agnosticos:latest
+FROM ghcr.io/maccracken/agnosticos:2026.3.31
 
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/secureyeoman"
 LABEL org.opencontainers.image.description="SecureYeoman — Secure, local-first AI assistant (on AGNOS)"

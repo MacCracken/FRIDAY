@@ -168,7 +168,7 @@ Current site demonstrates depth but overwhelms. Redesign for the 1.0.0 launch.
 | majra | 1.0.1 | pub/sub (3 tiers), ratelimit, heartbeat, barrier, queue |
 | szal | 1.0.1 | condition eval, template resolution, flow validation, step builder |
 | bote | 0.50.0 | tool registry, schema validation, JSON-RPC protocol |
-| bhava | 1.4.0 | personality engine, traits, mood, spirit + psychology (bodh), sociology (sangha), physiology (sharira), microbiology (jivanu) |
+| bhava | 2.0.0 | personality engine, traits, mood, spirit + psychology (bodh), sociology (sangha), physiology (sharira), microbiology (jivanu) |
 | agnosai | 1.0.0 | crew orchestration, model routing, agent scoring |
 | ai-hwaccel | 1.0.0 | hardware accelerator detection (GPU, TPU, NPU, ASIC) via sy-hwprobe |
 | dhvani | 1.0.0 | voice synthesis (svara), G2P (shabda), audio DSP, analysis, PCM→WAV. TTS/STT providers + bhava trait→prosody mapping |
@@ -344,6 +344,28 @@ Items below are planned but demand-gated or lower priority. Grouped by theme. Im
 *Security hardening and compliance capabilities for enterprise deployments.*
 
 - [ ] **HSM Integration** — Hardware Security Module integration for key management. PKCS#11 interface for signing, encryption, and key rotation. Cloud HSM support (AWS CloudHSM, Azure Dedicated HSM, GCP Cloud HSM).
+
+### Compliance & Certification
+
+*Standards certification for enterprise adoption. SY's architecture already enforces most controls structurally — the work is formalizing documentation and passing audits.*
+
+**Tier 1 — Must-haves for enterprise adoption:**
+
+- [ ] **ISO/IEC 42001 — AI Management System (AIMS)** — First priority. SY already meets most requirements architecturally: bhava separates personality computation from LLM rendering (explainable AI), sy-audit provides tamper-evident decision logging, sy-privacy handles DLP/PII, sy-sandbox enforces execution boundaries, OPA/Rego policies govern intent. Work: formalize AIMS scope statement, document risk assessment process for AI components, write control procedures mapping existing architecture to 42001 clauses, engage certification body.
+- [ ] **SOC 2 Type II** — US enterprise procurement gate. Security, availability, confidentiality trust service criteria. Work: define control objectives, map existing security architecture (sy-crypto, sy-tee, sy-sandbox, audit chain) to SOC 2 criteria, establish continuous monitoring evidence, engage auditor for observation period (3–12 months).
+- [ ] **ISO/IEC 27001 — Information Security Management System (ISMS)** — International security credibility. Heavy overlap with SOC 2 prep. Work: ISMS scope, risk treatment plan, Statement of Applicability (SoA), internal audit cycle.
+
+**Tier 2 — Builds trust, opens regulated markets:**
+
+- [ ] **ISO 9001 — Quality Management System** — Proves repeatable development and delivery processes. Lighter lift once 27001 is in place — shared management system structure.
+- [ ] **ISO 27701 — Privacy Information Management** — Extension of 27001 for GDPR alignment. Maps to sy-privacy DLP capabilities and data lifecycle controls.
+- [ ] **EU AI Act compliance** — Becoming mandatory for AI systems in EU market. ISO 42001 maps well to EU AI Act requirements. Document risk classification (SY likely "limited risk" category), transparency obligations, and human oversight mechanisms.
+
+**Tier 3 — Differentiators for specific markets:**
+
+- [ ] **ISO 27017 — Cloud Security Controls** — If SY is offered as hosted/SaaS.
+- [ ] **ISO 27018 — PII Protection in Public Cloud** — Extends 27017 for personal data.
+- [ ] **FedRAMP** — US federal government market. Heavy lift but massive TAM. Requires sponsoring agency.
 
 ---
 

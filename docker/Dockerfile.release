@@ -5,7 +5,7 @@
 #   docker build -f docker/Dockerfile.release --build-arg TARGETARCH=amd64 -t secureyeoman .
 #   docker build -f docker/Dockerfile.release --build-arg TARGETARCH=arm64 -t secureyeoman .
 
-ARG AGNOSTICOS_IMAGE=ghcr.io/maccracken/agnosticos:latest
+ARG AGNOSTICOS_IMAGE=ghcr.io/maccracken/agnosticos:2026.3.31
 FROM ${AGNOSTICOS_IMAGE}
 
 ARG TARGETARCH=amd64

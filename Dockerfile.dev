@@ -37,7 +37,7 @@ COPY packages/ packages/
 RUN npm run build
 
 # ---- runtime ----
-FROM ghcr.io/maccracken/agnosticos:latest
+FROM ghcr.io/maccracken/agnosticos:2026.3.31
 
 USER root
 

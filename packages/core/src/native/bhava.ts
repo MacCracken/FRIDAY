@@ -372,3 +372,337 @@ export function buildMetadata(
     return null;
   }
 }
+
+// ── Zodiac Engine (bhava 2.0) ─────────────────────────────────────────────
+
+export interface BhavaZodiacInfo {
+  sign: string;
+  element: string;
+  modality: string;
+}
+
+export interface BhavaZodiacManifest {
+  profile: { name: string; description: string | null; traits: Record<string, string> };
+  baseline: BhavaBaseline;
+}
+
+export function listZodiacSigns(): string[] | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaListZodiacSigns());
+  } catch {
+    return null;
+  }
+}
+
+export function zodiacProfile(sign: string): Record<string, string> | null {
+  if (!native) return null;
+  try {
+    const result = JSON.parse(native.bhavaZodiacProfile(sign));
+    return result.traits;
+  } catch {
+    return null;
+  }
+}
+
+export function zodiacInfo(sign: string): BhavaZodiacInfo | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaZodiacInfo(sign));
+  } catch {
+    return null;
+  }
+}
+
+export function zodiacManifest(sign: string): BhavaZodiacManifest | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaZodiacManifest(sign));
+  } catch {
+    return null;
+  }
+}
+
+// ── Regulation (bhava 2.0) ────────────────────────────────────────────────
+
+export function createRegulatedMood(stateJson: string): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateRegulatedMood(stateJson);
+  } catch {
+    return null;
+  }
+}
+
+export function regulate(
+  regulatedJson: string,
+  strategy: 'accept' | 'suppress' | 'reappraise' | 'distract',
+  targetEmotion: string,
+  strength: number,
+  effectiveness: number
+): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaRegulate(regulatedJson, strategy, targetEmotion, strength, effectiveness);
+  } catch {
+    return null;
+  }
+}
+
+export function defaultRegulationStrategy(
+  traits: Record<string, string>,
+  dominantEmotion: string
+): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaDefaultRegulationStrategy(JSON.stringify(traits), dominantEmotion);
+  } catch {
+    return null;
+  }
+}
+
+export function suppressionGap(regulatedJson: string): number | null {
+  if (!native) return null;
+  try {
+    return native.bhavaSuppressionGap(regulatedJson);
+  } catch {
+    return null;
+  }
+}
+
+// ── Stress (bhava 2.0) ───────────────────────────────────────────────────
+
+export interface BhavaStressInfo {
+  level: string;
+  load: number;
+  is_fatigued: boolean;
+  is_burned_out: boolean;
+  negative_amplifier: number;
+  regulation_effectiveness: number;
+}
+
+export function createStressState(traits: Record<string, string>): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateStressState(JSON.stringify(traits));
+  } catch {
+    return null;
+  }
+}
+
+export function stressTick(stressJson: string, stateJson: string): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaStressTick(stressJson, stateJson);
+  } catch {
+    return null;
+  }
+}
+
+export function stressInfo(stressJson: string): BhavaStressInfo | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaStressInfo(stressJson));
+  } catch {
+    return null;
+  }
+}
+
+// ── Energy (bhava 2.0) ───────────────────────────────────────────────────
+
+export interface BhavaEnergyInfo {
+  level: string;
+  energy: number;
+  performance: number;
+  can_enter_flow: boolean;
+  is_depleted: boolean;
+  regulation_effectiveness: number;
+}
+
+export function createEnergyState(traits: Record<string, string>): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateEnergyState(JSON.stringify(traits));
+  } catch {
+    return null;
+  }
+}
+
+export function energyTick(energyJson: string, stateJson: string): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaEnergyTick(energyJson, stateJson);
+  } catch {
+    return null;
+  }
+}
+
+export function energyInfo(energyJson: string): BhavaEnergyInfo | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaEnergyInfo(energyJson));
+  } catch {
+    return null;
+  }
+}
+
+// ── Flow State (bhava 2.0) ──────────────────────────────────────────────
+
+export interface BhavaFlowInfo {
+  phase: string;
+  accumulator: number;
+  flow_duration: number;
+}
+
+export function createFlowState(): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateFlowState();
+  } catch {
+    return null;
+  }
+}
+
+export function flowTick(
+  flowJson: string,
+  stateJson: string,
+  energy: number,
+  alertness: number
+): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaFlowTick(flowJson, stateJson, energy, alertness);
+  } catch {
+    return null;
+  }
+}
+
+export function flowInfo(flowJson: string): BhavaFlowInfo | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaFlowInfo(flowJson));
+  } catch {
+    return null;
+  }
+}
+
+// ── Circadian Rhythm (bhava 2.0) ────────────────────────────────────────
+
+export interface BhavaCircadianAlertness {
+  alertness: number;
+  chronotype: string;
+}
+
+export function createCircadian(
+  chronotype:
+    | 'early bird'
+    | 'morning-leaning'
+    | 'neutral'
+    | 'evening-leaning'
+    | 'night owl'
+): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateCircadian(chronotype);
+  } catch {
+    return null;
+  }
+}
+
+export function circadianAlertness(circadianJson: string): BhavaCircadianAlertness | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaCircadianAlertness(circadianJson));
+  } catch {
+    return null;
+  }
+}
+
+export function circadianMoodModulation(circadianJson: string): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCircadianMoodModulation(circadianJson);
+  } catch {
+    return null;
+  }
+}
+
+// ── Sentiment Monitor (bhava 2.0) ───────────────────────────────────────
+
+export function createMonitor(scale: number): string | null {
+  if (!native) return null;
+  try {
+    return native.bhavaCreateMonitor(scale);
+  } catch {
+    return null;
+  }
+}
+
+export interface BhavaMonitorResult {
+  monitor: unknown;
+  results: unknown[];
+  state?: unknown;
+}
+
+export function monitorFeed(monitorJson: string, chunk: string): BhavaMonitorResult | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaMonitorFeed(monitorJson, chunk));
+  } catch {
+    return null;
+  }
+}
+
+export function monitorFlush(monitorJson: string): BhavaMonitorResult | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaMonitorFlush(monitorJson));
+  } catch {
+    return null;
+  }
+}
+
+export function monitorFeedAndApply(
+  monitorJson: string,
+  stateJson: string,
+  chunk: string
+): BhavaMonitorResult | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaMonitorFeedAndApply(monitorJson, stateJson, chunk));
+  } catch {
+    return null;
+  }
+}
+
+// ── Signal Loop Tick (bhava 2.0) ────────────────────────────────────────
+
+export interface BhavaSignalTickResult {
+  state: unknown;
+  mood_label: string;
+  mood_prompt: string;
+  alertness: number;
+  stress?: unknown;
+  stress_level?: string;
+  energy?: unknown;
+  energy_level?: string;
+  performance?: number;
+  flow?: unknown;
+  flow_phase?: string;
+  circadian?: unknown;
+}
+
+export function signalTick(composite: {
+  state: unknown;
+  stress?: unknown;
+  energy?: unknown;
+  flow?: unknown;
+  circadian?: unknown;
+}): BhavaSignalTickResult | null {
+  if (!native) return null;
+  try {
+    return JSON.parse(native.bhavaSignalTick(JSON.stringify(composite)));
+  } catch {
+    return null;
+  }
+}

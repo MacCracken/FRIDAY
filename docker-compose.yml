@@ -328,7 +328,7 @@ services:
   # Provides LLM Gateway (port 8088) and Agent Runtime (port 8090) as a separate service.
   # Core already has AGNOS baked in; this is for full integration testing.
   agnosticos:
-    image: ghcr.io/maccracken/agnosticos:latest
+    image: ghcr.io/maccracken/agnosticos:2026.3.31
     ports:
       - '8088:8088'
       - '8090:8090'

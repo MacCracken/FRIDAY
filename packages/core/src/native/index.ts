@@ -93,6 +93,39 @@ export interface NativeModule {
   ): string;
   bhavaBuildMetadata(name: string, traitsJson: string, stateJson: string): string;
 
+  // Bhava 2.0 — zodiac, regulation, stress, energy, flow, circadian, monitor, signal loop
+  bhavaListZodiacSigns(): string;
+  bhavaZodiacProfile(sign: string): string;
+  bhavaZodiacInfo(sign: string): string;
+  bhavaZodiacManifest(sign: string): string;
+  bhavaCreateRegulatedMood(stateJson: string): string;
+  bhavaRegulate(
+    regulatedJson: string,
+    strategy: string,
+    targetEmotion: string,
+    strength: number,
+    effectiveness: number
+  ): string;
+  bhavaDefaultRegulationStrategy(traitsJson: string, dominantEmotion: string): string;
+  bhavaSuppressionGap(regulatedJson: string): number;
+  bhavaCreateStressState(traitsJson: string): string;
+  bhavaStressTick(stressJson: string, stateJson: string): string;
+  bhavaStressInfo(stressJson: string): string;
+  bhavaCreateEnergyState(traitsJson: string): string;
+  bhavaEnergyTick(energyJson: string, stateJson: string): string;
+  bhavaEnergyInfo(energyJson: string): string;
+  bhavaCreateFlowState(): string;
+  bhavaFlowTick(flowJson: string, stateJson: string, energy: number, alertness: number): string;
+  bhavaFlowInfo(flowJson: string): string;
+  bhavaCreateCircadian(chronotype: string): string;
+  bhavaCircadianAlertness(circadianJson: string): string;
+  bhavaCircadianMoodModulation(circadianJson: string): string;
+  bhavaCreateMonitor(scale: number): string;
+  bhavaMonitorFeed(monitorJson: string, chunk: string): string;
+  bhavaMonitorFlush(monitorJson: string): string;
+  bhavaMonitorFeedAndApply(monitorJson: string, stateJson: string, chunk: string): string;
+  bhavaSignalTick(compositeJson: string): string;
+
   // Majra pub/sub
   majraMatchesPattern(pattern: string, topic: string): boolean;
   majraPublish(topic: string, payloadJson: string): number;

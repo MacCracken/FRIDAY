@@ -7,11 +7,18 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use bhava::archetype::{self, IdentityContent, IdentityLayer};
+use bhava::circadian::{Chronotype, CircadianRhythm};
+use bhava::energy::{self, EnergyState};
+use bhava::flow::FlowState;
+use bhava::monitor::SentimentMonitor;
 use bhava::mood::{self, Emotion, EmotionalState};
 use bhava::presets;
+use bhava::regulation::{self, RegulatedMood, RegulationStrategy};
 use bhava::sentiment;
 use bhava::spirit::Spirit;
+use bhava::stress::{self, StressState};
 use bhava::traits::{PersonalityProfile, TraitGroup, TraitKind, TraitLevel};
+use bhava::zodiac::{self, ZodiacSign};
 
 // ── Trait Level Mapping ────────────────────────────────────────────────────
 //
@@ -760,4 +767,716 @@ pub fn bhava_build_metadata(
     });
 
     serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Zodiac Engine ─────────────────────────────────────────────────────────
+//
+// The zodiac chart sets initial conditions. bhava computes the personality;
+// the LLM doesn't know it's a Scorpio — it just follows trait instructions.
+
+fn parse_zodiac_sign(s: &str) -> Result<ZodiacSign> {
+    match s.to_lowercase().as_str() {
+        "aries" => Ok(ZodiacSign::Aries),
+        "taurus" => Ok(ZodiacSign::Taurus),
+        "gemini" => Ok(ZodiacSign::Gemini),
+        "cancer" => Ok(ZodiacSign::Cancer),
+        "leo" => Ok(ZodiacSign::Leo),
+        "virgo" => Ok(ZodiacSign::Virgo),
+        "libra" => Ok(ZodiacSign::Libra),
+        "scorpio" => Ok(ZodiacSign::Scorpio),
+        "sagittarius" => Ok(ZodiacSign::Sagittarius),
+        "capricorn" => Ok(ZodiacSign::Capricorn),
+        "aquarius" => Ok(ZodiacSign::Aquarius),
+        "pisces" => Ok(ZodiacSign::Pisces),
+        _ => Err(Error::from_reason(format!("Unknown zodiac sign: {s}"))),
+    }
+}
+
+/// List all zodiac signs.
+#[napi]
+pub fn bhava_list_zodiac_signs() -> String {
+    let signs: Vec<String> = ZodiacSign::ALL.iter().map(|s| s.to_string()).collect();
+    serde_json::to_string(&signs).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Get a personality profile derived from a zodiac sign.
+/// Returns JSON profile with SY-compatible trait names.
+#[napi]
+pub fn bhava_zodiac_profile(sign: String) -> Result<String> {
+    let sign = parse_zodiac_sign(&sign)?;
+    let profile = zodiac::sign_profile(sign);
+    serde_json::to_string(&profile_to_sy_json(&profile))
+        .map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get element and modality for a zodiac sign.
+/// Returns JSON { sign, element, modality }.
+#[napi]
+pub fn bhava_zodiac_info(sign: String) -> Result<String> {
+    let sign = parse_zodiac_sign(&sign)?;
+    let result = serde_json::json!({
+        "sign": sign.to_string(),
+        "element": zodiac::sign_element(sign).to_string(),
+        "modality": zodiac::sign_modality(sign).to_string(),
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Manifest a zodiac sign into a full personality with mood baseline.
+/// Returns JSON { profile, baseline } — the initial conditions for the signal loop.
+#[napi]
+pub fn bhava_zodiac_manifest(sign: String) -> Result<String> {
+    let sign = parse_zodiac_sign(&sign)?;
+    let profile = zodiac::sign_profile(sign);
+    let baseline = mood::derive_mood_baseline(&profile);
+    let result = serde_json::json!({
+        "profile": profile_to_sy_json(&profile),
+        "baseline": baseline,
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Regulation ────────────────────────────────────────────────────────────
+//
+// Separates felt mood from expressed mood. The LLM gets the expressed mood;
+// the felt mood drives internal state transitions.
+
+/// Create a regulated mood from an emotional state (no regulation applied).
+/// Returns JSON RegulatedMood.
+#[napi]
+pub fn bhava_create_regulated_mood(state_json: String) -> Result<String> {
+    let state: EmotionalState =
+        serde_json::from_str(&state_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let regulated = RegulatedMood::from_state(&state);
+    serde_json::to_string(&regulated).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Apply a regulation strategy to a regulated mood.
+/// strategy: "accept"|"suppress"|"reappraise"|"distract"
+/// Returns updated RegulatedMood JSON.
+#[napi]
+pub fn bhava_regulate(
+    regulated_json: String,
+    strategy: String,
+    target_emotion: String,
+    strength: f64,
+    effectiveness: f64,
+) -> Result<String> {
+    let mut regulated: RegulatedMood =
+        serde_json::from_str(&regulated_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+
+    let strat = match strategy.to_lowercase().as_str() {
+        "accept" => RegulationStrategy::Accept,
+        "suppress" => {
+            let emo = parse_emotion(&target_emotion)?;
+            RegulationStrategy::Suppress {
+                target: emo,
+                strength: strength as f32,
+            }
+        }
+        "reappraise" => {
+            let emo = parse_emotion(&target_emotion)?;
+            RegulationStrategy::Reappraise {
+                target: emo,
+                reduction: strength as f32,
+            }
+        }
+        "distract" => RegulationStrategy::Distract {
+            decay_boost: strength as f32,
+        },
+        _ => return Err(Error::from_reason(format!("Unknown strategy: {strategy}"))),
+    };
+
+    regulated.regulate(strat, effectiveness as f32);
+    serde_json::to_string(&regulated).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Derive default regulation strategy from personality traits for a given emotion.
+/// Returns JSON RegulationStrategy.
+#[napi]
+pub fn bhava_default_regulation_strategy(
+    traits_json: String,
+    dominant_emotion: String,
+) -> Result<String> {
+    let traits: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&traits_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let profile = profile_from_sy_traits("_", &traits);
+    let emo = parse_emotion(&dominant_emotion)?;
+    let strategy = regulation::default_strategy(&profile, emo);
+    serde_json::to_string(&strategy).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get the suppression gap (how much the agent is hiding). Returns f64.
+#[napi]
+pub fn bhava_suppression_gap(regulated_json: String) -> Result<f64> {
+    let regulated: RegulatedMood =
+        serde_json::from_str(&regulated_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    Ok(regulated.suppression_gap() as f64)
+}
+
+// ── Stress ────────────────────────────────────────────────────────────────
+//
+// Chronic accumulated emotional wear. Degrades regulation effectiveness.
+
+/// Create a stress state from personality traits.
+/// Returns JSON StressState.
+#[napi]
+pub fn bhava_create_stress_state(traits_json: String) -> Result<String> {
+    let traits: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&traits_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let profile = profile_from_sy_traits("_", &traits);
+    let state = stress::stress_from_personality(&profile);
+    serde_json::to_string(&state).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Tick stress state based on current mood vector.
+/// Returns updated StressState JSON.
+#[napi]
+pub fn bhava_stress_tick(stress_json: String, state_json: String) -> Result<String> {
+    let mut stress_state: StressState =
+        serde_json::from_str(&stress_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let emotional_state: EmotionalState =
+        serde_json::from_str(&state_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    stress_state.tick(&emotional_state.mood);
+    serde_json::to_string(&stress_state).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get stress level and modifiers.
+/// Returns JSON { level, load, is_fatigued, is_burned_out, negative_amplifier, regulation_effectiveness }.
+#[napi]
+pub fn bhava_stress_info(stress_json: String) -> Result<String> {
+    let state: StressState =
+        serde_json::from_str(&stress_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let result = serde_json::json!({
+        "level": state.level().to_string(),
+        "load": state.load.get(),
+        "is_fatigued": state.is_fatigued(),
+        "is_burned_out": state.is_burned_out(),
+        "negative_amplifier": state.negative_amplifier(),
+        "regulation_effectiveness": state.regulation_effectiveness(),
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Energy ────────────────────────────────────────────────────────────────
+//
+// Depletable resource with Banister fitness-fatigue model.
+
+/// Create energy state from personality traits.
+/// Returns JSON EnergyState.
+#[napi]
+pub fn bhava_create_energy_state(traits_json: String) -> Result<String> {
+    let traits: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&traits_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let profile = profile_from_sy_traits("_", &traits);
+    let state = energy::energy_from_personality(&profile);
+    serde_json::to_string(&state).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Tick energy state with mood-derived exertion.
+/// Returns updated EnergyState JSON.
+#[napi]
+pub fn bhava_energy_tick(energy_json: String, state_json: String) -> Result<String> {
+    let mut energy_state: EnergyState =
+        serde_json::from_str(&energy_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let emotional_state: EmotionalState =
+        serde_json::from_str(&state_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let exertion = energy::exertion_from_mood(&emotional_state.mood);
+    energy_state.tick(exertion);
+    serde_json::to_string(&energy_state).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get energy level and performance info.
+/// Returns JSON { level, energy, performance, can_enter_flow, is_depleted, regulation_effectiveness }.
+#[napi]
+pub fn bhava_energy_info(energy_json: String) -> Result<String> {
+    let state: EnergyState =
+        serde_json::from_str(&energy_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let result = serde_json::json!({
+        "level": state.level().to_string(),
+        "energy": state.energy.get(),
+        "performance": state.performance(),
+        "can_enter_flow": state.can_enter_flow(),
+        "is_depleted": state.is_depleted(),
+        "regulation_effectiveness": state.regulation_effectiveness(),
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Flow State ────────────────────────────────────────────────────────────
+//
+// Csikszentmihalyi flow detection with hysteresis.
+
+/// Create a new flow state detector. Returns JSON FlowState.
+#[napi]
+pub fn bhava_create_flow_state() -> String {
+    let state = FlowState::default();
+    serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Tick flow state based on current mood and energy/alertness.
+/// Returns updated FlowState JSON.
+#[napi]
+pub fn bhava_flow_tick(
+    flow_json: String,
+    state_json: String,
+    energy: f64,
+    alertness: f64,
+) -> Result<String> {
+    let mut flow: FlowState =
+        serde_json::from_str(&flow_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let emotional_state: EmotionalState =
+        serde_json::from_str(&state_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    flow.tick(&emotional_state.mood, energy as f32, alertness as f32);
+    serde_json::to_string(&flow).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get flow phase and duration.
+/// Returns JSON { phase, accumulator, flow_duration }.
+#[napi]
+pub fn bhava_flow_info(flow_json: String) -> Result<String> {
+    let flow: FlowState =
+        serde_json::from_str(&flow_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let result = serde_json::json!({
+        "phase": flow.phase.to_string(),
+        "accumulator": flow.accumulator,
+        "flow_duration": flow.flow_duration,
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Circadian Rhythm ──────────────────────────────────────────────────────
+//
+// 24-hour alertness cycle — modulates mood, decay rate, and energy recovery.
+
+fn parse_chronotype(s: &str) -> Result<Chronotype> {
+    match s.to_lowercase().replace(['-', '_'], " ").as_str() {
+        "early bird" | "earlybird" => Ok(Chronotype::EarlyBird),
+        "morning leaning" | "morningleaning" => Ok(Chronotype::MorningLeaning),
+        "neutral" => Ok(Chronotype::Neutral),
+        "evening leaning" | "eveningleaning" => Ok(Chronotype::EveningLeaning),
+        "night owl" | "nightowl" => Ok(Chronotype::NightOwl),
+        _ => Err(Error::from_reason(format!("Unknown chronotype: {s}"))),
+    }
+}
+
+/// Create a circadian rhythm with chronotype.
+/// Returns JSON CircadianRhythm.
+#[napi]
+pub fn bhava_create_circadian(chronotype: String) -> Result<String> {
+    let ct = parse_chronotype(&chronotype)?;
+    let rhythm = CircadianRhythm::with_chronotype(ct);
+    serde_json::to_string(&rhythm).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get current alertness from circadian rhythm at the given UTC time.
+/// Returns JSON { alertness, chronotype }.
+#[napi]
+pub fn bhava_circadian_alertness(circadian_json: String) -> Result<String> {
+    let rhythm: CircadianRhythm =
+        serde_json::from_str(&circadian_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let now = chrono::Utc::now();
+    let alertness = rhythm.alertness(now);
+    let result = serde_json::json!({
+        "alertness": alertness,
+        "chronotype": rhythm.chronotype.to_string(),
+    });
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Get mood modulation from circadian rhythm at current time.
+/// Returns JSON MoodVector (modulation offsets for joy, arousal, interest).
+#[napi]
+pub fn bhava_circadian_mood_modulation(circadian_json: String) -> Result<String> {
+    let rhythm: CircadianRhythm =
+        serde_json::from_str(&circadian_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let now = chrono::Utc::now();
+    let modulation = rhythm.mood_modulation(now);
+    serde_json::to_string(&modulation).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Sentiment Monitor ─────────────────────────────────────────────────────
+//
+// Live sentiment monitoring for streaming text — the feedback loop.
+// user message → sentiment → mood stimulus → tone guide → prompt → response → feedback
+
+/// Create a sentiment monitor for streaming text.
+/// Returns JSON SentimentMonitor.
+#[napi]
+pub fn bhava_create_monitor(scale: f64) -> String {
+    let monitor = SentimentMonitor::new(scale as f32);
+    serde_json::to_string(&monitor).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Feed a text chunk to the sentiment monitor.
+/// Returns JSON { monitor, results: SentimentResult[] }.
+#[napi]
+pub fn bhava_monitor_feed(monitor_json: String, chunk: String) -> Result<String> {
+    let mut monitor: SentimentMonitor =
+        serde_json::from_str(&monitor_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let results = monitor.feed(&chunk);
+    let output = serde_json::json!({
+        "monitor": monitor,
+        "results": results,
+    });
+    serde_json::to_string(&output).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Flush remaining text in the monitor buffer.
+/// Returns JSON { monitor, results: SentimentResult[] }.
+#[napi]
+pub fn bhava_monitor_flush(monitor_json: String) -> Result<String> {
+    let mut monitor: SentimentMonitor =
+        serde_json::from_str(&monitor_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let results = monitor.flush();
+    let output = serde_json::json!({
+        "monitor": monitor,
+        "results": results,
+    });
+    serde_json::to_string(&output).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+/// Feed text and apply sentiment results to emotional state.
+/// Combines feed + apply_to_mood in one call for the signal loop.
+/// Returns JSON { monitor, state, results }.
+#[napi]
+pub fn bhava_monitor_feed_and_apply(
+    monitor_json: String,
+    state_json: String,
+    chunk: String,
+) -> Result<String> {
+    let mut monitor: SentimentMonitor =
+        serde_json::from_str(&monitor_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+    let mut state: EmotionalState =
+        serde_json::from_str(&state_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+
+    let results = monitor.feed(&chunk);
+    for result in &results {
+        monitor.apply_to_mood(&mut state, result);
+    }
+
+    let output = serde_json::json!({
+        "monitor": monitor,
+        "state": state,
+        "results": results,
+    });
+    serde_json::to_string(&output).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+// ── Signal Loop Tick ──────────────────────────────────────────────────────
+//
+// One-shot tick for the full signal loop: decay → stress → energy → flow → circadian.
+// Call once per interaction or on a timer.
+
+/// Tick all subsystems in one call.
+/// Input: JSON { state, stress, energy, flow, circadian } (all optional except state).
+/// Returns: JSON with all updated subsystems + composite info.
+#[napi]
+pub fn bhava_signal_tick(composite_json: String) -> Result<String> {
+    let v: serde_json::Value =
+        serde_json::from_str(&composite_json).map_err(|e| Error::from_reason(format!("{e}")))?;
+
+    // Emotional state (required)
+    let mut state: EmotionalState = serde_json::from_value(
+        v.get("state")
+            .cloned()
+            .ok_or_else(|| Error::from_reason("missing 'state'"))?,
+    )
+    .map_err(|e| Error::from_reason(format!("{e}")))?;
+
+    // Apply decay
+    state.apply_decay(chrono::Utc::now());
+
+    // Stress (optional)
+    let mut stress_state: Option<StressState> = v
+        .get("stress")
+        .and_then(|s| serde_json::from_value(s.clone()).ok());
+    if let Some(ref mut ss) = stress_state {
+        ss.tick(&state.mood);
+    }
+
+    // Energy (optional)
+    let mut energy_state: Option<EnergyState> = v
+        .get("energy")
+        .and_then(|e| serde_json::from_value(e.clone()).ok());
+    if let Some(ref mut es) = energy_state {
+        let exertion = energy::exertion_from_mood(&state.mood);
+        es.tick(exertion);
+    }
+
+    // Circadian (optional)
+    let circadian: Option<CircadianRhythm> = v
+        .get("circadian")
+        .and_then(|c| serde_json::from_value(c.clone()).ok());
+    let alertness = circadian
+        .as_ref()
+        .map(|c| c.alertness(chrono::Utc::now()))
+        .unwrap_or(1.0);
+
+    // Flow (optional)
+    let mut flow_state: Option<FlowState> = v
+        .get("flow")
+        .and_then(|f| serde_json::from_value(f.clone()).ok());
+    if let Some(ref mut fs) = flow_state {
+        let energy_level = energy_state
+            .as_ref()
+            .map(|e| e.energy.get())
+            .unwrap_or(1.0);
+        fs.tick(&state.mood, energy_level, alertness);
+    }
+
+    // Compose result
+    let mood_label = state.classify().to_string();
+    let mood_prompt = mood::compose_mood_prompt(&state);
+
+    let mut result = serde_json::json!({
+        "state": state,
+        "mood_label": mood_label,
+        "mood_prompt": mood_prompt,
+        "alertness": alertness,
+    });
+
+    if let Some(ss) = &stress_state {
+        result["stress"] = serde_json::to_value(ss).unwrap_or_default();
+        result["stress_level"] = serde_json::Value::String(ss.level().to_string());
+    }
+    if let Some(es) = &energy_state {
+        result["energy"] = serde_json::to_value(es).unwrap_or_default();
+        result["energy_level"] = serde_json::Value::String(es.level().to_string());
+        result["performance"] = serde_json::json!(es.performance());
+    }
+    if let Some(fs) = &flow_state {
+        result["flow"] = serde_json::to_value(fs).unwrap_or_default();
+        result["flow_phase"] = serde_json::Value::String(fs.phase.to_string());
+    }
+    if let Some(c) = &circadian {
+        result["circadian"] = serde_json::to_value(c).unwrap_or_default();
+    }
+
+    serde_json::to_string(&result).map_err(|e| Error::from_reason(format!("{e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_TRAITS: &str = r#"{"formality":"casual","humor":"witty","warmth":"friendly","empathy":"empathetic","patience":"patient","confidence":"assertive","creativity":"imaginative","risk_tolerance":"bold","curiosity":"curious","skepticism":"balanced","autonomy":"proactive","pedagogy":"explanatory","precision":"precise","verbosity":"concise","directness":"candid"}"#;
+
+    fn emotional_state_json() -> String {
+        bhava_create_emotional_state()
+    }
+
+    // ── Zodiac ──
+
+    #[test]
+    fn zodiac_list_returns_12_signs() {
+        let json = bhava_list_zodiac_signs();
+        let signs: Vec<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(signs.len(), 12);
+        assert!(signs.contains(&"Scorpio".to_string()));
+    }
+
+    #[test]
+    fn zodiac_manifest_returns_profile_and_baseline() {
+        let json = bhava_zodiac_manifest("scorpio".into()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("profile").is_some());
+        assert!(v.get("baseline").is_some());
+        assert!(v["profile"]["traits"].is_object());
+    }
+
+    #[test]
+    fn zodiac_info_scorpio_is_water_fixed() {
+        let json = bhava_zodiac_info("scorpio".into()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["element"].as_str().unwrap(), "Water");
+        assert_eq!(v["modality"].as_str().unwrap(), "Fixed");
+    }
+
+    #[test]
+    fn zodiac_invalid_sign_errors() {
+        assert!(bhava_zodiac_profile("invalid".into()).is_err());
+    }
+
+    // ── Regulation ──
+
+    #[test]
+    fn regulation_roundtrip() {
+        let state_json = emotional_state_json();
+        let regulated = bhava_create_regulated_mood(state_json).unwrap();
+        let gap = bhava_suppression_gap(regulated.clone()).unwrap();
+        assert!(gap < 0.01);
+
+        let suppressed =
+            bhava_regulate(regulated, "suppress".into(), "frustration".into(), 0.8, 1.0).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&suppressed).unwrap();
+        assert!(v.get("felt").is_some());
+        assert!(v.get("expressed").is_some());
+    }
+
+    #[test]
+    fn default_regulation_strategy_valid() {
+        let json =
+            bhava_default_regulation_strategy(TEST_TRAITS.into(), "frustration".into()).unwrap();
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    // ── Stress ──
+
+    #[test]
+    fn stress_lifecycle() {
+        let stress = bhava_create_stress_state(TEST_TRAITS.into()).unwrap();
+        let info_json = bhava_stress_info(stress.clone()).unwrap();
+        let info: serde_json::Value = serde_json::from_str(&info_json).unwrap();
+        assert_eq!(info["level"].as_str().unwrap(), "relaxed");
+        assert!(!info["is_fatigued"].as_bool().unwrap());
+
+        let state = emotional_state_json();
+        let updated = bhava_stress_tick(stress, state).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&updated).unwrap();
+    }
+
+    // ── Energy ──
+
+    #[test]
+    fn energy_lifecycle() {
+        let energy = bhava_create_energy_state(TEST_TRAITS.into()).unwrap();
+        let info_json = bhava_energy_info(energy.clone()).unwrap();
+        let info: serde_json::Value = serde_json::from_str(&info_json).unwrap();
+        assert_eq!(info["level"].as_str().unwrap(), "full");
+        assert!(info["can_enter_flow"].as_bool().unwrap());
+
+        let state = emotional_state_json();
+        let updated = bhava_energy_tick(energy, state).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&updated).unwrap();
+    }
+
+    // ── Flow ──
+
+    #[test]
+    fn flow_starts_inactive() {
+        let flow = bhava_create_flow_state();
+        let info_json = bhava_flow_info(flow).unwrap();
+        let info: serde_json::Value = serde_json::from_str(&info_json).unwrap();
+        assert_eq!(info["phase"].as_str().unwrap(), "inactive");
+        assert_eq!(info["flow_duration"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn flow_tick_updates() {
+        let flow = bhava_create_flow_state();
+        let state = emotional_state_json();
+        let updated = bhava_flow_tick(flow, state, 0.8, 0.9).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&updated).unwrap();
+    }
+
+    // ── Circadian ──
+
+    #[test]
+    fn circadian_alertness_in_range() {
+        let circ = bhava_create_circadian("neutral".into()).unwrap();
+        let alert_json = bhava_circadian_alertness(circ).unwrap();
+        let alert: serde_json::Value = serde_json::from_str(&alert_json).unwrap();
+        let a = alert["alertness"].as_f64().unwrap();
+        assert!((0.0..=1.0).contains(&a));
+        assert_eq!(alert["chronotype"].as_str().unwrap(), "neutral");
+    }
+
+    #[test]
+    fn circadian_mood_modulation_valid() {
+        let circ = bhava_create_circadian("night owl".into()).unwrap();
+        let json = bhava_circadian_mood_modulation(circ).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn circadian_invalid_chronotype_errors() {
+        assert!(bhava_create_circadian("invalid".into()).is_err());
+    }
+
+    // ── Monitor ──
+
+    #[test]
+    fn monitor_feed_and_flush() {
+        let monitor = bhava_create_monitor(0.5);
+        let fed = bhava_monitor_feed(monitor, "This is great! ".into()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&fed).unwrap();
+        assert!(v.get("monitor").is_some());
+        assert!(v.get("results").is_some());
+    }
+
+    #[test]
+    fn monitor_feed_and_apply_updates_state() {
+        let monitor = bhava_create_monitor(0.5);
+        let state = emotional_state_json();
+        let result =
+            bhava_monitor_feed_and_apply(monitor, state, "This is wonderful work! ".into())
+                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(v.get("monitor").is_some());
+        assert!(v.get("state").is_some());
+        assert!(v.get("results").is_some());
+    }
+
+    // ── Signal Tick ──
+
+    #[test]
+    fn signal_tick_state_only() {
+        let state = emotional_state_json();
+        let composite = format!(r#"{{"state":{state}}}"#);
+        let result = bhava_signal_tick(composite).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(v.get("state").is_some());
+        assert!(v.get("mood_label").is_some());
+        assert!(v.get("mood_prompt").is_some());
+    }
+
+    #[test]
+    fn signal_tick_full_composite() {
+        let state = emotional_state_json();
+        let stress = bhava_create_stress_state(TEST_TRAITS.into()).unwrap();
+        let energy = bhava_create_energy_state(TEST_TRAITS.into()).unwrap();
+        let flow = bhava_create_flow_state();
+        let circ = bhava_create_circadian("neutral".into()).unwrap();
+
+        let composite = format!(
+            r#"{{"state":{state},"stress":{stress},"energy":{energy},"flow":{flow},"circadian":{circ}}}"#
+        );
+        let result = bhava_signal_tick(composite).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(v.get("stress_level").is_some());
+        assert!(v.get("energy_level").is_some());
+        assert!(v.get("performance").is_some());
+        assert!(v.get("flow_phase").is_some());
+        assert!(v.get("circadian").is_some());
+    }
+
+    #[test]
+    fn signal_tick_missing_state_errors() {
+        assert!(bhava_signal_tick(r#"{"stress":{}}"#.into()).is_err());
+    }
+
+    // ── Existing 1.x ──
+
+    #[test]
+    fn compose_system_prompt_works() {
+        let identity = r#"{"soul":"test","spirit":null,"brain":null,"body":null,"heart":null}"#;
+        let result = bhava_compose_system_prompt(
+            TEST_TRAITS.into(),
+            identity.into(),
+            "null".into(),
+            "".into(),
+        )
+        .unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn build_metadata_works() {
+        let state = emotional_state_json();
+        let result = bhava_build_metadata("test".into(), TEST_TRAITS.into(), state).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(v["name"].as_str().unwrap(), "test");
+        assert!(v["active_traits"].as_array().is_some());
+    }
 }
