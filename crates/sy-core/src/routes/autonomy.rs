@@ -14,6 +14,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/autonomy/overview", get(overview))
         .route("/api/v1/autonomy/audits", get(list_audits))
+        .route("/api/v1/autonomy/audits", post(create_audit))
         .route("/api/v1/autonomy/audits/{id}", get(get_audit))
         .route(
             "/api/v1/autonomy/audits/{id}/finalize",
@@ -127,6 +128,12 @@ async fn finalize_audit(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CreateAuditRequest {
+    agent_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateAuditItemRequest {
     status: String,
     notes: Option<String>,
@@ -160,6 +167,29 @@ async fn update_audit_item(
             Json(serde_json::json!({"error": "Audit item not found"})),
         )
             .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/v1/autonomy/audits — create a new audit run.
+async fn create_audit(
+    State(state): State<AppState>,
+    Json(body): Json<CreateAuditRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match autonomy::create_audit(pool, &id, &body.agent_id).await {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

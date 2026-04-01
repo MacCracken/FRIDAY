@@ -71,6 +71,19 @@ pub async fn update_audit_item(
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn create_audit(
+    pool: &PgPool,
+    id: &str,
+    agent_id: &str,
+) -> Result<AutonomyAuditRow, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, AutonomyAuditRow>(
+        "INSERT INTO autonomy.audits (id, agent_id, status, items_json, created_at) VALUES ($1, $2, 'pending', '[]'::jsonb, $3) RETURNING *",
+    )
+    .bind(id).bind(agent_id).bind(now)
+    .fetch_one(pool).await
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
