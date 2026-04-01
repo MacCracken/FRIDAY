@@ -1,7 +1,7 @@
 //! Jira proxy routes — Jira REST API v3.
 //!
-//! Credentials: Basic auth (email:apiToken base64) from integration config.
-//! Instance URL from config `instanceUrl` field.
+//! Credentials: Basic auth (email:apiToken base64) from integration config or
+//! `JIRA_BASE_URL` + `JIRA_EMAIL` + `JIRA_API_TOKEN` env vars (typed client).
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -73,6 +73,18 @@ async fn search_issues(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        let jql = q.jql.as_deref().unwrap_or("order by created DESC");
+        let max = q.max_results.unwrap_or(50);
+        return match client.search(jql, max).await {
+            Ok(result) => Json(serde_json::to_value(result).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -103,6 +115,16 @@ async fn search_issues(
 }
 
 async fn get_issue(State(state): State<AppState>, Path(key): Path<String>) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        return match client.get_issue(&key).await {
+            Ok(issue) => Json(serde_json::to_value(issue).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -155,6 +177,16 @@ async fn list_transitions(
     State(state): State<AppState>,
     Path(issue_key): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        return match client.list_transitions(&issue_key).await {
+            Ok(transitions) => Json(serde_json::to_value(transitions).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -174,6 +206,22 @@ async fn execute_transition(
     Path(issue_key): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        let transition_id = body
+            .get("transition")
+            .and_then(|t| t.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return match client.do_transition(&issue_key, &transition_id).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -192,6 +240,16 @@ async fn list_comments(
     State(state): State<AppState>,
     Path(issue_key): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        return match client.list_comments(&issue_key).await {
+            Ok(comments) => Json(serde_json::to_value(comments).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -211,6 +269,25 @@ async fn add_comment(
     Path(issue_key): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        let text = body
+            .get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return match client.add_comment(&issue_key, &text).await {
+            Ok(comment) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(comment).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),
@@ -226,6 +303,16 @@ async fn add_comment(
 }
 
 async fn list_projects(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.jira() {
+        return match client.list_projects().await {
+            Ok(projects) => Json(serde_json::to_value(projects).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let (base_url, auth) = match resolve_jira(&state).await {
         Ok(v) => v,
         Err(e) => return e.into_response(),

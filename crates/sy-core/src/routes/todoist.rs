@@ -1,6 +1,7 @@
 //! Todoist proxy routes — REST API v2.
 //!
-//! Credentials: Bearer token from integration config `apiToken` field.
+//! Credentials: Bearer token from integration config `apiToken` field, or
+//! `TODOIST_API_KEY` env var when the typed client is configured.
 //! All routes under /api/v1/integrations/todoist/.
 
 use axum::extract::{Path, Query, State};
@@ -53,6 +54,16 @@ async fn list_tasks(
     State(state): State<AppState>,
     Query(q): Query<TasksQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.todoist() {
+        return match client.list_tasks(q.project_id.as_deref()).await {
+            Ok(tasks) => Json(serde_json::to_value(tasks).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -101,6 +112,28 @@ async fn create_task(
     State(state): State<AppState>,
     Json(body): Json<CreateTaskBody>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.todoist() {
+        return match client
+            .create_task(
+                &body.content,
+                body.project_id.as_deref(),
+                body.priority,
+                body.due_string.as_deref(),
+            )
+            .await
+        {
+            Ok(task) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(task).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -128,6 +161,27 @@ async fn update_task(
     Path(task_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.todoist() {
+        let content = body
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let priority = body
+            .get("priority")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u8);
+        return match client
+            .update_task(&task_id, content.as_deref(), priority)
+            .await
+        {
+            Ok(task) => Json(serde_json::to_value(task).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -142,6 +196,16 @@ async fn close_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.todoist() {
+        return match client.close_task(&task_id).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -157,6 +221,16 @@ async fn close_task(
 }
 
 async fn list_projects(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.todoist() {
+        return match client.list_projects().await {
+            Ok(projects) => Json(serde_json::to_value(projects).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_token(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),

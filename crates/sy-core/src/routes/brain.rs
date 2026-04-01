@@ -60,6 +60,37 @@ async fn create_memory(
     State(state): State<AppState>,
     Json(body): Json<CreateMemoryRequest>,
 ) -> impl IntoResponse {
+    // Use BrainManager for vector indexing + storage
+    if let Some(brain_mgr) = state.brain() {
+        match brain_mgr
+            .remember(
+                &body.r#type,
+                &body.content,
+                &body.source,
+                &body.context,
+                body.importance,
+                body.personality_id.as_deref(),
+            )
+            .await
+        {
+            Ok(row) => {
+                return (
+                    StatusCode::CREATED,
+                    Json(serde_json::to_value(row).unwrap()),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Fallback: direct DB insert (no vector indexing)
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -209,6 +240,23 @@ async fn update_memory(
 }
 
 async fn delete_memory(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    // Use BrainManager to also cleanup vector index
+    if let Some(brain_mgr) = state.brain() {
+        return match brain_mgr.forget(&id).await {
+            Ok(true) => StatusCode::NO_CONTENT.into_response(),
+            Ok(false) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Memory not found"})),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
+
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -239,6 +287,37 @@ async fn search_memories(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> impl IntoResponse {
+    let query_text = q.q.as_deref().unwrap_or("");
+
+    // Use BrainManager for hybrid semantic + FTS search with ACT-R ranking
+    if let Some(brain_mgr) = state.brain() {
+        match brain_mgr
+            .recall(query_text, q.limit.min(100) as usize, None)
+            .await
+        {
+            Ok(scored) => {
+                let results: Vec<serde_json::Value> = scored
+                    .iter()
+                    .map(|sm| {
+                        let mut val = serde_json::to_value(&sm.memory).unwrap();
+                        val["_score"] = serde_json::json!(sm.score);
+                        val["_matchSource"] = serde_json::json!(format!("{:?}", sm.source));
+                        val
+                    })
+                    .collect();
+                return Json(serde_json::to_value(results).unwrap()).into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Fallback: direct FTS search
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -246,7 +325,6 @@ async fn search_memories(
         )
             .into_response();
     };
-    let query_text = q.q.as_deref().unwrap_or("");
     match brain::search_memories(pool, "default", query_text, q.limit.min(100)).await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
@@ -278,6 +356,36 @@ async fn create_knowledge(
     State(state): State<AppState>,
     Json(body): Json<CreateKnowledgeRequest>,
 ) -> impl IntoResponse {
+    // Use BrainManager for vector indexing + storage
+    if let Some(brain_mgr) = state.brain() {
+        match brain_mgr
+            .learn(
+                &body.topic,
+                &body.content,
+                &body.source,
+                body.confidence,
+                body.personality_id.as_deref(),
+            )
+            .await
+        {
+            Ok(row) => {
+                return (
+                    StatusCode::CREATED,
+                    Json(serde_json::to_value(row).unwrap()),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": e.to_string()})),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Fallback: direct DB insert
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,

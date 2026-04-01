@@ -1,6 +1,7 @@
 //! GitHub proxy routes — GitHub REST API v3.
 //!
-//! Credentials: OAuth Bearer token from integration config `accessToken` field.
+//! Credentials: OAuth Bearer token from integration config `accessToken` field,
+//! or `GITHUB_TOKEN` env var when the typed client is configured.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -103,6 +104,16 @@ async fn gh_post(
 }
 
 async fn profile(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        return match client.get_user().await {
+            Ok(user) => Json(serde_json::to_value(user).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     gh_get(&state, "/user", None).await
 }
 
@@ -118,6 +129,22 @@ async fn list_repos(
     State(state): State<AppState>,
     Query(q): Query<RepoQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        let page: u32 = q.page.as_deref().and_then(|s| s.parse().ok()).unwrap_or(1);
+        let per_page: u32 = q
+            .per_page
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(30);
+        return match client.list_repos(page, per_page).await {
+            Ok(repos) => Json(serde_json::to_value(repos).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let mut params = Vec::new();
     if let Some(ref t) = q.r#type {
         params.push(format!("type={t}"));
@@ -143,6 +170,16 @@ async fn get_repo(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        return match client.get_repo(&owner, &repo).await {
+            Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     gh_get(&state, &format!("/repos/{owner}/{repo}"), None).await
 }
 
@@ -158,6 +195,18 @@ async fn list_issues(
     Path((owner, repo)): Path<(String, String)>,
     Query(q): Query<IssueQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        let state_str = q.state.as_deref().unwrap_or("open");
+        let page: u32 = q.page.as_deref().and_then(|s| s.parse().ok()).unwrap_or(1);
+        return match client.list_issues(&owner, &repo, state_str, page).await {
+            Ok(issues) => Json(serde_json::to_value(issues).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let mut params = Vec::new();
     if let Some(ref s) = q.state {
         params.push(format!("state={s}"));
@@ -185,6 +234,7 @@ async fn get_issue(
     State(state): State<AppState>,
     Path((owner, repo, number)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
+    // Note: typed client doesn't have a per-issue get, fall through to proxy.
     gh_get(
         &state,
         &format!("/repos/{owner}/{repo}/issues/{number}"),
@@ -198,6 +248,18 @@ async fn list_pulls(
     Path((owner, repo)): Path<(String, String)>,
     Query(q): Query<IssueQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        let state_str = q.state.as_deref().unwrap_or("open");
+        let page: u32 = q.page.as_deref().and_then(|s| s.parse().ok()).unwrap_or(1);
+        return match client.list_pulls(&owner, &repo, state_str, page).await {
+            Ok(pulls) => Json(serde_json::to_value(pulls).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let mut params = Vec::new();
     if let Some(ref s) = q.state {
         params.push(format!("state={s}"));
@@ -238,6 +300,38 @@ async fn create_issue(
     Path((owner, repo)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        let title = body
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let issue_body = body.get("body").and_then(|v| v.as_str()).map(String::from);
+        let labels: Vec<String> = body
+            .get("labels")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|l| l.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return match client
+            .create_issue(&owner, &repo, &title, issue_body.as_deref(), labels)
+            .await
+        {
+            Ok(issue) => (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(issue).unwrap()),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     gh_post(&state, &format!("/repos/{owner}/{repo}/issues"), &body).await
 }
 
@@ -322,6 +416,16 @@ async fn list_branches(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        return match client.list_branches(&owner, &repo).await {
+            Ok(branches) => Json(serde_json::to_value(branches).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     gh_get(&state, &format!("/repos/{owner}/{repo}/branches"), None).await
 }
 
@@ -330,6 +434,17 @@ async fn list_commits(
     Path((owner, repo)): Path<(String, String)>,
     Query(q): Query<IssueQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.github() {
+        let page: u32 = q.page.as_deref().and_then(|s| s.parse().ok()).unwrap_or(1);
+        return match client.list_commits(&owner, &repo, None, page).await {
+            Ok(commits) => Json(serde_json::to_value(commits).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let mut params = Vec::new();
     if let Some(ref pp) = q.per_page {
         params.push(format!("per_page={pp}"));

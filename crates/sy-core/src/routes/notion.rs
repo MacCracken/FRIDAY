@@ -1,6 +1,7 @@
 //! Notion proxy routes — Notion API v1.
 //!
-//! Credentials: Bearer token from integration config `apiToken` field.
+//! Credentials: Bearer token from integration config `apiToken` field, or
+//! `NOTION_API_KEY` env var when the typed client is configured.
 //! Requires Notion-Version header.
 
 use axum::extract::{Path, Query, State};
@@ -119,6 +120,17 @@ struct SearchQuery {
 }
 
 async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> impl IntoResponse {
+    if let Some(client) = state.notion() {
+        let query_str = q.query.as_deref().unwrap_or("");
+        return match client.search(query_str, None).await {
+            Ok(result) => Json(serde_json::to_value(result).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -130,6 +142,16 @@ async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> 
 }
 
 async fn get_page(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    if let Some(client) = state.notion() {
+        return match client.get_page(&id).await {
+            Ok(page) => Json(serde_json::to_value(page).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -140,6 +162,16 @@ async fn get_page(State(state): State<AppState>, Path(id): Path<String>) -> impl
 }
 
 async fn get_database(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    if let Some(client) = state.notion() {
+        return match client.get_database(&id).await {
+            Ok(db) => Json(serde_json::to_value(db).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -153,6 +185,16 @@ async fn get_page_blocks(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.notion() {
+        return match client.get_blocks(&id).await {
+            Ok(blocks) => Json(serde_json::to_value(blocks).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
@@ -181,6 +223,18 @@ async fn query_database(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.notion() {
+        let filter = body.get("filter");
+        let sorts = body.get("sorts");
+        return match client.query_database(&id, filter, sorts).await {
+            Ok(result) => Json(serde_json::to_value(result).unwrap()).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let auth = match resolve_auth(&state).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
