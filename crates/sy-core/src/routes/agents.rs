@@ -734,18 +734,34 @@ async fn execute_swarm(
             // Fire-and-forget: transition to running asynchronously.
             let pool = pool.clone();
             let run_id = id.clone();
+            let template_id = body.template_id.clone();
+            let task = body.task.clone();
+            let context = body.context.clone();
+            let token_budget = body.token_budget as u32;
             tokio::spawn(async move {
-                tracing::info!(run_id = %run_id, "swarm execution would start here");
-                match agents::start_swarm_run(&pool, &run_id).await {
-                    Ok(true) => {
-                        tracing::info!(run_id = %run_id, "swarm run transitioned to running")
+                let _ = agents::start_swarm_run(&pool, &run_id).await;
+
+                // Load template and execute swarm
+                match agents::get_swarm_template(&pool, &template_id).await {
+                    Ok(Some(template)) => {
+                        let delegate = crate::orchestration::hoosh::HooshDelegate::from_env();
+                        let executor =
+                            crate::orchestration::swarm::SwarmExecutor::new(delegate, pool.clone());
+                        match executor
+                            .execute(&run_id, &template, &task, context.as_deref(), token_budget)
+                            .await
+                        {
+                            Ok(result) => {
+                                tracing::info!(run_id = %run_id, tokens = result.tokens_used, "swarm completed")
+                            }
+                            Err(e) => {
+                                let _ = sqlx::query("UPDATE agents.swarm_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2")
+                                    .bind(e.to_string()).bind(&run_id).execute(&pool).await;
+                                tracing::error!(run_id = %run_id, error = %e, "swarm failed");
+                            }
+                        }
                     }
-                    Ok(false) => {
-                        tracing::warn!(run_id = %run_id, "swarm run not found or already past pending")
-                    }
-                    Err(e) => {
-                        tracing::error!(run_id = %run_id, error = %e, "failed to transition swarm run to running")
-                    }
+                    _ => tracing::error!(run_id = %run_id, "swarm template not found"),
                 }
             });
             (
@@ -973,18 +989,43 @@ async fn convene_council(
             // Fire-and-forget: transition to running asynchronously.
             let pool = pool.clone();
             let run_id = id.clone();
+            let template_id = body.template_id.clone();
+            let topic = body.topic.clone();
+            let context = body.context.clone();
+            let token_budget = body.token_budget as u32;
+            let max_rounds = body.max_rounds as u32;
             tokio::spawn(async move {
-                tracing::info!(run_id = %run_id, "council deliberation would start here");
-                match agents::start_council_run(&pool, &run_id).await {
-                    Ok(true) => {
-                        tracing::info!(run_id = %run_id, "council run transitioned to running")
+                let _ = agents::start_council_run(&pool, &run_id).await;
+
+                match agents::get_council_template(&pool, &template_id).await {
+                    Ok(Some(template)) => {
+                        let delegate = crate::orchestration::hoosh::HooshDelegate::from_env();
+                        let executor = crate::orchestration::council::CouncilExecutor::new(
+                            delegate,
+                            pool.clone(),
+                        );
+                        match executor
+                            .execute(
+                                &run_id,
+                                &template,
+                                &topic,
+                                context.as_deref(),
+                                token_budget,
+                                max_rounds,
+                            )
+                            .await
+                        {
+                            Ok(result) => {
+                                tracing::info!(run_id = %run_id, consensus = result.consensus, rounds = result.rounds_completed, "council completed")
+                            }
+                            Err(e) => {
+                                let _ = sqlx::query("UPDATE agents.council_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2")
+                                    .bind(e.to_string()).bind(&run_id).execute(&pool).await;
+                                tracing::error!(run_id = %run_id, error = %e, "council failed");
+                            }
+                        }
                     }
-                    Ok(false) => {
-                        tracing::warn!(run_id = %run_id, "council run not found or already past pending")
-                    }
-                    Err(e) => {
-                        tracing::error!(run_id = %run_id, error = %e, "failed to transition council run to running")
-                    }
+                    _ => tracing::error!(run_id = %run_id, "council template not found"),
                 }
             });
             (
@@ -1166,18 +1207,39 @@ async fn run_team(
             // Fire-and-forget: transition to running asynchronously.
             let pool = pool.clone();
             let spawn_run_id = run_id.clone();
+            let team_id = id.clone();
+            let task = body.task.clone();
+            let context = body.context.clone();
+            let token_budget = body.token_budget as u32;
             tokio::spawn(async move {
-                tracing::info!(run_id = %spawn_run_id, "team execution would start here");
-                match agents::start_team_run(&pool, &spawn_run_id).await {
-                    Ok(true) => {
-                        tracing::info!(run_id = %spawn_run_id, "team run transitioned to running")
+                let _ = agents::start_team_run(&pool, &spawn_run_id).await;
+
+                match agents::get_team(&pool, &team_id).await {
+                    Ok(Some(team)) => {
+                        let delegate = crate::orchestration::hoosh::HooshDelegate::from_env();
+                        let executor =
+                            crate::orchestration::team::TeamExecutor::new(delegate, pool.clone());
+                        match executor
+                            .execute(
+                                &spawn_run_id,
+                                &team,
+                                &task,
+                                context.as_deref(),
+                                token_budget,
+                            )
+                            .await
+                        {
+                            Ok(result) => {
+                                tracing::info!(run_id = %spawn_run_id, assigned = ?result.assigned_to, "team completed")
+                            }
+                            Err(e) => {
+                                let _ = sqlx::query("UPDATE agents.team_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2")
+                                    .bind(e.to_string()).bind(&spawn_run_id).execute(&pool).await;
+                                tracing::error!(run_id = %spawn_run_id, error = %e, "team failed");
+                            }
+                        }
                     }
-                    Ok(false) => {
-                        tracing::warn!(run_id = %spawn_run_id, "team run not found or already past pending")
-                    }
-                    Err(e) => {
-                        tracing::error!(run_id = %spawn_run_id, error = %e, "failed to transition team run to running")
-                    }
+                    _ => tracing::error!(run_id = %spawn_run_id, "team not found"),
                 }
             });
             (

@@ -9,6 +9,7 @@
 
 pub mod council;
 pub mod delegation;
+pub mod hoosh;
 pub mod swarm;
 pub mod team;
 pub mod workflow;

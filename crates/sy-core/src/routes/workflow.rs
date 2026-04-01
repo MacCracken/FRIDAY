@@ -237,9 +237,9 @@ async fn run_workflow(
                     input: input.unwrap_or(serde_json::json!({})),
                 };
 
-                // Execute the workflow DAG
+                // Execute the workflow DAG via Hoosh/AGNOS LLM Gateway
                 let engine = crate::orchestration::workflow::WorkflowEngine::new(
-                    crate::orchestration::delegation::EchoDelegate,
+                    crate::orchestration::hoosh::HooshDelegate::from_env(),
                 );
                 match engine.execute(&def).await {
                     Ok(result) => {
