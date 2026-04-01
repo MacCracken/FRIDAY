@@ -1,9 +1,9 @@
-//! Agent routes — profiles and delegations CRUD.
+//! Agent routes — profiles, delegations, swarms, councils, teams, profile skills.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -12,23 +12,60 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // ── Profiles ──
         .route("/api/v1/agents/profiles", get(list_profiles))
         .route("/api/v1/agents/profiles", post(create_profile))
         .route("/api/v1/agents/profiles/{id}", get(get_profile))
+        .route("/api/v1/agents/profiles/{id}", put(update_profile))
         .route("/api/v1/agents/profiles/{id}", delete(delete_profile))
+        .route("/api/v1/agents/profiles/{id}/skills", get(list_profile_skills))
+        .route("/api/v1/agents/profiles/{id}/skills", post(add_profile_skill))
+        .route("/api/v1/agents/profiles/{profileId}/skills/{skillId}", delete(remove_profile_skill))
         .route("/api/v1/agents/{id}", get(get_agent))
+        // ── Config ──
         .route("/api/v1/agents/config", get(get_agent_config))
+        .route("/api/v1/agents/config", patch(update_agent_config))
+        // ── Delegations ──
         .route("/api/v1/agents/delegate", post(delegate_task))
-        .route(
-            "/api/v1/agents/delegations/active",
-            get(list_active_delegations),
-        )
+        .route("/api/v1/agents/delegations/active", get(list_active_delegations))
         .route("/api/v1/agents/delegations", get(list_delegations))
         .route("/api/v1/agents/delegations/{id}", get(get_delegation))
-        .route(
-            "/api/v1/agents/delegations/{id}/cancel",
-            post(cancel_delegation),
-        )
+        .route("/api/v1/agents/delegations/{id}/cancel", post(cancel_delegation))
+        .route("/api/v1/agents/delegations/{id}/messages", get(get_delegation_messages))
+        // ── Swarm Templates ──
+        .route("/api/v1/agents/swarms/templates", get(list_swarm_templates))
+        .route("/api/v1/agents/swarms/templates", post(create_swarm_template))
+        .route("/api/v1/agents/swarms/templates/{id}", get(get_swarm_template))
+        .route("/api/v1/agents/swarms/templates/{id}", patch(update_swarm_template))
+        .route("/api/v1/agents/swarms/templates/{id}", delete(delete_swarm_template))
+        .route("/api/v1/agents/swarms/templates/{id}/export", get(export_swarm_template))
+        .route("/api/v1/agents/swarms/templates/import", post(import_swarm_template))
+        // ── Swarm Runs ──
+        .route("/api/v1/agents/swarms", get(list_swarm_runs))
+        .route("/api/v1/agents/swarms", post(execute_swarm))
+        .route("/api/v1/agents/swarms/{id}", get(get_swarm_run))
+        .route("/api/v1/agents/swarms/{id}/cancel", post(cancel_swarm))
+        // ── Council Templates ──
+        .route("/api/v1/agents/councils/catalog", get(get_council_catalog))
+        .route("/api/v1/agents/councils/catalog/{name}/install", post(install_council_from_catalog))
+        .route("/api/v1/agents/councils/templates", get(list_council_templates))
+        .route("/api/v1/agents/councils/templates", post(create_council_template))
+        .route("/api/v1/agents/councils/templates/{id}", get(get_council_template))
+        .route("/api/v1/agents/councils/templates/{id}", put(update_council_template))
+        .route("/api/v1/agents/councils/templates/{id}", delete(delete_council_template))
+        // ── Council Runs ──
+        .route("/api/v1/agents/councils", post(convene_council))
+        .route("/api/v1/agents/councils/runs", get(list_council_runs))
+        .route("/api/v1/agents/councils/runs/{id}", get(get_council_run))
+        .route("/api/v1/agents/councils/runs/{id}/cancel", post(cancel_council_run))
+        // ── Teams ──
+        .route("/api/v1/agents/teams", get(list_teams))
+        .route("/api/v1/agents/teams", post(create_team))
+        .route("/api/v1/agents/teams/runs/{runId}", get(get_team_run))
+        .route("/api/v1/agents/teams/{id}", get(get_team))
+        .route("/api/v1/agents/teams/{id}", put(update_team))
+        .route("/api/v1/agents/teams/{id}", delete(delete_team))
+        .route("/api/v1/agents/teams/{id}/run", post(run_team))
 }
 
 async fn list_profiles(State(state): State<AppState>) -> impl IntoResponse {
@@ -375,4 +412,769 @@ async fn cancel_delegation(
         )
             .into_response(),
     }
+}
+
+// ── Missing agent routes ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProfileRequest {
+    name: Option<String>,
+    description: Option<String>,
+    system_prompt: Option<String>,
+    allowed_tools: Option<serde_json::Value>,
+    default_model: Option<String>,
+}
+
+async fn update_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateProfileRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::update_profile(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.description.as_deref(),
+        body.system_prompt.as_deref(),
+        body.allowed_tools.as_ref(),
+        body.default_model.as_deref(),
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Profile not found or is builtin"})),
+        )
+            .into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_delegation_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_delegation_messages(pool, &id).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateConfigRequest {
+    enabled: Option<bool>,
+}
+
+async fn update_agent_config(
+    State(_state): State<AppState>,
+    Json(body): Json<UpdateConfigRequest>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "delegationEnabled": body.enabled.unwrap_or(true),
+    }))
+    .into_response()
+}
+
+// ── Swarm Template Handlers ─────────────────────────────────────────────────
+
+async fn list_swarm_templates(
+    State(state): State<AppState>,
+    Query(q): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_swarm_templates(pool, q.limit.min(100), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_swarm_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_swarm_template(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Swarm template not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSwarmTemplateRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_swarm_strategy")]
+    strategy: String,
+    #[serde(default)]
+    roles: serde_json::Value,
+    coordinator_profile: Option<String>,
+}
+
+fn default_swarm_strategy() -> String {
+    "parallel".to_string()
+}
+
+async fn create_swarm_template(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSwarmTemplateRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match agents::create_swarm_template(
+        pool,
+        &id,
+        &body.name,
+        &body.description,
+        &body.strategy,
+        &body.roles,
+        body.coordinator_profile.as_deref(),
+    )
+    .await
+    {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSwarmTemplateRequest {
+    name: Option<String>,
+    description: Option<String>,
+    strategy: Option<String>,
+    roles: Option<serde_json::Value>,
+}
+
+async fn update_swarm_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateSwarmTemplateRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::update_swarm_template(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.description.as_deref(),
+        body.strategy.as_deref(),
+        body.roles.as_ref(),
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Swarm template not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn delete_swarm_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::delete_swarm_template(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Swarm template not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn export_swarm_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_swarm_template(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::json!({
+            "template": row,
+            "version": "1.0",
+            "exportedAt": chrono::Utc::now(),
+        }))
+        .into_response(),
+        Ok(None) => not_found("Swarm template not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn import_swarm_template(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSwarmTemplateRequest>,
+) -> impl IntoResponse {
+    create_swarm_template(State(state), Json(body)).await
+}
+
+// ── Swarm Run Handlers ──────────────────────────────────────────────────────
+
+async fn list_swarm_runs(
+    State(state): State<AppState>,
+    Query(q): Query<StatusPaginationQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_swarm_runs(pool, q.status.as_deref(), q.limit.min(100), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteSwarmRequest {
+    template_id: String,
+    task: String,
+    context: Option<String>,
+    #[serde(default = "default_token_budget")]
+    token_budget: i32,
+}
+
+async fn execute_swarm(
+    State(state): State<AppState>,
+    Json(body): Json<ExecuteSwarmRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match agents::create_swarm_run(
+        pool,
+        &id,
+        &body.template_id,
+        &body.task,
+        body.context.as_deref(),
+        body.token_budget,
+    )
+    .await
+    {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_swarm_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_swarm_run(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Swarm run not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn cancel_swarm(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::cancel_swarm_run(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Swarm run not found or not active"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+// ── Council Template Handlers ───────────────────────────────────────────────
+
+async fn get_council_catalog(State(_state): State<AppState>) -> impl IntoResponse {
+    // Built-in council catalog — static for now, will be populated from presets
+    Json(serde_json::json!({
+        "templates": [],
+    }))
+    .into_response()
+}
+
+async fn install_council_from_catalog(
+    State(_state): State<AppState>,
+    Path(_name): Path<String>,
+) -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": "Catalog template not found"})),
+    )
+        .into_response()
+}
+
+async fn list_council_templates(
+    State(state): State<AppState>,
+    Query(q): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_council_templates(pool, q.limit.min(100), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_council_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_council_template(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Council template not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCouncilTemplateRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    members: serde_json::Value,
+    facilitator_profile: Option<String>,
+    #[serde(default = "default_deliberation_strategy")]
+    deliberation_strategy: String,
+    #[serde(default = "default_voting_strategy")]
+    voting_strategy: String,
+    #[serde(default = "default_max_rounds")]
+    max_rounds: i32,
+}
+
+fn default_deliberation_strategy() -> String {
+    "rounds".to_string()
+}
+fn default_voting_strategy() -> String {
+    "facilitator_judgment".to_string()
+}
+fn default_max_rounds() -> i32 {
+    3
+}
+
+async fn create_council_template(
+    State(state): State<AppState>,
+    Json(body): Json<CreateCouncilTemplateRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match agents::create_council_template(
+        pool,
+        &id,
+        &body.name,
+        &body.description,
+        &body.members,
+        body.facilitator_profile.as_deref(),
+        &body.deliberation_strategy,
+        &body.voting_strategy,
+        body.max_rounds,
+    )
+    .await
+    {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCouncilTemplateRequest {
+    name: Option<String>,
+    description: Option<String>,
+    members: Option<serde_json::Value>,
+    deliberation_strategy: Option<String>,
+    voting_strategy: Option<String>,
+    max_rounds: Option<i32>,
+}
+
+async fn update_council_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateCouncilTemplateRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::update_council_template(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.description.as_deref(),
+        body.members.as_ref(),
+        body.deliberation_strategy.as_deref(),
+        body.voting_strategy.as_deref(),
+        body.max_rounds,
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Council template not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn delete_council_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::delete_council_template(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Council template not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+// ── Council Run Handlers ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConveneCouncilRequest {
+    template_id: String,
+    topic: String,
+    context: Option<String>,
+    #[serde(default = "default_token_budget")]
+    token_budget: i32,
+    #[serde(default = "default_max_rounds")]
+    max_rounds: i32,
+}
+
+async fn convene_council(
+    State(state): State<AppState>,
+    Json(body): Json<ConveneCouncilRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match agents::create_council_run(
+        pool,
+        &id,
+        &body.template_id,
+        &body.topic,
+        body.context.as_deref(),
+        body.token_budget,
+        body.max_rounds,
+    )
+    .await
+    {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn list_council_runs(
+    State(state): State<AppState>,
+    Query(q): Query<StatusPaginationQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_council_runs(pool, q.status.as_deref(), q.limit.min(100), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_council_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_council_run(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Council run not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn cancel_council_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::cancel_council_run(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Council run not found or not active"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+// ── Team Handlers ───────────────────────────────────────────────────────────
+
+async fn list_teams(
+    State(state): State<AppState>,
+    Query(q): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_teams(pool, q.limit.min(100), q.offset).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_team(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_team(pool, &id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Team not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTeamRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    members: serde_json::Value,
+}
+
+async fn create_team(
+    State(state): State<AppState>,
+    Json(body): Json<CreateTeamRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let id = uuid::Uuid::now_v7().to_string();
+    match agents::create_team(pool, &id, &body.name, &body.description, &body.members).await {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTeamRequest {
+    name: Option<String>,
+    description: Option<String>,
+    members: Option<serde_json::Value>,
+}
+
+async fn update_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTeamRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::update_team(
+        pool,
+        &id,
+        body.name.as_deref(),
+        body.description.as_deref(),
+        body.members.as_ref(),
+    )
+    .await
+    {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Team not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn delete_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::delete_team(pool, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Team not found or is builtin"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunTeamRequest {
+    task: String,
+    context: Option<String>,
+    #[serde(default = "default_token_budget")]
+    token_budget: i32,
+}
+
+async fn run_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RunTeamRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    let run_id = uuid::Uuid::now_v7().to_string();
+    match agents::create_team_run(
+        pool,
+        &run_id,
+        &id,
+        &body.task,
+        body.context.as_deref(),
+        body.token_budget,
+    )
+    .await
+    {
+        Ok(row) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+async fn get_team_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::get_team_run(pool, &run_id).await {
+        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(None) => not_found("Team run not found"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+// ── Profile Skills Handlers ─────────────────────────────────────────────────
+
+async fn list_profile_skills(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::list_profile_skills(pool, &id).await {
+        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddSkillRequest {
+    skill_id: String,
+}
+
+async fn add_profile_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<AddSkillRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return err_unavailable();
+    };
+    match agents::add_profile_skill(pool, &id, &body.skill_id).await {
+        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Err(e) => err_internal(&e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ProfileSkillPath {
+    #[serde(rename = "profileId")]
+    profile_id: String,
+    #[serde(rename = "skillId")]
+    skill_id: String,
+}
+
+async fn remove_profile_skill(
+    State(state): State<AppState>,
+    Path(p): Path<ProfileSkillPath>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match agents::remove_profile_skill(pool, &p.profile_id, &p.skill_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found("Skill not found on profile"),
+        Err(e) => err_internal(&e),
+    }
+}
+
+// ── Shared query types & helpers ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct PaginationQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+#[derive(Deserialize)]
+struct StatusPaginationQuery {
+    status: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+fn err_unavailable() -> axum::response::Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error": "Database not available"})),
+    )
+        .into_response()
+}
+
+fn err_internal(e: &dyn std::fmt::Display) -> axum::response::Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": e.to_string()})),
+    )
+        .into_response()
+}
+
+fn not_found(msg: &str) -> axum::response::Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": msg})),
+    )
+        .into_response()
 }
