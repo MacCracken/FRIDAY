@@ -13,6 +13,7 @@ mod brain;
 mod db;
 mod integrations;
 mod middleware;
+mod orchestration;
 mod proxy;
 mod routes;
 mod server;
