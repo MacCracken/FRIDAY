@@ -81,6 +81,10 @@ pub mod users;
 pub mod voice;
 
 pub mod admin_settings;
+pub mod eval;
+pub mod iac;
+pub mod multimodal;
+pub mod policy_as_code;
 
 pub mod agent_replay;
 pub mod ai_batch;

@@ -114,7 +114,11 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::admin_settings::router())
         .merge(crate::routes::ai_batch::router())
         .merge(crate::routes::cicd_timeline::router())
-        .merge(crate::routes::integrations_forge::router());
+        .merge(crate::routes::integrations_forge::router())
+        .merge(crate::routes::eval::router())
+        .merge(crate::routes::iac::router())
+        .merge(crate::routes::multimodal::router())
+        .merge(crate::routes::policy_as_code::router());
 
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);

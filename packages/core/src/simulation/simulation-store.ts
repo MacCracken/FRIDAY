@@ -282,6 +282,53 @@ export class SimulationStore extends PgBaseStorage {
     );
   }
 
+  // ── Composite State (bhava 2.0 signal loop) ──────────────────────
+
+  async upsertCompositeState(
+    personalityId: string,
+    stateJson: string,
+    stressJson: string | null,
+    energyJson: string | null,
+    flowJson: string | null,
+    circadianJson: string | null
+  ): Promise<void> {
+    await this.execute(
+      `INSERT INTO simulation.composite_states (
+        personality_id, state_json, stress_json, energy_json,
+        flow_json, circadian_json, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (personality_id) DO UPDATE SET
+        state_json = EXCLUDED.state_json,
+        stress_json = EXCLUDED.stress_json,
+        energy_json = EXCLUDED.energy_json,
+        flow_json = EXCLUDED.flow_json,
+        circadian_json = EXCLUDED.circadian_json,
+        updated_at = EXCLUDED.updated_at`,
+      [personalityId, stateJson, stressJson, energyJson, flowJson, circadianJson, Date.now()]
+    );
+  }
+
+  async getCompositeState(personalityId: string): Promise<{
+    stateJson: string;
+    stressJson: string | null;
+    energyJson: string | null;
+    flowJson: string | null;
+    circadianJson: string | null;
+  } | null> {
+    const row = await this.queryOne(
+      'SELECT * FROM simulation.composite_states WHERE personality_id = $1',
+      [personalityId]
+    );
+    if (!row) return null;
+    return {
+      stateJson: row.state_json as string,
+      stressJson: (row.stress_json as string) ?? null,
+      energyJson: (row.energy_json as string) ?? null,
+      flowJson: (row.flow_json as string) ?? null,
+      circadianJson: (row.circadian_json as string) ?? null,
+    };
+  }
+
   // ── Mood Events ───────────────────────────────────────────────────
 
   async recordMoodEvent(event: MoodEvent): Promise<void> {

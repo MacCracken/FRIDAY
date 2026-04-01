@@ -14,6 +14,7 @@ import type { MoodState, MoodLabel, MoodEventCreate, MoodEvent } from '@secureye
 import type { SimulationStore } from './simulation-store.js';
 import type { SecureLogger } from '../logging/logger.js';
 import * as bhava from '../native/bhava.js';
+import type { BhavaSignalTickResult } from '../native/bhava.js';
 import { uuidv7 } from '../utils/crypto.js';
 
 // ── Trait value → mood modifiers (15 traits × 5 levels) ─────────────
@@ -348,6 +349,150 @@ export class MoodEngine {
     }
 
     return lines.join('\n');
+  }
+
+  // ── Bhava 2.0 Signal Loop ──────────────────────────────────────────
+
+  /**
+   * Initialize the full composite state for a personality.
+   * Creates emotional state, stress, energy, flow, and circadian from traits.
+   * Call once at personality creation — not lazily on first message.
+   */
+  async initializeCompositeState(
+    personalityId: string,
+    traits: Record<string, string>,
+    chronotype:
+      | 'early bird'
+      | 'morning-leaning'
+      | 'neutral'
+      | 'evening-leaning'
+      | 'night owl' = 'neutral'
+  ): Promise<void> {
+    const stateJson = bhava.createEmotionalStateWithBaseline(traits);
+    const stressJson = bhava.createStressState(traits);
+    const energyJson = bhava.createEnergyState(traits);
+    const flowJson = bhava.createFlowState();
+    const circadianJson = bhava.createCircadian(chronotype);
+
+    if (!stateJson) {
+      this.logger.debug(
+        { personalityId },
+        'bhava native unavailable — skipping composite state init'
+      );
+      return;
+    }
+
+    await this.store.upsertCompositeState(
+      personalityId,
+      stateJson,
+      stressJson,
+      energyJson,
+      flowJson,
+      circadianJson
+    );
+
+    this.logger.info({ personalityId }, 'composite emotional state initialized (bhava 2.0)');
+  }
+
+  /**
+   * Run one tick of the bhava 2.0 signal loop.
+   *
+   * Loads all component states from DB, calls bhava.signalTick() which runs:
+   *   decay → stress → energy → flow → circadian
+   * Then persists the updated states back.
+   *
+   * Returns the signal tick result with mood_label, mood_prompt, and all
+   * subsystem levels — ready for injection into the system prompt.
+   */
+  async signalTick(personalityId: string): Promise<BhavaSignalTickResult | null> {
+    const composite = await this.store.getCompositeState(personalityId);
+    if (!composite) return null;
+
+    const input: Record<string, unknown> = {
+      state: JSON.parse(composite.stateJson),
+    };
+    if (composite.stressJson) input.stress = JSON.parse(composite.stressJson);
+    if (composite.energyJson) input.energy = JSON.parse(composite.energyJson);
+    if (composite.flowJson) input.flow = JSON.parse(composite.flowJson);
+    if (composite.circadianJson) input.circadian = JSON.parse(composite.circadianJson);
+
+    const result = bhava.signalTick(input as Parameters<typeof bhava.signalTick>[0]);
+    if (!result) return null;
+
+    // Persist updated states
+    await this.store.upsertCompositeState(
+      personalityId,
+      JSON.stringify(result.state),
+      result.stress ? JSON.stringify(result.stress) : composite.stressJson,
+      result.energy ? JSON.stringify(result.energy) : composite.energyJson,
+      result.flow ? JSON.stringify(result.flow) : composite.flowJson,
+      result.circadian ? JSON.stringify(result.circadian) : composite.circadianJson
+    );
+
+    this.logger.debug(
+      {
+        personalityId,
+        mood: result.mood_label,
+        stress: result.stress_level,
+        energy: result.energy_level,
+        flow: result.flow_phase,
+      },
+      'signal tick complete'
+    );
+
+    return result;
+  }
+
+  /**
+   * Process sentiment feedback from an LLM response and trigger a signal tick.
+   *
+   * This is the feedback half of the signal loop:
+   *   response text → sentiment analysis → mood stimulus → signal tick → updated state
+   */
+  async processSentimentAndTick(
+    personalityId: string,
+    responseText: string,
+    traits: Record<string, string>,
+    scale = 0.3
+  ): Promise<BhavaSignalTickResult | null> {
+    const composite = await this.store.getCompositeState(personalityId);
+    if (!composite) return null;
+
+    // Apply sentiment feedback to emotional state
+    const sentimentResult = bhava.applySentimentFeedback(responseText, composite.stateJson, scale);
+    if (sentimentResult) {
+      // Update the emotional state with sentiment-influenced version
+      await this.store.upsertCompositeState(
+        personalityId,
+        JSON.stringify(sentimentResult.state),
+        composite.stressJson,
+        composite.energyJson,
+        composite.flowJson,
+        composite.circadianJson
+      );
+
+      // Also update the 2D mood state for backward compatibility
+      const valenceDelta = sentimentResult.valence * scale;
+      const arousalDelta = Math.abs(sentimentResult.valence) * 0.1;
+      await this.applyEvent(
+        personalityId,
+        {
+          eventType: 'response_sentiment',
+          valenceDelta,
+          arousalDelta,
+          source: 'bhava_sentiment',
+          metadata: {
+            valence: sentimentResult.valence,
+            confidence: sentimentResult.confidence,
+            is_positive: sentimentResult.is_positive,
+          },
+        },
+        traits
+      );
+    }
+
+    // Run full signal tick with updated state
+    return this.signalTick(personalityId);
   }
 
   /**

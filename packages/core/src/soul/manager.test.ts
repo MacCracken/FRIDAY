@@ -1605,6 +1605,7 @@ describe('SoulManager', () => {
 
       // Wire a mock mood engine
       const mockMoodEngine = {
+        signalTick: vi.fn().mockResolvedValue(null),
         getMood: vi.fn().mockResolvedValue({
           id: 'mood-1',
           personalityId: PERSONALITY.id,
@@ -1635,6 +1636,7 @@ describe('SoulManager', () => {
       });
 
       const mockMoodEngine = {
+        signalTick: vi.fn().mockResolvedValue(null),
         getMood: vi.fn().mockResolvedValue(null),
         composeMoodPromptFragment: vi.fn(),
       };

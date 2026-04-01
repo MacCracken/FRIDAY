@@ -8,6 +8,43 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 
 ## [Unreleased]
 
+### Phase 7.7 — Route Migration Complete (932 routes, 89 modules)
+
+**HTTP layer migration complete** — all TypeScript route files now have Rust counterparts. 427 new routes added across 6 domains:
+
+- **Agents** (+35) — Swarm templates/runs CRUD, council templates/runs/catalog, team CRUD/run, profile skills management. Total: 46 routes
+- **Security** (+79) — Full SCIM v2 Users/Groups CRUD + discovery (13 routes), ATHI scenarios full CRUD + risk matrix + top risks, SRA blueprints full CRUD + assessments + compliance mappings, constitutional AI principles/critique/revise, TEE providers/attestation/verify, DLP classify/scan/policies/egress/watermark/retention (21 routes), guardrail pipeline filters/metrics/test, WebAuthn register/authenticate/credentials, break-glass activate/sessions/revoke/rotate, access review entitlements/decisions/close, key rotation. Total: 100 routes
+- **Gateway/Auth** (+14) — Roles full CRUD, role assignments CRUD, SSO provider write operations, OAuth token delete, gateway POST chat proxy, worktree create/delete, admin settings GET/PATCH
+- **Training** (+111) — Judge auto-eval/pointwise/pairwise + runs/datasets CRUD (12 routes), experiments full CRUD, hyperparameter searches CRUD + start, model versions, preferences CRUD + export, quality scoring, lineage, deployment + rollback, pretrain jobs + corpus (9 routes), continual learning dataset-refresh/drift/online-updates (11 routes), federated learning sessions/participants/rounds/updates (15 routes), computer-use episodes. Total: 138 routes
+- **AI/Chat** (+32) — Model management (info/switch/default/cost/routing/providers/health, 14 routes), batch inference CRUD + cache management (8 routes), provider account validate/test/refresh/stats/token-pools (8 routes), conversation export/branch/title
+- **Integrations** (+108) — Forge repos/branches/commits/PRs/issues/pipelines (13 routes), artifact/registry management (11 routes), CI/CD webhook timeline, integration platform/plugin management, webhook/transform/outbound-webhook full CRUD, Jira transitions/comments/update, Notion blocks/database query, Todoist update/close, routing rules write operations
+- **New modules** (+48) — Eval harness scenarios/suites/runs (13 routes), IaC templates/deployments/sync/validate (10 routes), multimodal vision/audio/image/haptic/vocabulary/Polly (16 routes), policy-as-code bundles/deployments/evaluate (9 routes)
+
+### Bhava 2.0 Integration
+
+- **bhava 2.0.0** — Major version upgrade from 1.4.0. New features: `neuroscience` (mastishk brain chemistry bridge), `instinct` (jantu creature behavior bridge). 25 new NAPI functions across 8 modules
+- **Zodiac engine** — `listZodiacSigns`, `zodiacProfile`, `zodiacInfo`, `zodiacManifest`. Signs → personality profiles + mood baselines. Sets initial conditions for the signal loop
+- **Regulation** — `createRegulatedMood`, `regulate`, `defaultRegulationStrategy`, `suppressionGap`. Felt vs expressed mood split (Gross 1998 process model). LLM gets expressed mood; internal state tracks felt
+- **Stress** — `createStressState`, `stressTick`, `stressInfo`. Allostatic load / burnout modeling (McEwen 1998). Degrades regulation effectiveness under chronic load
+- **Energy** — `createEnergyState`, `energyTick`, `energyInfo`. Banister fitness-fatigue model (1975). Supercompensation curve, flow state gating
+- **Flow** — `createFlowState`, `flowTick`, `flowInfo`. Csikszentmihalyi flow detection with hysteresis. Accumulator pattern (~20 ticks to enter)
+- **Circadian** — `createCircadian`, `circadianAlertness`, `circadianMoodModulation`. 24h alertness cycle (Borbély two-process model) with 5 chronotypes
+- **Sentiment monitor** — `createMonitor`, `monitorFeed`, `monitorFlush`, `monitorFeedAndApply`. Streaming per-token sentiment analysis feeding back into mood state in real-time
+- **Signal tick** — `signalTick`. One-shot composite tick: decay → stress → energy → flow → circadian. Returns updated mood prompt for system prompt injection
+- **Architecture** — bhava computes what the entity feels, LLM renders what the entity says, SY orchestrates the loop. No personality logic in prompt engineering, no emotion math in the LLM, no orchestration in bhava. Clean separation, each layer in its domain
+- **Tests** — 20 Rust tests (zodiac, regulation, stress, energy, flow, circadian, monitor, signal tick), 31 TypeScript tests (fallback path + native path), 33 benchmarks (signal tick, monitor feed, regulation, subsystem ticks)
+
+### Infrastructure
+
+- **AGNOS Docker pin** — All Dockerfiles and docker-compose.yml pinned to `ghcr.io/maccracken/agnosticos:2026.3.31` (was `:latest`). Affected: Dockerfile, Dockerfile.dev, docker/Dockerfile.release, docker-compose.yml agnosticos service
+
+### Compliance Roadmap
+
+Added compliance & certification section to roadmap:
+- **Tier 1**: ISO 42001 (AI management), SOC 2 Type II, ISO 27001 (information security)
+- **Tier 2**: ISO 9001 (quality), ISO 27701 (privacy/GDPR), EU AI Act
+- **Tier 3**: ISO 27017/27018 (cloud), FedRAMP
+
 ### Phase 7 — Route Expansion (328 routes, 49 modules)
 
 Core domain routes fleshed out from stubs to full CRUD:
@@ -51,7 +88,7 @@ All 12 integration adapters ported to axum (52 proxy routes + reusable helper).
 
 ### Ecosystem Crate Updates
 
-- **bhava 1.4.0** — Psychology (bodh), sociology (sangha), physiology (sharira), microbiology (jivanu) bridge modules. 1117 tests, 37 modules
+- **bhava 2.0.0** — See "Bhava 2.0 Integration" section above. Major version bump with zodiac engine, regulation, stress, energy, flow, circadian, sentiment monitor, and signal loop tick
 - **Body state → voice prosody** — `applyBodyState()` maps fatigue, pain, arousal, sickness, sedation, valence to dhvani VoiceProfile modulations. 8 new tests
 
 ### Phase 7.4 — WebSocket Routes

@@ -205,6 +205,16 @@ export class SoulManager {
       const personality = await this.storage.getPersonality(personalityId);
       if (!personality) return;
 
+      // Bhava 2.0 signal loop path: sentiment → mood → signal tick → updated state
+      const tickResult = await this.moodEngine.processSentimentAndTick(
+        personalityId,
+        responseText,
+        personality.traits,
+        scale
+      );
+      if (tickResult) return; // Signal loop handled it
+
+      // Fallback: bhava 1.x path (no composite state initialized)
       const stateJson = bhava.createEmotionalStateWithBaseline(personality.traits);
       if (!stateJson) return;
 
@@ -1069,15 +1079,42 @@ export class SoulManager {
 
       parts.push(soulLines.join('\n'));
 
-      // Mood injection — if mood engine is wired and personality has a mood state
+      // Mood injection — bhava 2.0 signal loop with TS fallback
       if (this.moodEngine) {
         try {
-          const mood = await this.moodEngine.getMood(personality.id);
-          if (mood) {
-            // Try bhava mood prompt (6D emotional state) with TS fallback (2D circumplex)
-            const bhavaState = bhava.createEmotionalStateWithBaseline(personality.traits);
-            const bhavaMoodPrompt = bhavaState ? bhava.composeMoodPrompt(bhavaState) : null;
-            parts.push(bhavaMoodPrompt ?? this.moodEngine.composeMoodPromptFragment(mood));
+          // Primary: bhava 2.0 signal tick (6D emotional state + stress/energy/flow/circadian)
+          const tickResult = await this.moodEngine.signalTick(personality.id);
+          if (tickResult) {
+            // Mood prompt from bhava (tone guide derived from 6D emotional state)
+            parts.push(tickResult.mood_prompt);
+
+            // Psychophysiological state — stress, energy, flow, alertness
+            const psyLines: string[] = [];
+            if (tickResult.stress_level && tickResult.stress_level !== 'relaxed') {
+              psyLines.push(`Stress: **${tickResult.stress_level}**`);
+            }
+            if (tickResult.energy_level) {
+              psyLines.push(
+                `Energy: **${tickResult.energy_level}**${tickResult.performance != null ? ` (performance: ${(tickResult.performance * 100).toFixed(0)}%)` : ''}`
+              );
+            }
+            if (tickResult.flow_phase && tickResult.flow_phase !== 'inactive') {
+              psyLines.push(`Flow: **${tickResult.flow_phase}**`);
+            }
+            if (tickResult.alertness != null && tickResult.alertness < 0.7) {
+              psyLines.push(`Alertness: ${(tickResult.alertness * 100).toFixed(0)}%`);
+            }
+            if (psyLines.length > 0) {
+              parts.push('## Psychophysiological State\n' + psyLines.join('\n'));
+            }
+          } else {
+            // Fallback: 2D circumplex mood from TS engine
+            const mood = await this.moodEngine.getMood(personality.id);
+            if (mood) {
+              const bhavaState = bhava.createEmotionalStateWithBaseline(personality.traits);
+              const bhavaMoodPrompt = bhavaState ? bhava.composeMoodPrompt(bhavaState) : null;
+              parts.push(bhavaMoodPrompt ?? this.moodEngine.composeMoodPromptFragment(mood));
+            }
           }
         } catch {
           // silently skip if mood retrieval fails
