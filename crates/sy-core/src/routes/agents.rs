@@ -18,28 +18,64 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/agents/profiles/{id}", get(get_profile))
         .route("/api/v1/agents/profiles/{id}", put(update_profile))
         .route("/api/v1/agents/profiles/{id}", delete(delete_profile))
-        .route("/api/v1/agents/profiles/{id}/skills", get(list_profile_skills))
-        .route("/api/v1/agents/profiles/{id}/skills", post(add_profile_skill))
-        .route("/api/v1/agents/profiles/{profileId}/skills/{skillId}", delete(remove_profile_skill))
+        .route(
+            "/api/v1/agents/profiles/{id}/skills",
+            get(list_profile_skills),
+        )
+        .route(
+            "/api/v1/agents/profiles/{id}/skills",
+            post(add_profile_skill),
+        )
+        .route(
+            "/api/v1/agents/profiles/{profileId}/skills/{skillId}",
+            delete(remove_profile_skill),
+        )
         .route("/api/v1/agents/{id}", get(get_agent))
         // ── Config ──
         .route("/api/v1/agents/config", get(get_agent_config))
         .route("/api/v1/agents/config", patch(update_agent_config))
         // ── Delegations ──
         .route("/api/v1/agents/delegate", post(delegate_task))
-        .route("/api/v1/agents/delegations/active", get(list_active_delegations))
+        .route(
+            "/api/v1/agents/delegations/active",
+            get(list_active_delegations),
+        )
         .route("/api/v1/agents/delegations", get(list_delegations))
         .route("/api/v1/agents/delegations/{id}", get(get_delegation))
-        .route("/api/v1/agents/delegations/{id}/cancel", post(cancel_delegation))
-        .route("/api/v1/agents/delegations/{id}/messages", get(get_delegation_messages))
+        .route(
+            "/api/v1/agents/delegations/{id}/cancel",
+            post(cancel_delegation),
+        )
+        .route(
+            "/api/v1/agents/delegations/{id}/messages",
+            get(get_delegation_messages),
+        )
         // ── Swarm Templates ──
         .route("/api/v1/agents/swarms/templates", get(list_swarm_templates))
-        .route("/api/v1/agents/swarms/templates", post(create_swarm_template))
-        .route("/api/v1/agents/swarms/templates/{id}", get(get_swarm_template))
-        .route("/api/v1/agents/swarms/templates/{id}", patch(update_swarm_template))
-        .route("/api/v1/agents/swarms/templates/{id}", delete(delete_swarm_template))
-        .route("/api/v1/agents/swarms/templates/{id}/export", get(export_swarm_template))
-        .route("/api/v1/agents/swarms/templates/import", post(import_swarm_template))
+        .route(
+            "/api/v1/agents/swarms/templates",
+            post(create_swarm_template),
+        )
+        .route(
+            "/api/v1/agents/swarms/templates/{id}",
+            get(get_swarm_template),
+        )
+        .route(
+            "/api/v1/agents/swarms/templates/{id}",
+            patch(update_swarm_template),
+        )
+        .route(
+            "/api/v1/agents/swarms/templates/{id}",
+            delete(delete_swarm_template),
+        )
+        .route(
+            "/api/v1/agents/swarms/templates/{id}/export",
+            get(export_swarm_template),
+        )
+        .route(
+            "/api/v1/agents/swarms/templates/import",
+            post(import_swarm_template),
+        )
         // ── Swarm Runs ──
         .route("/api/v1/agents/swarms", get(list_swarm_runs))
         .route("/api/v1/agents/swarms", post(execute_swarm))
@@ -47,17 +83,38 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/agents/swarms/{id}/cancel", post(cancel_swarm))
         // ── Council Templates ──
         .route("/api/v1/agents/councils/catalog", get(get_council_catalog))
-        .route("/api/v1/agents/councils/catalog/{name}/install", post(install_council_from_catalog))
-        .route("/api/v1/agents/councils/templates", get(list_council_templates))
-        .route("/api/v1/agents/councils/templates", post(create_council_template))
-        .route("/api/v1/agents/councils/templates/{id}", get(get_council_template))
-        .route("/api/v1/agents/councils/templates/{id}", put(update_council_template))
-        .route("/api/v1/agents/councils/templates/{id}", delete(delete_council_template))
+        .route(
+            "/api/v1/agents/councils/catalog/{name}/install",
+            post(install_council_from_catalog),
+        )
+        .route(
+            "/api/v1/agents/councils/templates",
+            get(list_council_templates),
+        )
+        .route(
+            "/api/v1/agents/councils/templates",
+            post(create_council_template),
+        )
+        .route(
+            "/api/v1/agents/councils/templates/{id}",
+            get(get_council_template),
+        )
+        .route(
+            "/api/v1/agents/councils/templates/{id}",
+            put(update_council_template),
+        )
+        .route(
+            "/api/v1/agents/councils/templates/{id}",
+            delete(delete_council_template),
+        )
         // ── Council Runs ──
         .route("/api/v1/agents/councils", post(convene_council))
         .route("/api/v1/agents/councils/runs", get(list_council_runs))
         .route("/api/v1/agents/councils/runs/{id}", get(get_council_run))
-        .route("/api/v1/agents/councils/runs/{id}/cancel", post(cancel_council_run))
+        .route(
+            "/api/v1/agents/councils/runs/{id}/cancel",
+            post(cancel_council_run),
+        )
         // ── Teams ──
         .route("/api/v1/agents/teams", get(list_teams))
         .route("/api/v1/agents/teams", post(create_team))
@@ -548,7 +605,11 @@ async fn create_swarm_template(
     )
     .await
     {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }
@@ -669,15 +730,16 @@ async fn execute_swarm(
     )
     .await
     {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }
 
-async fn get_swarm_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_swarm_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return err_unavailable();
     };
@@ -688,10 +750,7 @@ async fn get_swarm_run(
     }
 }
 
-async fn cancel_swarm(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn cancel_swarm(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -798,7 +857,11 @@ async fn create_council_template(
     )
     .await
     {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }
@@ -887,7 +950,11 @@ async fn convene_council(
     )
     .await
     {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }
@@ -978,7 +1045,11 @@ async fn create_team(
     };
     let id = uuid::Uuid::now_v7().to_string();
     match agents::create_team(pool, &id, &body.name, &body.description, &body.members).await {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }
@@ -1014,10 +1085,7 @@ async fn update_team(
     }
 }
 
-async fn delete_team(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn delete_team(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -1109,7 +1177,11 @@ async fn add_profile_skill(
         return err_unavailable();
     };
     match agents::add_profile_skill(pool, &id, &body.skill_id).await {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => err_internal(&e),
     }
 }

@@ -92,8 +92,10 @@ pub async fn list_dlp_classifications(
     sqlx::query_as::<_, DlpClassificationRow>(
         "SELECT * FROM dlp.classifications ORDER BY created_at DESC LIMIT $1 OFFSET $2",
     )
-    .bind(limit).bind(offset)
-    .fetch_all(pool).await
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn get_dlp_classification_by_content(
@@ -104,7 +106,8 @@ pub async fn get_dlp_classification_by_content(
         "SELECT * FROM dlp.classifications WHERE content_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(content_id)
-    .fetch_optional(pool).await
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn create_dlp_classification(
@@ -148,10 +151,9 @@ pub struct DlpRetentionRow {
 }
 
 pub async fn list_dlp_retention(pool: &PgPool) -> Result<Vec<DlpRetentionRow>, sqlx::Error> {
-    sqlx::query_as::<_, DlpRetentionRow>(
-        "SELECT * FROM dlp.retention_policies ORDER BY name ASC",
-    )
-    .fetch_all(pool).await
+    sqlx::query_as::<_, DlpRetentionRow>("SELECT * FROM dlp.retention_policies ORDER BY name ASC")
+        .fetch_all(pool)
+        .await
 }
 
 pub async fn create_dlp_retention(
@@ -267,21 +269,19 @@ pub struct SraBlueprintRow {
 }
 
 pub async fn list_sra_blueprints(pool: &PgPool) -> Result<Vec<SraBlueprintRow>, sqlx::Error> {
-    sqlx::query_as::<_, SraBlueprintRow>(
-        "SELECT * FROM security.sra_blueprints ORDER BY name ASC",
-    )
-    .fetch_all(pool).await
+    sqlx::query_as::<_, SraBlueprintRow>("SELECT * FROM security.sra_blueprints ORDER BY name ASC")
+        .fetch_all(pool)
+        .await
 }
 
 pub async fn get_sra_blueprint(
     pool: &PgPool,
     id: &str,
 ) -> Result<Option<SraBlueprintRow>, sqlx::Error> {
-    sqlx::query_as::<_, SraBlueprintRow>(
-        "SELECT * FROM security.sra_blueprints WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool).await
+    sqlx::query_as::<_, SraBlueprintRow>("SELECT * FROM security.sra_blueprints WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn create_sra_blueprint(
@@ -511,11 +511,10 @@ pub async fn get_athi_scenario(
     pool: &PgPool,
     id: &str,
 ) -> Result<Option<AthiScenarioRow>, sqlx::Error> {
-    sqlx::query_as::<_, AthiScenarioRow>(
-        "SELECT * FROM security.athi_scenarios WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool).await
+    sqlx::query_as::<_, AthiScenarioRow>("SELECT * FROM security.athi_scenarios WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn create_athi_scenario(
@@ -607,7 +606,8 @@ pub async fn get_access_review_campaign(
         "SELECT * FROM security.access_review_campaigns WHERE id = $1",
     )
     .bind(id)
-    .fetch_optional(pool).await
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn create_access_review_campaign(
@@ -717,20 +717,24 @@ pub async fn list_scim_users(
     sqlx::query_as::<_, ScimUserRow>(
         "SELECT * FROM scim.users ORDER BY user_name ASC LIMIT $1 OFFSET $2",
     )
-    .bind(limit).bind(offset)
-    .fetch_all(pool).await
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn count_scim_users(pool: &PgPool) -> Result<i64, sqlx::Error> {
     let row: (i64,) = sqlx::query_as("SELECT count(*) FROM scim.users")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 
 pub async fn get_scim_user(pool: &PgPool, id: &str) -> Result<Option<ScimUserRow>, sqlx::Error> {
     sqlx::query_as::<_, ScimUserRow>("SELECT * FROM scim.users WHERE id = $1")
         .bind(id)
-        .fetch_optional(pool).await
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn create_scim_user(
@@ -797,23 +801,24 @@ pub async fn list_scim_groups(
     sqlx::query_as::<_, ScimGroupRow>(
         "SELECT * FROM scim.groups ORDER BY display_name ASC LIMIT $1 OFFSET $2",
     )
-    .bind(limit).bind(offset)
-    .fetch_all(pool).await
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn count_scim_groups(pool: &PgPool) -> Result<i64, sqlx::Error> {
     let row: (i64,) = sqlx::query_as("SELECT count(*) FROM scim.groups")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 
-pub async fn get_scim_group(
-    pool: &PgPool,
-    id: &str,
-) -> Result<Option<ScimGroupRow>, sqlx::Error> {
+pub async fn get_scim_group(pool: &PgPool, id: &str) -> Result<Option<ScimGroupRow>, sqlx::Error> {
     sqlx::query_as::<_, ScimGroupRow>("SELECT * FROM scim.groups WHERE id = $1")
         .bind(id)
-        .fetch_optional(pool).await
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn create_scim_group(

@@ -63,8 +63,12 @@ struct ScimListQuery {
     #[serde(rename = "count", default = "d_count")]
     count: i64,
 }
-fn one() -> i64 { 1 }
-fn d_count() -> i64 { 100 }
+fn one() -> i64 {
+    1
+}
+fn d_count() -> i64 {
+    100
+}
 
 // ── Discovery ─────────────────────────────────────────────────────────────────
 
@@ -167,7 +171,9 @@ async fn list_users(
     State(s): State<AppState>,
     Query(q): Query<ScimListQuery>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let limit = q.count.min(200).max(1);
     let offset = (q.start_index - 1).max(0);
 
@@ -202,14 +208,20 @@ struct ScimUserRequest {
     #[serde(default = "empty_json_array")]
     emails: serde_json::Value,
 }
-fn default_true() -> bool { true }
-fn empty_json_array() -> serde_json::Value { serde_json::json!([]) }
+fn default_true() -> bool {
+    true
+}
+fn empty_json_array() -> serde_json::Value {
+    serde_json::json!([])
+}
 
 async fn create_user(
     State(s): State<AppState>,
     Json(body): Json<ScimUserRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_scim_user(
         pool,
@@ -228,7 +240,9 @@ async fn create_user(
 }
 
 async fn get_user(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_scim_user(pool, &id).await {
         Ok(Some(row)) => Json(scim_user_response(&row)).into_response(),
         Ok(None) => not_found("User"),
@@ -241,7 +255,9 @@ async fn replace_user(
     Path(id): Path<String>,
     Json(body): Json<ScimUserRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::replace_scim_user(
         pool,
         &id,
@@ -260,7 +276,9 @@ async fn replace_user(
 }
 
 async fn delete_user(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_scim_user(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("User"),
@@ -290,7 +308,9 @@ async fn list_groups(
     State(s): State<AppState>,
     Query(q): Query<ScimListQuery>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let limit = q.count.min(200).max(1);
     let offset = (q.start_index - 1).max(0);
 
@@ -325,7 +345,9 @@ async fn create_group(
     State(s): State<AppState>,
     Json(body): Json<ScimGroupRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_scim_group(
         pool,
@@ -342,7 +364,9 @@ async fn create_group(
 }
 
 async fn get_group(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_scim_group(pool, &id).await {
         Ok(Some(row)) => Json(scim_group_response(&row)).into_response(),
         Ok(None) => not_found("Group"),
@@ -355,7 +379,9 @@ async fn replace_group(
     Path(id): Path<String>,
     Json(body): Json<ScimGroupRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::replace_scim_group(
         pool,
         &id,
@@ -372,7 +398,9 @@ async fn replace_group(
 }
 
 async fn delete_group(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_scim_group(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("Group"),

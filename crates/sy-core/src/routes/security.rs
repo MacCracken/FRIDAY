@@ -17,41 +17,107 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/security/dlp/policies", post(create_dlp_policy))
         .route("/api/v1/security/dlp/policies/{id}", get(get_dlp_policy))
         .route("/api/v1/security/dlp/policies/{id}", put(update_dlp_policy))
-        .route("/api/v1/security/dlp/policies/{id}", delete(delete_dlp_policy))
+        .route(
+            "/api/v1/security/dlp/policies/{id}",
+            delete(delete_dlp_policy),
+        )
         // ── DLP classify / scan ──
         .route("/api/v1/security/dlp/classify", post(classify_text))
-        .route("/api/v1/security/dlp/classifications", get(list_dlp_classifications))
-        .route("/api/v1/security/dlp/classifications/{contentId}", get(get_dlp_classification))
-        .route("/api/v1/security/dlp/classifications/{contentId}", put(override_dlp_classification))
+        .route(
+            "/api/v1/security/dlp/classifications",
+            get(list_dlp_classifications),
+        )
+        .route(
+            "/api/v1/security/dlp/classifications/{contentId}",
+            get(get_dlp_classification),
+        )
+        .route(
+            "/api/v1/security/dlp/classifications/{contentId}",
+            put(override_dlp_classification),
+        )
         .route("/api/v1/security/dlp/scan", post(scan_outbound))
         // ── DLP egress ──
         .route("/api/v1/security/dlp/egress/stats", get(get_egress_stats))
-        .route("/api/v1/security/dlp/egress/anomalies", get(get_egress_anomalies))
-        .route("/api/v1/security/dlp/egress/destinations", get(get_egress_destinations))
+        .route(
+            "/api/v1/security/dlp/egress/anomalies",
+            get(get_egress_anomalies),
+        )
+        .route(
+            "/api/v1/security/dlp/egress/destinations",
+            get(get_egress_destinations),
+        )
         // ── DLP watermark ──
-        .route("/api/v1/security/dlp/watermark/embed", post(watermark_embed))
-        .route("/api/v1/security/dlp/watermark/extract", post(watermark_extract))
-        .route("/api/v1/security/dlp/watermark/detect", post(watermark_detect))
+        .route(
+            "/api/v1/security/dlp/watermark/embed",
+            post(watermark_embed),
+        )
+        .route(
+            "/api/v1/security/dlp/watermark/extract",
+            post(watermark_extract),
+        )
+        .route(
+            "/api/v1/security/dlp/watermark/detect",
+            post(watermark_detect),
+        )
         // ── DLP retention ──
         .route("/api/v1/security/dlp/retention", get(list_dlp_retention))
         .route("/api/v1/security/dlp/retention", post(create_dlp_retention))
-        .route("/api/v1/security/dlp/retention/{id}", put(update_dlp_retention))
-        .route("/api/v1/security/dlp/retention/{id}", delete(delete_dlp_retention))
-        .route("/api/v1/security/dlp/retention/preview", post(preview_retention))
+        .route(
+            "/api/v1/security/dlp/retention/{id}",
+            put(update_dlp_retention),
+        )
+        .route(
+            "/api/v1/security/dlp/retention/{id}",
+            delete(delete_dlp_retention),
+        )
+        .route(
+            "/api/v1/security/dlp/retention/preview",
+            post(preview_retention),
+        )
         // ── SRA assessments ──
-        .route("/api/v1/security/sra/assessments", get(list_sra_assessments))
-        .route("/api/v1/security/sra/assessments", post(create_sra_assessment))
-        .route("/api/v1/security/sra/assessments/{id}", get(get_sra_assessment))
-        .route("/api/v1/security/sra/assessments/{id}", put(update_sra_assessment))
-        .route("/api/v1/security/sra/assessments/{id}/generate", post(generate_sra_summary))
+        .route(
+            "/api/v1/security/sra/assessments",
+            get(list_sra_assessments),
+        )
+        .route(
+            "/api/v1/security/sra/assessments",
+            post(create_sra_assessment),
+        )
+        .route(
+            "/api/v1/security/sra/assessments/{id}",
+            get(get_sra_assessment),
+        )
+        .route(
+            "/api/v1/security/sra/assessments/{id}",
+            put(update_sra_assessment),
+        )
+        .route(
+            "/api/v1/security/sra/assessments/{id}/generate",
+            post(generate_sra_summary),
+        )
         // ── SRA blueprints ──
         .route("/api/v1/security/sra/blueprints", get(list_sra_blueprints))
-        .route("/api/v1/security/sra/blueprints", post(create_sra_blueprint))
-        .route("/api/v1/security/sra/blueprints/{id}", get(get_sra_blueprint))
-        .route("/api/v1/security/sra/blueprints/{id}", put(update_sra_blueprint))
-        .route("/api/v1/security/sra/blueprints/{id}", delete(delete_sra_blueprint))
+        .route(
+            "/api/v1/security/sra/blueprints",
+            post(create_sra_blueprint),
+        )
+        .route(
+            "/api/v1/security/sra/blueprints/{id}",
+            get(get_sra_blueprint),
+        )
+        .route(
+            "/api/v1/security/sra/blueprints/{id}",
+            put(update_sra_blueprint),
+        )
+        .route(
+            "/api/v1/security/sra/blueprints/{id}",
+            delete(delete_sra_blueprint),
+        )
         // ── SRA misc ──
-        .route("/api/v1/security/sra/compliance-mappings", get(get_compliance_mappings))
+        .route(
+            "/api/v1/security/sra/compliance-mappings",
+            get(get_compliance_mappings),
+        )
         .route("/api/v1/security/sra/summary", get(get_sra_summary))
         // ── Security events ──
         .route("/api/v1/security/events", get(list_security_events))
@@ -66,52 +132,148 @@ pub fn router() -> Router<AppState> {
         // ── ATHI ──
         .route("/api/v1/security/athi/summary", get(get_athi_summary))
         .route("/api/v1/security/athi/scenarios", get(list_athi_scenarios))
-        .route("/api/v1/security/athi/scenarios", post(create_athi_scenario))
-        .route("/api/v1/security/athi/scenarios/{id}", get(get_athi_scenario))
-        .route("/api/v1/security/athi/scenarios/{id}", put(update_athi_scenario))
-        .route("/api/v1/security/athi/scenarios/{id}", delete(delete_athi_scenario))
-        .route("/api/v1/security/athi/scenarios/{id}/link-events", post(link_athi_events))
-        .route("/api/v1/security/athi/scenarios/by-technique/{technique}", get(list_athi_by_technique))
+        .route(
+            "/api/v1/security/athi/scenarios",
+            post(create_athi_scenario),
+        )
+        .route(
+            "/api/v1/security/athi/scenarios/{id}",
+            get(get_athi_scenario),
+        )
+        .route(
+            "/api/v1/security/athi/scenarios/{id}",
+            put(update_athi_scenario),
+        )
+        .route(
+            "/api/v1/security/athi/scenarios/{id}",
+            delete(delete_athi_scenario),
+        )
+        .route(
+            "/api/v1/security/athi/scenarios/{id}/link-events",
+            post(link_athi_events),
+        )
+        .route(
+            "/api/v1/security/athi/scenarios/by-technique/{technique}",
+            get(list_athi_by_technique),
+        )
         .route("/api/v1/security/athi/matrix", get(get_athi_matrix))
         .route("/api/v1/security/athi/top-risks", get(get_athi_top_risks))
         // ── Constitutional AI ──
-        .route("/api/v1/security/constitutional/principles", get(list_principles))
-        .route("/api/v1/security/constitutional/critique", post(critique_response))
-        .route("/api/v1/security/constitutional/revise", post(revise_response))
+        .route(
+            "/api/v1/security/constitutional/principles",
+            get(list_principles),
+        )
+        .route(
+            "/api/v1/security/constitutional/critique",
+            post(critique_response),
+        )
+        .route(
+            "/api/v1/security/constitutional/revise",
+            post(revise_response),
+        )
         // ── TEE ──
         .route("/api/v1/security/tee/providers", get(list_tee_providers))
-        .route("/api/v1/security/tee/attestation/{provider}", get(get_attestation_history))
-        .route("/api/v1/security/tee/verify/{provider}", post(verify_attestation))
+        .route(
+            "/api/v1/security/tee/attestation/{provider}",
+            get(get_attestation_history),
+        )
+        .route(
+            "/api/v1/security/tee/verify/{provider}",
+            post(verify_attestation),
+        )
         // ── Guardrail pipeline ──
-        .route("/api/v1/security/guardrail-pipeline/filters", get(list_guardrail_filters))
-        .route("/api/v1/security/guardrail-pipeline/filters/{filterId}/toggle", put(toggle_guardrail_filter))
-        .route("/api/v1/security/guardrail-pipeline/metrics", get(get_guardrail_metrics))
-        .route("/api/v1/security/guardrail-pipeline/metrics/reset", post(reset_guardrail_metrics))
-        .route("/api/v1/security/guardrail-pipeline/test", post(test_guardrail_pipeline))
+        .route(
+            "/api/v1/security/guardrail-pipeline/filters",
+            get(list_guardrail_filters),
+        )
+        .route(
+            "/api/v1/security/guardrail-pipeline/filters/{filterId}/toggle",
+            put(toggle_guardrail_filter),
+        )
+        .route(
+            "/api/v1/security/guardrail-pipeline/metrics",
+            get(get_guardrail_metrics),
+        )
+        .route(
+            "/api/v1/security/guardrail-pipeline/metrics/reset",
+            post(reset_guardrail_metrics),
+        )
+        .route(
+            "/api/v1/security/guardrail-pipeline/test",
+            post(test_guardrail_pipeline),
+        )
         // ── Access review ──
-        .route("/api/v1/security/access-review/campaigns", get(list_access_review_campaigns))
-        .route("/api/v1/security/access-review/campaigns", post(create_access_review_campaign))
-        .route("/api/v1/security/access-review/campaigns/{id}", get(get_access_review_campaign))
-        .route("/api/v1/security/access-review/campaigns/{id}/decisions", post(submit_access_review_decision))
-        .route("/api/v1/security/access-review/campaigns/{id}/close", post(close_access_review_campaign))
-        .route("/api/v1/security/access-review/entitlements", get(get_entitlement_report))
+        .route(
+            "/api/v1/security/access-review/campaigns",
+            get(list_access_review_campaigns),
+        )
+        .route(
+            "/api/v1/security/access-review/campaigns",
+            post(create_access_review_campaign),
+        )
+        .route(
+            "/api/v1/security/access-review/campaigns/{id}",
+            get(get_access_review_campaign),
+        )
+        .route(
+            "/api/v1/security/access-review/campaigns/{id}/decisions",
+            post(submit_access_review_decision),
+        )
+        .route(
+            "/api/v1/security/access-review/campaigns/{id}/close",
+            post(close_access_review_campaign),
+        )
+        .route(
+            "/api/v1/security/access-review/entitlements",
+            get(get_entitlement_report),
+        )
         // ── TLS ──
         .route("/api/v1/security/tls", get(get_tls_status))
         // ── WebAuthn ──
-        .route("/api/v1/auth/webauthn/register/options", post(webauthn_register_options))
-        .route("/api/v1/auth/webauthn/register/verify", post(webauthn_register_verify))
-        .route("/api/v1/auth/webauthn/authenticate/options", post(webauthn_authenticate_options))
-        .route("/api/v1/auth/webauthn/authenticate/verify", post(webauthn_authenticate_verify))
-        .route("/api/v1/auth/webauthn/credentials", get(list_webauthn_credentials))
-        .route("/api/v1/auth/webauthn/credentials/{id}", delete(delete_webauthn_credential))
+        .route(
+            "/api/v1/auth/webauthn/register/options",
+            post(webauthn_register_options),
+        )
+        .route(
+            "/api/v1/auth/webauthn/register/verify",
+            post(webauthn_register_verify),
+        )
+        .route(
+            "/api/v1/auth/webauthn/authenticate/options",
+            post(webauthn_authenticate_options),
+        )
+        .route(
+            "/api/v1/auth/webauthn/authenticate/verify",
+            post(webauthn_authenticate_verify),
+        )
+        .route(
+            "/api/v1/auth/webauthn/credentials",
+            get(list_webauthn_credentials),
+        )
+        .route(
+            "/api/v1/auth/webauthn/credentials/{id}",
+            delete(delete_webauthn_credential),
+        )
         // ── Break-glass ──
         .route("/api/v1/auth/break-glass", post(activate_break_glass))
-        .route("/api/v1/admin/break-glass/sessions", get(list_break_glass_sessions))
-        .route("/api/v1/admin/break-glass/revoke/{id}", post(revoke_break_glass_session))
-        .route("/api/v1/admin/break-glass/rotate", post(rotate_recovery_key))
+        .route(
+            "/api/v1/admin/break-glass/sessions",
+            get(list_break_glass_sessions),
+        )
+        .route(
+            "/api/v1/admin/break-glass/revoke/{id}",
+            post(revoke_break_glass_session),
+        )
+        .route(
+            "/api/v1/admin/break-glass/rotate",
+            post(rotate_recovery_key),
+        )
         // ── Key rotation ──
         .route("/api/v1/admin/key-rotation", get(get_rotation_status))
-        .route("/api/v1/admin/key-rotation/{name}/rotate", post(rotate_secret))
+        .route(
+            "/api/v1/admin/key-rotation/{name}/rotate",
+            post(rotate_secret),
+        )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -133,7 +295,11 @@ fn err_internal(e: impl std::fmt::Display) -> axum::response::Response {
 }
 
 fn not_found(msg: &'static str) -> axum::response::Response {
-    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": msg}))).into_response()
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": msg})),
+    )
+        .into_response()
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────────
@@ -158,7 +324,9 @@ struct LimitQuery {
 // ── DLP policies ──────────────────────────────────────────────────────────────
 
 async fn list_dlp_policies(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_dlp_policies(pool).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -177,15 +345,23 @@ struct CreateDlpPolicyRequest {
     #[serde(default = "default_true")]
     enabled: bool,
 }
-fn empty_json_array() -> serde_json::Value { serde_json::json!([]) }
-fn default_action() -> String { "block".to_string() }
-fn default_true() -> bool { true }
+fn empty_json_array() -> serde_json::Value {
+    serde_json::json!([])
+}
+fn default_action() -> String {
+    "block".to_string()
+}
+fn default_true() -> bool {
+    true
+}
 
 async fn create_dlp_policy(
     State(s): State<AppState>,
     Json(body): Json<CreateDlpPolicyRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_dlp_policy(
         pool,
@@ -203,11 +379,10 @@ async fn create_dlp_policy(
     }
 }
 
-async fn get_dlp_policy(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+async fn get_dlp_policy(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_dlp_policy(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("DLP policy not found"),
@@ -220,7 +395,9 @@ async fn update_dlp_policy(
     Path(id): Path<String>,
     Json(body): Json<CreateDlpPolicyRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::update_dlp_policy(
         pool,
         &id,
@@ -238,11 +415,10 @@ async fn update_dlp_policy(
     }
 }
 
-async fn delete_dlp_policy(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+async fn delete_dlp_policy(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_dlp_policy(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("DLP policy not found"),
@@ -264,7 +440,11 @@ async fn classify_text(
     Json(body): Json<ClassifyTextRequest>,
 ) -> impl IntoResponse {
     // Placeholder classifier: label based on length heuristic.
-    let label = if body.text.len() > 500 { "sensitive" } else { "public" };
+    let label = if body.text.len() > 500 {
+        "sensitive"
+    } else {
+        "public"
+    };
     let confidence: f64 = 0.85;
     let content_id = body
         .content_id
@@ -272,7 +452,8 @@ async fn classify_text(
 
     if let Some(pool) = s.db() {
         let id = uuid::Uuid::now_v7().to_string();
-        let _ = security::create_dlp_classification(pool, &id, &content_id, label, confidence).await;
+        let _ =
+            security::create_dlp_classification(pool, &id, &content_id, label, confidence).await;
     }
 
     Json(serde_json::json!({
@@ -288,7 +469,9 @@ async fn list_dlp_classifications(
     State(s): State<AppState>,
     Query(q): Query<PQ>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_dlp_classifications(pool, q.limit.min(100), q.offset).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -299,7 +482,9 @@ async fn get_dlp_classification(
     State(s): State<AppState>,
     Path(content_id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_dlp_classification_by_content(pool, &content_id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Classification not found"),
@@ -318,7 +503,9 @@ async fn override_dlp_classification(
     Path(content_id): Path<String>,
     Json(body): Json<OverrideClassificationRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::override_dlp_classification(pool, &content_id, &body.label).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Classification not found"),
@@ -405,7 +592,9 @@ async fn watermark_detect(Json(body): Json<WatermarkContentRequest>) -> impl Int
 // ── DLP retention ─────────────────────────────────────────────────────────────
 
 async fn list_dlp_retention(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_dlp_retention(pool).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -426,9 +615,20 @@ async fn create_dlp_retention(
     State(s): State<AppState>,
     Json(body): Json<CreateRetentionRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
-    match security::create_dlp_retention(pool, &id, &body.name, &body.label, body.retain_days, body.enabled).await {
+    match security::create_dlp_retention(
+        pool,
+        &id,
+        &body.name,
+        &body.label,
+        body.retain_days,
+        body.enabled,
+    )
+    .await
+    {
         Ok(r) => (StatusCode::CREATED, Json(serde_json::to_value(r).unwrap())).into_response(),
         Err(e) => err_internal(e),
     }
@@ -439,8 +639,19 @@ async fn update_dlp_retention(
     Path(id): Path<String>,
     Json(body): Json<CreateRetentionRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
-    match security::update_dlp_retention(pool, &id, &body.name, &body.label, body.retain_days, body.enabled).await {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
+    match security::update_dlp_retention(
+        pool,
+        &id,
+        &body.name,
+        &body.label,
+        body.retain_days,
+        body.enabled,
+    )
+    .await
+    {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Retention policy not found"),
         Err(e) => err_internal(e),
@@ -451,7 +662,9 @@ async fn delete_dlp_retention(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_dlp_retention(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("Retention policy not found"),
@@ -483,7 +696,9 @@ async fn list_sra_assessments(
     State(s): State<AppState>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_sra_assessments(pool, q.limit.min(100)).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -501,9 +716,12 @@ async fn create_sra_assessment(
     State(s): State<AppState>,
     Json(body): Json<CreateSraAssessmentRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
-    match security::create_sra_assessment(pool, &id, &body.name, body.blueprint_id.as_deref()).await {
+    match security::create_sra_assessment(pool, &id, &body.name, body.blueprint_id.as_deref()).await
+    {
         Ok(r) => (StatusCode::CREATED, Json(serde_json::to_value(r).unwrap())).into_response(),
         Err(e) => err_internal(e),
     }
@@ -513,7 +731,9 @@ async fn get_sra_assessment(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_sra_assessment(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("SRA assessment not found"),
@@ -533,7 +753,9 @@ async fn update_sra_assessment(
     Path(id): Path<String>,
     Json(body): Json<UpdateSraAssessmentRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::update_sra_assessment(pool, &id, &body.status, body.score).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("SRA assessment not found"),
@@ -545,7 +767,9 @@ async fn generate_sra_summary(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_sra_assessment(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::json!({
             "assessmentId": id,
@@ -564,7 +788,9 @@ async fn generate_sra_summary(
 // ── SRA blueprints ────────────────────────────────────────────────────────────
 
 async fn list_sra_blueprints(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_sra_blueprints(pool).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -584,19 +810,28 @@ async fn create_sra_blueprint(
     State(s): State<AppState>,
     Json(body): Json<CreateSraBlueprintRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
-    match security::create_sra_blueprint(pool, &id, &body.name, body.description.as_deref(), &body.controls).await {
+    match security::create_sra_blueprint(
+        pool,
+        &id,
+        &body.name,
+        body.description.as_deref(),
+        &body.controls,
+    )
+    .await
+    {
         Ok(r) => (StatusCode::CREATED, Json(serde_json::to_value(r).unwrap())).into_response(),
         Err(e) => err_internal(e),
     }
 }
 
-async fn get_sra_blueprint(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+async fn get_sra_blueprint(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_sra_blueprint(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("SRA blueprint not found"),
@@ -609,8 +844,18 @@ async fn update_sra_blueprint(
     Path(id): Path<String>,
     Json(body): Json<CreateSraBlueprintRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
-    match security::update_sra_blueprint(pool, &id, &body.name, body.description.as_deref(), &body.controls).await {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
+    match security::update_sra_blueprint(
+        pool,
+        &id,
+        &body.name,
+        body.description.as_deref(),
+        &body.controls,
+    )
+    .await
+    {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("SRA blueprint not found"),
         Err(e) => err_internal(e),
@@ -621,7 +866,9 @@ async fn delete_sra_blueprint(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_sra_blueprint(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("SRA blueprint not found"),
@@ -643,7 +890,9 @@ async fn get_compliance_mappings() -> impl IntoResponse {
 }
 
 async fn get_sra_summary(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_sra_assessments(pool, 1000).await {
         Ok(rows) => {
             let total = rows.len();
@@ -667,7 +916,9 @@ async fn get_sra_summary(State(s): State<AppState>) -> impl IntoResponse {
 // ── Security events ───────────────────────────────────────────────────────────
 
 async fn list_security_events(State(s): State<AppState>, Query(q): Query<PQ>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_security_events(pool, "default", q.limit.min(100), q.offset).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -678,7 +929,9 @@ async fn get_security_event(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_security_event(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Security event not found"),
@@ -689,7 +942,9 @@ async fn get_security_event(
 // ── Security policy ───────────────────────────────────────────────────────────
 
 async fn get_security_policy(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_security_policy(pool, "default").await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("No security policy configured"),
@@ -710,9 +965,20 @@ async fn update_security_policy(
     State(s): State<AppState>,
     Json(body): Json<UpdatePolicyRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
-    match security::upsert_security_policy(pool, &id, "default", &body.name, &body.policy_json, body.enabled).await {
+    match security::upsert_security_policy(
+        pool,
+        &id,
+        "default",
+        &body.name,
+        &body.policy_json,
+        body.enabled,
+    )
+    .await
+    {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
     }
@@ -721,7 +987,9 @@ async fn update_security_policy(
 // ── Security scans ────────────────────────────────────────────────────────────
 
 async fn list_security_scans(State(s): State<AppState>, Query(q): Query<PQ>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_security_scans(pool, "default", q.limit.min(100), q.offset).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -734,13 +1002,17 @@ struct TriggerScanRequest {
     #[serde(default = "default_scan_type")]
     scan_type: String,
 }
-fn default_scan_type() -> String { "full".to_string() }
+fn default_scan_type() -> String {
+    "full".to_string()
+}
 
 async fn trigger_security_scan(
     State(s): State<AppState>,
     Json(body): Json<TriggerScanRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_security_scan(pool, &id, "default", &body.scan_type).await {
         Ok(r) => (StatusCode::CREATED, Json(serde_json::to_value(r).unwrap())).into_response(),
@@ -749,7 +1021,9 @@ async fn trigger_security_scan(
 }
 
 async fn get_security_scan(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_security_scan(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Scan not found"),
@@ -760,7 +1034,9 @@ async fn get_security_scan(State(s): State<AppState>, Path(id): Path<String>) ->
 // ── ATHI ─────────────────────────────────────────────────────────────────────
 
 async fn get_athi_summary(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_athi_summary(pool, "default").await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => {
@@ -772,7 +1048,9 @@ async fn get_athi_summary(State(s): State<AppState>) -> impl IntoResponse {
 }
 
 async fn list_athi_scenarios(State(s): State<AppState>, Query(q): Query<PQ>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_athi_scenarios(pool, "default", q.limit.min(100), q.offset).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -792,7 +1070,9 @@ async fn create_athi_scenario(
     State(s): State<AppState>,
     Json(body): Json<CreateAthiScenarioRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_athi_scenario(
         pool,
@@ -810,11 +1090,10 @@ async fn create_athi_scenario(
     }
 }
 
-async fn get_athi_scenario(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+async fn get_athi_scenario(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_athi_scenario(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("ATHI scenario not found"),
@@ -827,7 +1106,9 @@ async fn update_athi_scenario(
     Path(id): Path<String>,
     Json(body): Json<CreateAthiScenarioRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::update_athi_scenario(
         pool,
         &id,
@@ -848,7 +1129,9 @@ async fn delete_athi_scenario(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::delete_athi_scenario(pool, &id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => not_found("ATHI scenario not found"),
@@ -879,7 +1162,9 @@ async fn list_athi_by_technique(
     State(s): State<AppState>,
     Path(technique): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_athi_scenarios_by_technique(pool, "default", &technique).await {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
@@ -887,13 +1172,20 @@ async fn list_athi_by_technique(
 }
 
 async fn get_athi_matrix(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_athi_scenarios(pool, "default", 1000, 0).await {
         Ok(rows) => {
-            let mut by_category: std::collections::HashMap<String, Vec<&security::AthiScenarioRow>> =
-                std::collections::HashMap::new();
+            let mut by_category: std::collections::HashMap<
+                String,
+                Vec<&security::AthiScenarioRow>,
+            > = std::collections::HashMap::new();
             for row in &rows {
-                by_category.entry(row.category.clone()).or_default().push(row);
+                by_category
+                    .entry(row.category.clone())
+                    .or_default()
+                    .push(row);
             }
             let matrix: Vec<_> = by_category
                 .iter()
@@ -915,10 +1207,16 @@ async fn get_athi_top_risks(
     State(s): State<AppState>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::list_athi_scenarios(pool, "default", 1000, 0).await {
         Ok(mut rows) => {
-            rows.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            rows.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             rows.truncate(q.limit.min(20) as usize);
             Json(serde_json::to_value(rows).unwrap()).into_response()
         }
@@ -1078,8 +1376,11 @@ async fn list_access_review_campaigns(
     State(s): State<AppState>,
     Query(q): Query<PQ>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
-    match security::list_access_review_campaigns(pool, "default", q.limit.min(100), q.offset).await {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
+    match security::list_access_review_campaigns(pool, "default", q.limit.min(100), q.offset).await
+    {
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
     }
@@ -1098,7 +1399,9 @@ async fn create_access_review_campaign(
     State(s): State<AppState>,
     Json(body): Json<CreateCampaignRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let id = uuid::Uuid::now_v7().to_string();
     match security::create_access_review_campaign(
         pool,
@@ -1120,7 +1423,9 @@ async fn get_access_review_campaign(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_access_review_campaign(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Campaign not found"),
@@ -1142,7 +1447,9 @@ async fn submit_access_review_decision(
     Path(id): Path<String>,
     Json(body): Json<SubmitDecisionRequest>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     let decision_id = uuid::Uuid::now_v7().to_string();
     match security::create_access_review_decision(
         pool,
@@ -1164,7 +1471,9 @@ async fn close_access_review_campaign(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::close_access_review_campaign(pool, &id).await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("Campaign not found"),
@@ -1173,7 +1482,9 @@ async fn close_access_review_campaign(
 }
 
 async fn get_entitlement_report(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(_pool) = s.db() else { return err_unavailable(); };
+    let Some(_pool) = s.db() else {
+        return err_unavailable();
+    };
     // Placeholder entitlement report — real implementation joins IAM tables.
     Json(serde_json::json!({
         "entitlements": [],
@@ -1191,7 +1502,9 @@ async fn get_entitlement_report(State(s): State<AppState>) -> impl IntoResponse 
 // ── TLS status ────────────────────────────────────────────────────────────────
 
 async fn get_tls_status(State(s): State<AppState>) -> impl IntoResponse {
-    let Some(pool) = s.db() else { return err_unavailable(); };
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
     match security::get_tls_status(pool, "default").await {
         Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Ok(None) => not_found("No TLS status available"),
@@ -1244,7 +1557,9 @@ async fn webauthn_authenticate_options() -> impl IntoResponse {
     .into_response()
 }
 
-async fn webauthn_authenticate_verify(Json(_body): Json<WebAuthnVerifyRequest>) -> impl IntoResponse {
+async fn webauthn_authenticate_verify(
+    Json(_body): Json<WebAuthnVerifyRequest>,
+) -> impl IntoResponse {
     Json(serde_json::json!({
         "verified": true,
         "userId": null,

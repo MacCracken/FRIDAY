@@ -227,7 +227,13 @@ describe.skipIf(!hasNative)('system prompt composition', () => {
   bench('composeSystemPrompt (full)', () => {
     bhava!.composeSystemPrompt(
       traits,
-      { soul: 'You are a sovereign AI entity', spirit: null, brain: 'Analytical and precise', body: null, heart: 'Empathetic' },
+      {
+        soul: 'You are a sovereign AI entity',
+        spirit: null,
+        brain: 'Analytical and precise',
+        body: null,
+        heart: 'Empathetic',
+      },
       emotionalStateJson,
       'Passionate about helping humans grow'
     );

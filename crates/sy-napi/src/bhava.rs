@@ -1218,10 +1218,7 @@ pub fn bhava_signal_tick(composite_json: String) -> Result<String> {
         .get("flow")
         .and_then(|f| serde_json::from_value(f.clone()).ok());
     if let Some(ref mut fs) = flow_state {
-        let energy_level = energy_state
-            .as_ref()
-            .map(|e| e.energy.get())
-            .unwrap_or(1.0);
+        let energy_level = energy_state.as_ref().map(|e| e.energy.get()).unwrap_or(1.0);
         fs.tick(&state.mood, energy_level, alertness);
     }
 

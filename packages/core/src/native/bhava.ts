@@ -594,12 +594,7 @@ export interface BhavaCircadianAlertness {
 }
 
 export function createCircadian(
-  chronotype:
-    | 'early bird'
-    | 'morning-leaning'
-    | 'neutral'
-    | 'evening-leaning'
-    | 'night owl'
+  chronotype: 'early bird' | 'morning-leaning' | 'neutral' | 'evening-leaning' | 'night owl'
 ): string | null {
   if (!native) return null;
   try {

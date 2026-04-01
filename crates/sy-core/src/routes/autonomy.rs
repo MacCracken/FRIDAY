@@ -189,7 +189,11 @@ async fn create_audit(
     };
     let id = uuid::Uuid::now_v7().to_string();
     match autonomy::create_audit(pool, &id, &body.agent_id).await {
-        Ok(row) => (StatusCode::CREATED, Json(serde_json::to_value(row).unwrap())).into_response(),
+        Ok(row) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(row).unwrap()),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

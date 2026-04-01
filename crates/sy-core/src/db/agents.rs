@@ -479,12 +479,10 @@ pub async fn get_council_template(
     pool: &PgPool,
     id: &str,
 ) -> Result<Option<CouncilTemplateRow>, sqlx::Error> {
-    sqlx::query_as::<_, CouncilTemplateRow>(
-        "SELECT * FROM agents.council_templates WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
+    sqlx::query_as::<_, CouncilTemplateRow>("SELECT * FROM agents.council_templates WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -582,7 +580,10 @@ pub async fn list_council_runs(
     }
 }
 
-pub async fn get_council_run(pool: &PgPool, id: &str) -> Result<Option<CouncilRunRow>, sqlx::Error> {
+pub async fn get_council_run(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<CouncilRunRow>, sqlx::Error> {
     sqlx::query_as::<_, CouncilRunRow>("SELECT * FROM agents.council_runs WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
@@ -653,7 +654,11 @@ pub struct TeamRunRow {
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-pub async fn list_teams(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<TeamRow>, sqlx::Error> {
+pub async fn list_teams(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<TeamRow>, sqlx::Error> {
     sqlx::query_as::<_, TeamRow>(
         "SELECT * FROM agents.teams ORDER BY is_builtin DESC, name ASC LIMIT $1 OFFSET $2",
     )
@@ -815,12 +820,11 @@ pub async fn remove_profile_skill(
     profile_id: &str,
     skill_id: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
-        "DELETE FROM agents.profile_skills WHERE profile_id = $1 AND skill_id = $2",
-    )
-    .bind(profile_id)
-    .bind(skill_id)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("DELETE FROM agents.profile_skills WHERE profile_id = $1 AND skill_id = $2")
+            .bind(profile_id)
+            .bind(skill_id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
