@@ -11,6 +11,7 @@
 mod auth;
 mod brain;
 mod db;
+mod ecosystem;
 mod integrations;
 mod middleware;
 mod orchestration;

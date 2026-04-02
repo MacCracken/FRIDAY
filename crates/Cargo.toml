@@ -8,7 +8,6 @@ members = [
   "sy-audit",
   "sy-sandbox",
   "sy-edge",
-  "sy-napi",
   "sy-types",
   "sy-core",
 ]

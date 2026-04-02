@@ -1,235 +1,170 @@
 /**
- * Szal Workflow Engine — TypeScript wrapper for Rust NAPI bindings.
- *
- * Provides condition evaluation, flow validation, step building,
- * DAG construction, and template resolution.
- * Falls back to JS implementations when native module is unavailable.
+ * Szal stub — the native NAPI module is gone.
+ * Critical-path functions (topologicalSort, evaluateCondition, resolveTemplate)
+ * have self-contained JS fallback implementations. Other functions return
+ * trivial stubs.
  */
 
-import { native } from './index.js';
+// ── Step shape used by topologicalSort ───────────────────────────────────────
 
-// ── Condition Evaluation ──────────────────────────────────────────────────
-
-/**
- * Evaluate a condition expression against a JSON context.
- * Expression format: `steps.build.status == 'completed' && input.env == 'prod'`
- */
-export function evaluateCondition(expression: string, context: unknown): boolean {
-  if (native?.szalEvaluateCondition) {
-    return native.szalEvaluateCondition(expression, JSON.stringify(context));
-  }
-  return evaluateConditionJS(expression, context);
-}
-
-// ── Flow Validation ───────────────────────────────────────────────────────
-
-export interface FlowValidationResult {
-  valid: boolean;
-  error?: string;
-}
-
-/**
- * Validate a workflow flow definition (cycle detection, dependency resolution).
- */
-export function validateFlow(flowJson: string): FlowValidationResult {
-  if (native?.szalValidateFlow) {
-    return JSON.parse(native.szalValidateFlow(flowJson)) as FlowValidationResult;
-  }
-  return { valid: true }; // JS fallback: skip validation
-}
-
-// ── Step Builder ──────────────────────────────────────────────────────────
-
-export interface StepConfig {
-  name: string;
-  description?: string;
-  timeoutMs?: number;
-  maxRetries?: number;
-  retryDelayMs?: number;
-  backoff?: 'fixed' | 'linear' | 'exponential';
-  rollbackable?: boolean;
-  stepType?: string;
-  config?: unknown;
-  condition?: string;
+interface SzalStep {
+  id: string;
   dependsOn?: string[];
   triggerMode?: 'all' | 'any';
 }
 
-/**
- * Create a step definition with generated UUID.
- * Returns JSON StepDef.
- */
-export function createStep(config: StepConfig): string {
-  if (native?.szalCreateStep) {
-    return native.szalCreateStep(JSON.stringify(config));
-  }
-  // JS fallback: minimal step object
-  return JSON.stringify({
-    id: crypto.randomUUID(),
-    name: config.name,
-    description: config.description ?? '',
-    timeout_ms: config.timeoutMs ?? 30_000,
-    max_retries: config.maxRetries ?? 0,
-    retry_delay_ms: config.retryDelayMs ?? 1_000,
-    backoff: config.backoff ?? 'fixed',
-    rollbackable: config.rollbackable ?? false,
-    step_type: config.stepType ?? null,
-    config: config.config ?? null,
-    condition: config.condition ?? null,
-    depends_on: config.dependsOn ?? [],
-    trigger_mode: config.triggerMode ?? 'all',
-    sub_steps: [],
-  });
-}
-
-// ── DAG Flow Builder ──────────────────────────────────────────────────────
+// ── Kahn's algorithm — topological sort returning execution layers ────────────
 
 /**
- * Build and validate a DAG flow from step definitions.
- * Returns the validated flow JSON or throws on cycle detection.
+ * Topological sort via Kahn's algorithm.
+ * Returns an array of layers (each layer is a list of step IDs that can run
+ * in parallel). Throws if the graph contains a cycle.
  */
-export function buildDagFlow(name: string, stepsJson: string): string {
-  if (native?.szalBuildDagFlow) {
-    return native.szalBuildDagFlow(name, stepsJson);
-  }
-  // JS fallback: wrap without validation
-  return JSON.stringify({ name, mode: 'dag', steps: JSON.parse(stepsJson) });
-}
-
-// ── Topological Sort ──────────────────────────────────────────────────────
-
-export interface TopoStep {
-  id: string;
-  dependsOn: string[];
-  triggerMode?: 'all' | 'any';
-}
-
-/**
- * Topological sort of workflow steps into parallel execution tiers.
- * Returns `string[][]` — tiers of step IDs in execution order.
- * Throws on cycle detection.
- */
-export function topologicalSort(steps: TopoStep[]): string[][] {
-  if (native?.szalTopologicalSort) {
-    const json = native.szalTopologicalSort(JSON.stringify(steps));
-    return JSON.parse(json) as string[][];
-  }
-  return topologicalSortJS(steps);
-}
-
-function topologicalSortJS(steps: TopoStep[]): string[][] {
+export function topologicalSort(steps: SzalStep[]): string[][] {
   const inDegree = new Map<string, number>();
-  const adjacency = new Map<string, string[]>();
+  const dependents = new Map<string, string[]>(); // id → steps that depend on id
 
   for (const step of steps) {
-    const required =
-      step.triggerMode === 'any' ? Math.min(1, step.dependsOn.length) : step.dependsOn.length;
-    inDegree.set(step.id, required);
-    for (const dep of step.dependsOn) {
-      if (!adjacency.has(dep)) adjacency.set(dep, []);
-      adjacency.get(dep)!.push(step.id);
+    if (!inDegree.has(step.id)) inDegree.set(step.id, 0);
+    if (!dependents.has(step.id)) dependents.set(step.id, []);
+    for (const dep of step.dependsOn ?? []) {
+      inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
+      if (!dependents.has(dep)) dependents.set(dep, []);
+      dependents.get(dep)!.push(step.id);
     }
   }
 
-  const tiers: string[][] = [];
+  const layers: string[][] = [];
   let frontier = steps.filter((s) => (inDegree.get(s.id) ?? 0) === 0).map((s) => s.id);
+  let visited = 0;
 
   while (frontier.length > 0) {
-    tiers.push(frontier);
+    layers.push(frontier);
+    visited += frontier.length;
     const next: string[] = [];
     for (const id of frontier) {
-      for (const successor of adjacency.get(id) ?? []) {
-        const current = inDegree.get(successor) ?? 0;
-        if (current <= 0) continue;
-        const newDeg = current - 1;
-        inDegree.set(successor, newDeg);
-        if (newDeg === 0) next.push(successor);
+      for (const dependent of dependents.get(id) ?? []) {
+        const deg = (inDegree.get(dependent) ?? 0) - 1;
+        inDegree.set(dependent, deg);
+        if (deg === 0) next.push(dependent);
       }
     }
     frontier = next;
   }
 
-  const visited = tiers.flat();
-  if (visited.length !== steps.length) {
-    const visitedSet = new Set(visited);
-    const cycleSteps = steps.filter((s) => !visitedSet.has(s.id)).map((s) => s.id);
-    throw new Error(`Workflow contains a cycle involving: ${cycleSteps.join(', ')}`);
+  if (visited !== steps.length) {
+    throw new Error('szal: cycle detected in workflow DAG');
   }
 
-  return tiers;
+  return layers;
 }
 
-// ── Template Resolution ───────────────────────────────────────────────────
+// ── Simple condition evaluator ────────────────────────────────────────────────
 
 /**
- * Resolve template variables with dot-notation path walking.
- * `{{steps.build.output.url}}` → walks into nested JSON context.
+ * Evaluates a simple boolean condition expression against a context object.
+ * Supports: ==, !=, &&, ||, path resolution (e.g. steps.step1.output).
+ * Does NOT support comparison operators (>, <, >=, <=) — the workflow engine
+ * falls back to safeEvalCondition for those.
  */
-export function resolveTemplate(template: string, context: unknown): string {
-  if (native?.szalResolveTemplate) {
-    return native.szalResolveTemplate(template, JSON.stringify(context));
+export function evaluateCondition(expr: string, context: Record<string, unknown>): boolean {
+  // Strip outer whitespace
+  const e = expr.trim();
+
+  // OR — lowest precedence, split on first ||
+  const orIdx = findOperatorOutsideParens(e, '||');
+  if (orIdx !== -1) {
+    return (
+      evaluateCondition(e.slice(0, orIdx), context) ||
+      evaluateCondition(e.slice(orIdx + 2), context)
+    );
   }
-  return resolveTemplateJS(template, context);
+
+  // AND — split on first &&
+  const andIdx = findOperatorOutsideParens(e, '&&');
+  if (andIdx !== -1) {
+    return (
+      evaluateCondition(e.slice(0, andIdx), context) &&
+      evaluateCondition(e.slice(andIdx + 2), context)
+    );
+  }
+
+  // Equality / inequality
+  const neqIdx = e.indexOf('!=');
+  if (neqIdx !== -1) {
+    const left = resolvePath(e.slice(0, neqIdx).trim(), context);
+    const right = parseValue(e.slice(neqIdx + 2).trim(), context);
+    return left !== right;
+  }
+  const eqIdx = e.indexOf('==');
+  if (eqIdx !== -1) {
+    const left = resolvePath(e.slice(0, eqIdx).trim(), context);
+    const right = parseValue(e.slice(eqIdx + 2).trim(), context);
+    return left === right;
+  }
+
+  // Bare truthy path
+  const val = resolvePath(e, context);
+  return Boolean(val);
 }
 
-// ── JS Fallbacks ──────────────────────────────────────────────────────────
-
-function evaluateConditionJS(expression: string, context: unknown): boolean {
-  // Simple evaluator: supports path == 'value' && path != 'value'
-  const ctx = context as Record<string, unknown>;
-
-  const resolvePath = (path: string): unknown => {
-    const parts = path.trim().split('.');
-    let value: unknown = ctx;
-    for (const part of parts) {
-      if (value == null || typeof value !== 'object') return undefined;
-      value = (value as Record<string, unknown>)[part];
-    }
-    return value;
-  };
-
-  // Handle && and || by splitting
-  if (expression.includes('||')) {
-    return expression.split('||').some((part) => evaluateConditionJS(part.trim(), context));
+/** Find index of a two-char operator that is not inside parentheses. */
+function findOperatorOutsideParens(expr: string, op: string): number {
+  let depth = 0;
+  for (let i = 0; i < expr.length - 1; i++) {
+    if (expr[i] === '(') depth++;
+    else if (expr[i] === ')') depth--;
+    else if (depth === 0 && expr.slice(i, i + op.length) === op) return i;
   }
-  if (expression.includes('&&')) {
-    return expression.split('&&').every((part) => evaluateConditionJS(part.trim(), context));
-  }
-
-  // Handle ==, ===, !=, !==
-  const eqMatch = /^(.+?)\s*(===|!==|==|!=)\s*(.+)$/.exec(expression);
-  if (eqMatch) {
-    const left = resolvePath(eqMatch[1]!);
-    const rightRaw = eqMatch[3]!.trim();
-    const right = rightRaw.startsWith("'")
-      ? rightRaw.slice(1, -1)
-      : rightRaw === 'true'
-        ? true
-        : rightRaw === 'false'
-          ? false
-          : Number(rightRaw);
-    const isEq = eqMatch[2] === '==' || eqMatch[2] === '===';
-    return isEq ? left === right : left !== right;
-  }
-
-  // Boolean literals
-  const trimmed = expression.trim();
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-
-  // Bare path = truthy check
-  return !!resolvePath(trimmed);
+  return -1;
 }
 
-function resolveTemplateJS(template: string, context: unknown): string {
+/** Resolve a dot-path like "steps.step1.output" against context. */
+function resolvePath(path: string, context: Record<string, unknown>): unknown {
+  const parts = path.split('.');
+  let cur: unknown = context;
+  for (const part of parts) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+/** Parse a literal value or resolve a path. */
+function parseValue(token: string, context: Record<string, unknown>): unknown {
+  if (token.startsWith('"') && token.endsWith('"')) return token.slice(1, -1);
+  if (token.startsWith("'") && token.endsWith("'")) return token.slice(1, -1);
+  if (token === 'true') return true;
+  if (token === 'false') return false;
+  if (token === 'null') return null;
+  const num = Number(token);
+  if (!isNaN(num)) return num;
+  return resolvePath(token, context);
+}
+
+// ── Template resolver ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve {{path}} placeholders in a template string.
+ * Paths are resolved against context using dot notation.
+ */
+export function resolveTemplate(template: string, context: Record<string, unknown>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, path: string) => {
-    const parts = path.trim().split('.');
-    let value: unknown = context;
-    for (const part of parts) {
-      if (value == null || typeof value !== 'object') return '';
-      value = (value as Record<string, unknown>)[part];
-    }
-    if (value == null) return '';
-    return typeof value === 'string' ? value : JSON.stringify(value);
+    const val = resolvePath(path.trim(), context);
+    return val != null ? String(val) : '';
   });
+}
+
+// ── Trivial stubs ─────────────────────────────────────────────────────────────
+
+export function validateFlow(_flowJson: string): { valid: boolean } {
+  return { valid: true };
+}
+
+export function createStep(config: Record<string, unknown>): string {
+  return JSON.stringify(config);
+}
+
+export function buildDagFlow(name: string, stepsJson: string): string {
+  return JSON.stringify({ name, steps: JSON.parse(stepsJson) });
 }

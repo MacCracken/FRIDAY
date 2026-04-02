@@ -416,7 +416,7 @@ export class MoodEngine {
     if (composite.flowJson) input.flow = JSON.parse(composite.flowJson);
     if (composite.circadianJson) input.circadian = JSON.parse(composite.circadianJson);
 
-    const result = bhava.signalTick(input as Parameters<typeof bhava.signalTick>[0]);
+    const result = bhava.signalTick(input);
     if (!result) return null;
 
     // Persist updated states

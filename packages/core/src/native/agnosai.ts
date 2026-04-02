@@ -1,159 +1,63 @@
 /**
- * AgnosAI Orchestration Engine — typed wrappers over native NAPI bindings.
- *
- * Every function returns `T | null` (sync) or `Promise<T | null>` (async).
- * Null means native module unavailable — caller falls back to TS implementation.
+ * Agnosai stub — the native NAPI orchestration engine is gone.
+ * All functions return null. Consumer (agents/agnosai-bridge.ts) guards with
+ * `if (!crewState) return null` before using results.
  */
 
-import { native } from './index.js';
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-// ── Types ──────────────────────────────────────────────────────────────────
+export interface AgnosaiTaskResult {
+  task_id: string;
+  status: string;
+  output?: string;
+}
 
 export interface AgnosaiCrewState {
   crew_id: string;
   status: string;
   results: AgnosaiTaskResult[];
   profile?: {
-    wall_ms: number;
-    task_count: number;
-    cost_usd: number;
+    cost_usd?: number;
+    wall_ms?: number;
   };
 }
 
-export interface AgnosaiTaskResult {
-  task_id: string;
-  output: string;
-  status: string;
-  metadata: Record<string, unknown>;
+// ── Functions ─────────────────────────────────────────────────────────────────
+
+export async function runCrew(_specJson: string): Promise<AgnosaiCrewState | null> {
+  return null;
 }
 
-export interface AgnosaiValidation {
-  valid: boolean;
-  errors: string[];
+export async function cancelCrew(_crewId: string): Promise<void> {}
+
+export function validateCrew(_specJson: string): string {
+  return '{"valid":true}';
 }
 
-export interface AgnosaiModelRoute {
-  tier: string;
-  model: string;
+export function scheduleTasks(_tasksJson: string): string {
+  return '[]';
 }
 
-export interface AgnosaiTopoResult {
-  order: string[];
-  has_cycle: boolean;
-  error?: string;
+export function topologicalSort(_tasksJson: string): string {
+  return '[]';
 }
 
-export interface AgnosaiUcb1Result {
-  selected: string;
-  ucb_score: number;
+export function routeModel(_taskType: string, _complexity: string): string | null {
+  return null;
 }
 
-// ── Crew Execution (Async) ─────────────────────────────────────────────────
-
-export async function runCrew(specJson: string): Promise<AgnosaiCrewState | null> {
-  if (!native) return null;
-  try {
-    const result = await native.agnosaiRunCrew(specJson);
-    return JSON.parse(result);
-  } catch {
-    return null;
-  }
+export function rankAgents(_agentsJson: string, _taskJson: string): string | null {
+  return null;
 }
 
-export async function cancelCrew(crewId: string): Promise<boolean> {
-  if (!native) return false;
-  try {
-    await native.agnosaiCancelCrew(crewId);
-    return true;
-  } catch {
-    return false;
-  }
+export function createAgentDef(_profileJson: string): string | null {
+  return null;
 }
 
-// ── Validation ─────────────────────────────────────────────────────────────
-
-export function validateCrew(specJson: string): AgnosaiValidation | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiValidateCrew(specJson));
-  } catch {
-    return null;
-  }
+export function listBuiltinTools(): string {
+  return '[]';
 }
 
-// ── Scheduling ─────────────────────────────────────────────────────────────
-
-export function scheduleTasks(tasksJson: string): string[] | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiScheduleTasks(tasksJson));
-  } catch {
-    return null;
-  }
-}
-
-export function topologicalSort(tasksJson: string): AgnosaiTopoResult | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiTopologicalSort(tasksJson));
-  } catch {
-    return null;
-  }
-}
-
-// ── Model Routing ──────────────────────────────────────────────────────────
-
-export function routeModel(taskType: string, complexity: string): AgnosaiModelRoute | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiRouteModel(taskType, complexity));
-  } catch {
-    return null;
-  }
-}
-
-// ── Agent Scoring ──────────────────────────────────────────────────────────
-
-export function rankAgents(agentsJson: string, taskJson: string): [number, number][] | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiRankAgents(agentsJson, taskJson));
-  } catch {
-    return null;
-  }
-}
-
-// ── Agent Definition ───────────────────────────────────────────────────────
-
-export function createAgentDef(profileJson: string): string | null {
-  if (!native) return null;
-  try {
-    return native.agnosaiCreateAgentDef(profileJson);
-  } catch {
-    return null;
-  }
-}
-
-// ── Tools ──────────────────────────────────────────────────────────────────
-
-export function listBuiltinTools(): string[] | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiListBuiltinTools());
-  } catch {
-    return null;
-  }
-}
-
-// ── Learning ───────────────────────────────────────────────────────────────
-
-export function ucb1Select(
-  arms: { name: string; rewards: number; pulls: number }[]
-): AgnosaiUcb1Result | null {
-  if (!native) return null;
-  try {
-    return JSON.parse(native.agnosaiUcb1Select(JSON.stringify(arms)));
-  } catch {
-    return null;
-  }
+export function ucb1Select(_armsJson: string): string | null {
+  return null;
 }

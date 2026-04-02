@@ -16,6 +16,16 @@ sy-crypto = { path = "../sy-crypto" }
 sy-privacy = { path = "../sy-privacy" }
 sy-audit = { path = "../sy-audit" }
 sy-sandbox = { path = "../sy-sandbox" }
+sy-tee = { path = "../sy-tee" }
+sy-hwprobe = { path = "../sy-hwprobe" }
+
+# Ecosystem crates (previously accessed via NAPI bridge)
+bhava = { version = "2.0.0", features = ["presets", "psychology", "sociology", "physiology", "microbiology", "neuroscience", "instinct"] }
+szal = { version = "1.0", features = ["majra"] }
+bote = { version = "0.50", features = ["bridge"] }
+dhvani = { version = "1.0.0", features = ["voice", "g2p", "synthesis", "analysis"] }
+agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
+majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
 
 axum = { version = "0.8", features = ["json", "ws"] }
 tokio = { version = "1", features = ["full"] }
