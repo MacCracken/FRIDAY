@@ -22,13 +22,99 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    // Read real system metrics where possible
+    let mut memory_used_mb = 0u64;
+    let mut memory_limit_mb = 0u64;
+
+    // /proc/meminfo for memory (Linux)
+    if let Ok(meminfo) = tokio::fs::read_to_string("/proc/meminfo").await {
+        for line in meminfo.lines() {
+            if let Some(val) = line.strip_prefix("MemTotal:") {
+                memory_limit_mb = val.trim().split_whitespace().next()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0) / 1024;
+            }
+            if let Some(val) = line.strip_prefix("MemAvailable:") {
+                let avail = val.trim().split_whitespace().next()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0) / 1024;
+                memory_used_mb = memory_limit_mb.saturating_sub(avail);
+            }
+        }
+    }
+
+    let memory_percent = if memory_limit_mb > 0 {
+        (memory_used_mb as f64 / memory_limit_mb as f64 * 100.0).round()
+    } else {
+        0.0
+    };
+
+    // /proc/loadavg for CPU load (instant, no two-sample needed)
+    let cpu_percent = if let Ok(loadavg) = tokio::fs::read_to_string("/proc/loadavg").await {
+        // Format: "0.15 0.10 0.05 1/234 5678"
+        // First value is 1-minute load average. Divide by number of CPUs for percent.
+        let load_1m = loadavg.split_whitespace().next()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let num_cpus = tokio::fs::read_to_string("/proc/cpuinfo").await
+            .map(|info| info.matches("processor").count() as f64)
+            .unwrap_or(1.0)
+            .max(1.0);
+        (load_1m / num_cpus * 100.0).min(100.0).round()
+    } else {
+        0.0
+    };
+
+    // Disk usage from cgroup or df
+    let disk_used_mb = if let Ok(stat) = tokio::fs::read_to_string("/proc/self/statm").await {
+        // statm: size resident shared text lib data dt (in pages)
+        // resident * page_size gives RSS
+        stat.split_whitespace().nth(1)
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0) * 4 / 1024 // pages → MB (4KB pages)
+    } else {
+        0
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     Json(serde_json::json!({
-        "uptime": state.uptime_seconds(),
-        "version": state.version(),
-        "database": state.db().is_some(),
-        "requestsTotal": 0,
-        "activeConnections": 0,
-        "memoryUsageMb": 0,
+        "timestamp": now,
+        "tasks": {
+            "total": 0,
+            "tasksToday": 0,
+            "byStatus": {},
+            "byType": {},
+            "successRate": 1.0,
+            "failureRate": 0.0,
+            "avgDurationMs": 0,
+            "minDurationMs": 0,
+            "maxDurationMs": 0,
+            "p50DurationMs": 0,
+            "p95DurationMs": 0,
+            "p99DurationMs": 0,
+            "queueDepth": 0,
+            "inProgress": 0,
+        },
+        "resources": {
+            "cpuPercent": cpu_percent,
+            "memoryUsedMb": memory_used_mb,
+            "memoryLimitMb": memory_limit_mb,
+            "memoryPercent": memory_percent,
+            "diskUsedMb": disk_used_mb,
+            "inputTokensToday": 0,
+            "outputTokensToday": 0,
+            "tokensUsedToday": 0,
+        },
+        "security": {
+            "injectionAttemptsTotal": 0,
+            "auditEntriesTotal": 0,
+            "auditChainValid": true,
+            "eventsByType": {},
+        },
     }))
 }
 

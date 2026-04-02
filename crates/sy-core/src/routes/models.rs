@@ -150,15 +150,58 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response();
     };
+    // Check which providers are actually configured
+    let has_openai = std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
+    // Hoosh/AGNOS gateway: only count as available if an API key is explicitly set,
+    // OR if there's a non-default URL. The gateway runs inside the container by default
+    // but has no LLM providers without configuration.
+    let has_hoosh = std::env::var("AGNOS_GATEWAY_API_KEY").map(|k| !k.is_empty()).unwrap_or(false)
+        || std::env::var("HOOSH_URL").map(|u| !u.is_empty()).unwrap_or(false);
+
+    let mut available: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    if has_openai {
+        available.insert("openai".into(), serde_json::json!([
+            {"id": "gpt-4o", "name": "GPT-4o"},
+            {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+        ]));
+    }
+    if has_anthropic {
+        available.insert("anthropic".into(), serde_json::json!([
+            {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
+            {"id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5"},
+        ]));
+    }
+    if has_hoosh {
+        available.insert("hoosh".into(), serde_json::json!([
+            {"id": "default", "name": "AGNOS Gateway (auto-route)"},
+        ]));
+    }
+
     match model_db::get_model_info(pool, "default").await {
-        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
-        Ok(None) => Json(serde_json::json!({
-            "provider": "ollama",
-            "modelName": "default",
-            "isDefault": false,
-            "config": {},
-        }))
-        .into_response(),
+        Ok(Some(row)) => {
+            let provider = row.provider.clone();
+            let model_name = row.model_name.clone();
+            Json(serde_json::json!({
+                "current": {
+                    "provider": provider,
+                    "model": model_name,
+                },
+                "available": available,
+            }))
+            .into_response()
+        }
+        Ok(None) => {
+            let default_provider = if has_hoosh { "hoosh" } else if has_openai { "openai" } else if has_anthropic { "anthropic" } else { "none" };
+            Json(serde_json::json!({
+                "current": {
+                    "provider": default_provider,
+                    "model": "default",
+                },
+                "available": available,
+            }))
+            .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

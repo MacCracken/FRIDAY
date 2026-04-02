@@ -37,16 +37,52 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/brain/consolidation/run", post(run_consolidation))
         // Heartbeat (dashboard health widget)
         .route("/api/v1/brain/heartbeat/status", get(heartbeat_status))
+        .route("/api/v1/brain/heartbeat/tasks", get(heartbeat_tasks))
 }
 
 async fn heartbeat_status(State(state): State<AppState>) -> impl IntoResponse {
     let db_ok = state.db().is_some();
-    let brain_ok = state.brain().is_some();
     Json(serde_json::json!({
-        "status": if db_ok && brain_ok { "healthy" } else if db_ok { "degraded" } else { "unavailable" },
-        "database": db_ok,
-        "vectorStore": brain_ok,
-        "lastHeartbeat": chrono::Utc::now().to_rfc3339(),
+        "running": db_ok,
+        "enabled": true,
+        "intervalMs": 30000,
+        "beatCount": 0,
+        "lastBeat": null,
+        "tasks": [],
+        "activePersonalityCount": 0,
+        "totalTasks": 0,
+        "enabledTasks": 0,
+    }))
+}
+
+async fn heartbeat_tasks() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "tasks": [
+            {
+                "name": "mood_decay",
+                "type": "mood",
+                "enabled": true,
+                "intervalMs": 30000,
+                "lastRunAt": null,
+                "config": {},
+            },
+            {
+                "name": "memory_consolidation",
+                "type": "consolidation",
+                "enabled": true,
+                "intervalMs": 300000,
+                "lastRunAt": null,
+                "config": {},
+            },
+            {
+                "name": "proactive_suggestions",
+                "type": "proactive",
+                "enabled": true,
+                "intervalMs": 60000,
+                "lastRunAt": null,
+                "config": {},
+            },
+        ]
     }))
 }
 

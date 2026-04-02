@@ -18,6 +18,9 @@ pub fn router() -> Router<AppState> {
             "/api/v1/diagnostics/ping-integrations",
             post(ping_integrations),
         )
+        // System hardware/GPU probe
+        .route("/api/v1/system/gpu", get(gpu_status))
+        .route("/api/v1/system/local-models", get(local_models))
 }
 
 #[derive(Deserialize)]
@@ -90,4 +93,69 @@ async fn ping_integrations(State(state): State<AppState>) -> impl IntoResponse {
         "message": "All integration pings dispatched",
     }))
     .into_response()
+}
+
+/// GET /api/v1/system/gpu — probe GPU hardware.
+///
+/// Uses sy-hwprobe (ai-hwaccel) when available, otherwise returns empty.
+async fn gpu_status() -> impl IntoResponse {
+    // Probe via sy-hwprobe (ai-hwaccel)
+    let hw_devices = sy_hwprobe::probe_all();
+    let devices: Vec<serde_json::Value> = hw_devices
+        .iter()
+        .map(|d| serde_json::to_value(d).unwrap_or_default())
+        .collect();
+
+    let total_vram: f64 = devices
+        .iter()
+        .filter_map(|d| d.get("vramMb").and_then(|v| v.as_f64()))
+        .sum();
+    let available = !devices.is_empty();
+
+    Json(serde_json::json!({
+        "available": available,
+        "devices": devices,
+        "totalVramMb": total_vram,
+        "totalFreeVramMb": total_vram,
+        "bestDevice": devices.first(),
+        "localInferenceViable": total_vram >= 4096.0,
+        "tpuCount": 0,
+        "tpuAvailable": false,
+        "source": "ai-hwaccel",
+        "probedAt": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
+/// GET /api/v1/system/local-models — list locally available models.
+async fn local_models() -> impl IntoResponse {
+    // Check Ollama for local models
+    let models = match reqwest::Client::new()
+        .get(format!(
+            "{}/api/tags",
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".into())
+        ))
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let data: serde_json::Value = resp.json().await.unwrap_or_default();
+            data.get("models")
+                .and_then(|m| m.as_array())
+                .cloned()
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+
+    Json(serde_json::json!({
+        "models": models,
+        "providers": {
+            "ollama": !models.is_empty(),
+            "lmstudio": false,
+            "localai": false,
+        },
+        "totalModels": models.len(),
+        "probedAt": chrono::Utc::now().to_rfc3339(),
+    }))
 }
