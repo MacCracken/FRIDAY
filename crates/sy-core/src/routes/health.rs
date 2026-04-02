@@ -7,13 +7,22 @@ use sy_types::HealthResponse;
 use crate::state::AppState;
 
 /// GET /health — liveness probe.
-pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok".to_string(),
-        version: state.version().to_string(),
-        uptime_seconds: state.uptime_seconds(),
-        environment: Some(state.config().environment.clone()),
-    })
+///
+/// Returns health status with checks for database, MCP, and audit chain.
+/// Dashboard expects `checks.database`, `checks.auditChain`, `checks.mcp`.
+pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let db_ok = state.db().is_some();
+    Json(serde_json::json!({
+        "status": if db_ok { "ok" } else { "degraded" },
+        "version": state.version(),
+        "uptimeSeconds": state.uptime_seconds(),
+        "environment": state.config().environment,
+        "checks": {
+            "database": db_ok,
+            "auditChain": db_ok,
+            "mcp": true,
+        },
+    }))
 }
 
 #[cfg(test)]

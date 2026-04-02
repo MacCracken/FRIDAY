@@ -44,7 +44,10 @@ async fn list_servers(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match mcp::list_servers(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            Json(serde_json::json!({"servers": rows, "total": total})).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -114,7 +117,10 @@ async fn list_tools(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match mcp::list_tools(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            Json(serde_json::json!({"tools": rows, "total": total})).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -285,7 +291,7 @@ async fn list_resources(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match mcp::list_resources(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"resources": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

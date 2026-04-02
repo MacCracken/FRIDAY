@@ -44,7 +44,7 @@ async fn list_extensions(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match extensions::list_extensions(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"extensions": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -118,7 +118,7 @@ async fn list_hooks(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match extensions::list_hooks(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"hooks": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -170,7 +170,7 @@ async fn list_webhooks(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match extensions::list_webhooks(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"webhooks": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

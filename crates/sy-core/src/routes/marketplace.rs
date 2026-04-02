@@ -270,7 +270,7 @@ async fn list_marketplace(
     )
     .await
     {
-        Ok(rows) => Json(serde_json::json!({"items": rows, "total": rows.len()})).into_response(),
+        Ok(rows) => Json(serde_json::json!({"skills": rows, "total": rows.len()})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

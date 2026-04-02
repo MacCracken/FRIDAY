@@ -38,6 +38,7 @@ const PUBLIC_PREFIXES: &[&str] = &[
     "/api/v1/auth/sso/callback/",
     "/api/v1/auth/sso/saml/",
     "/api/v1/federation/marketplace/",
+    "/ws/", // WebSocket auth is handled by the WS handler (token in Sec-WebSocket-Protocol)
 ];
 
 /// Authenticated user context — injected into request extensions.

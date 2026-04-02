@@ -47,7 +47,10 @@ async fn list_reports(
             .into_response();
     };
     match reports::list_reports(pool, q.limit.min(100), q.offset).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            Json(serde_json::json!({"reports": rows, "total": total})).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

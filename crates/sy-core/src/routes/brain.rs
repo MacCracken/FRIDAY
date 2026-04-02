@@ -35,6 +35,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/brain/cognitive-stats", get(get_cognitive_stats))
         // Consolidation
         .route("/api/v1/brain/consolidation/run", post(run_consolidation))
+        // Heartbeat (dashboard health widget)
+        .route("/api/v1/brain/heartbeat/status", get(heartbeat_status))
+}
+
+async fn heartbeat_status(State(state): State<AppState>) -> impl IntoResponse {
+    let db_ok = state.db().is_some();
+    let brain_ok = state.brain().is_some();
+    Json(serde_json::json!({
+        "status": if db_ok && brain_ok { "healthy" } else if db_ok { "degraded" } else { "unavailable" },
+        "database": db_ok,
+        "vectorStore": brain_ok,
+        "lastHeartbeat": chrono::Utc::now().to_rfc3339(),
+    }))
 }
 
 // ── Memory handlers ────────────────────────────────────────────────────────
@@ -161,7 +174,7 @@ async fn list_memories(
     )
     .await
     {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"memories": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -449,7 +462,7 @@ async fn query_knowledge(
     )
     .await
     {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"knowledge": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

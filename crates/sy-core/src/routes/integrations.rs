@@ -70,7 +70,12 @@ async fn list_integrations(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match integrations::list_integrations(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            let running = rows.iter().filter(|r| r.enabled).count();
+            Json(serde_json::json!({"integrations": rows, "total": total, "running": running}))
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

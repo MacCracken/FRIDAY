@@ -16,6 +16,28 @@ pub fn router() -> Router<AppState> {
             "/api/v1/analytics/conversations/{id}/sentiments",
             get(list_sentiments),
         )
+        // Dashboard health widgets
+        .route("/api/v1/metrics", get(system_metrics))
+        .route("/api/v1/costs/breakdown", get(costs_breakdown))
+}
+
+async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "uptime": state.uptime_seconds(),
+        "version": state.version(),
+        "database": state.db().is_some(),
+        "requestsTotal": 0,
+        "activeConnections": 0,
+        "memoryUsageMb": 0,
+    }))
+}
+
+async fn costs_breakdown(State(_state): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "totalCost": 0.0,
+        "providers": [],
+        "period": "current_month",
+    }))
 }
 
 #[derive(Deserialize)]

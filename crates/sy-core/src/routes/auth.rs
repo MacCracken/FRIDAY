@@ -406,7 +406,7 @@ async fn list_api_keys(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match auth::list_api_keys(pool, "default").await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"keys": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -552,7 +552,7 @@ async fn list_users(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match auth::list_users(pool, "default").await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"users": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -643,7 +643,7 @@ async fn list_roles(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match auth::list_roles(pool, "default").await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"roles": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -860,7 +860,7 @@ async fn list_role_assignments(State(state): State<AppState>) -> impl IntoRespon
             .into_response();
     };
     match auth::list_role_assignments(pool, "default").await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"assignments": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

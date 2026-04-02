@@ -51,7 +51,7 @@ async fn list_personalities(State(state): State<AppState>) -> impl IntoResponse 
             .into_response();
     };
     match soul::list_personalities(pool, "default").await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"personalities": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

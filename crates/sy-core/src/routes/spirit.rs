@@ -54,7 +54,7 @@ async fn list_passions(
             .into_response();
     };
     match spirit::list_passions(pool, q.personality_id.as_deref()).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"passions": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -75,7 +75,7 @@ async fn list_inspirations(
             .into_response();
     };
     match spirit::list_inspirations(pool, q.personality_id.as_deref()).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"inspirations": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -96,7 +96,7 @@ async fn list_pains(
             .into_response();
     };
     match spirit::list_pains(pool, q.personality_id.as_deref()).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"pains": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

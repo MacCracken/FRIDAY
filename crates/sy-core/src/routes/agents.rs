@@ -134,7 +134,7 @@ async fn list_profiles(State(state): State<AppState>) -> impl IntoResponse {
             .into_response();
     };
     match agents::list_profiles(pool).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"profiles": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -380,7 +380,7 @@ async fn list_active_delegations(
             .into_response();
     };
     match agents::list_active_delegations(pool, q.limit.min(100), q.offset).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => Json(serde_json::json!({"delegations": rows})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -414,7 +414,10 @@ async fn list_delegations(
             .into_response();
     };
     match agents::list_delegations(pool, q.status.as_deref(), q.limit.min(100), q.offset).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            Json(serde_json::json!({"delegations": rows, "total": total})).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),

@@ -882,7 +882,10 @@ async fn list_security_events(State(s): State<AppState>, Query(q): Query<PQ>) ->
         return err_unavailable();
     };
     match security::list_security_events(pool, "default", q.limit.min(100), q.offset).await {
-        Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
+        Ok(r) => {
+            let total = r.len();
+            Json(serde_json::json!({"events": r, "total": total})).into_response()
+        }
         Err(e) => err_internal(e),
     }
 }

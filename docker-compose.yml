@@ -114,20 +114,22 @@ services:
       - full-dev
     restart: unless-stopped
 
-  # MCP service — uses sy-core binary with mcp-server mode
+  # MCP service — runs sy-core on port 3001 for MCP tool serving.
   sy-mcp:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    # MCP sidecar doesn't need AGNOS — skip the combined entrypoint.
-    entrypoint: ['secureyeoman']
-    command: ['mcp-server']
+    # MCP sidecar: run sy-core directly, skip combined entrypoint (no PG/Caddy/AGNOS).
+    entrypoint: ['/usr/local/bin/secureyeoman']
+    command: ['start']
     ports:
       - '3001:3001'
     volumes:
       - data:/home/secureyeoman/.secureyeoman
     env_file: .env.dev
     environment:
+      SECUREYEOMAN_HOST: '0.0.0.0'
+      SECUREYEOMAN_PORT: '3001'
       MCP_ENABLED: '${MCP_ENABLED:-true}'
       MCP_PORT: '3001'
       MCP_HOST: '0.0.0.0'

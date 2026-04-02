@@ -39,17 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(host) = std::env::var("SECUREYEOMAN_HOST") {
         config.host = host;
     }
-    if let Ok(port) = std::env::var("SECUREYEOMAN_PORT") {
-        if let Ok(p) = port.parse() {
-            config.port = p;
-        }
-    } else if std::env::var("PORT").is_ok() {
-        if let Ok(p) = std::env::var("PORT").unwrap().parse() {
+    let port_explicit = std::env::var("SECUREYEOMAN_PORT").ok().or_else(|| std::env::var("PORT").ok());
+    if let Some(ref port_str) = port_explicit {
+        if let Ok(p) = port_str.parse() {
             config.port = p;
         }
     }
-    // Default to 18789 when running as the primary server (not dev mode)
-    if config.port == 3001 {
+    // Default to 18789 when no port explicitly set (default config is 3001)
+    if port_explicit.is_none() && config.port == 3001 {
         config.port = 18789;
     }
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
