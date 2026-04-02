@@ -12,11 +12,26 @@ use crate::state::AppState;
 /// Dashboard expects `checks.database`, `checks.auditChain`, `checks.mcp`.
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let db_ok = state.db().is_some();
+    let tls_enabled = std::env::var("TLS_TERMINATED_BY_PROXY")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let external_url = std::env::var("SECUREYEOMAN_EXTERNAL_URL").unwrap_or_default();
+    let network_mode = if !external_url.is_empty() && tls_enabled {
+        "public"
+    } else if tls_enabled {
+        "public" // TLS on LAN = treat as secured
+    } else if state.config().host == "0.0.0.0" {
+        "lan"
+    } else {
+        "local"
+    };
+
     Json(serde_json::json!({
         "status": if db_ok { "ok" } else { "degraded" },
         "version": state.version(),
         "uptimeSeconds": state.uptime_seconds(),
         "environment": state.config().environment,
+        "networkMode": network_mode,
         "checks": {
             "database": db_ok,
             "auditChain": db_ok,
