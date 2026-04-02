@@ -91,12 +91,8 @@ async fn list_pending(
             .into_response();
     };
     match capture::list_pending(pool, q.limit.min(100), q.offset).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Ok(rows) => Json(serde_json::json!({"consents": rows})).into_response(),
+        Err(_) => Json(serde_json::json!({"consents": []})).into_response(),
     }
 }
 

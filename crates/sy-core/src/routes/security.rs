@@ -6,7 +6,7 @@ use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -125,6 +125,7 @@ pub fn router() -> Router<AppState> {
         // ── Security policy ──
         .route("/api/v1/security/policy", get(get_security_policy))
         .route("/api/v1/security/policy", put(update_security_policy))
+        .route("/api/v1/security/policy", patch(patch_security_policy))
         // ── Security scans ──
         .route("/api/v1/security/scans", get(list_security_scans))
         .route("/api/v1/security/scans", post(trigger_security_scan))
@@ -913,11 +914,57 @@ async fn get_security_policy(State(s): State<AppState>) -> impl IntoResponse {
     let Some(pool) = s.db() else {
         return err_unavailable();
     };
-    match security::get_security_policy(pool, "default").await {
-        Ok(Some(r)) => Json(serde_json::to_value(r).unwrap()).into_response(),
-        Ok(None) => not_found("No security policy configured"),
-        Err(e) => err_internal(e),
+    // security.policy is a key/value table: key='security_policy', value=JSON string
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM security.policy WHERE key = 'security_policy'"
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    match row {
+        Some((json_str,)) => {
+            let val: serde_json::Value = serde_json::from_str(&json_str)
+                .unwrap_or_else(|_| default_security_policy());
+            Json(val).into_response()
+        }
+        None => Json(default_security_policy()).into_response(),
     }
+}
+
+fn default_security_policy() -> serde_json::Value {
+    serde_json::json!({
+        "allowSubAgents": false,
+        "allowA2A": false,
+        "allowSwarms": false,
+        "allowExtensions": false,
+        "allowExecution": false,
+        "allowProactive": false,
+        "allowWorkflows": false,
+        "allowCommunityGitFetch": false,
+        "allowExperiments": false,
+        "allowStorybook": false,
+        "allowMultimodal": false,
+        "allowDesktopControl": false,
+        "allowCamera": false,
+        "allowDynamicTools": false,
+        "sandboxDynamicTools": false,
+        "allowAnomalyDetection": false,
+        "allowSimulation": false,
+        "sandboxFirecracker": false,
+        "sandboxGvisor": false,
+        "sandboxWasm": false,
+        "sandboxCredentialProxy": false,
+        "allowNetworkTools": false,
+        "allowNetBoxWrite": false,
+        "allowTwingate": false,
+        "allowOrgIntent": false,
+        "allowIntent": false,
+        "allowIntentEditor": false,
+        "allowKnowledgeBase": false,
+        "allowCodeEditor": false,
+        "allowAdvancedEditor": false,
+    })
 }
 
 #[derive(Deserialize)]
@@ -950,6 +997,56 @@ async fn update_security_policy(
         Ok(r) => Json(serde_json::to_value(r).unwrap()).into_response(),
         Err(e) => err_internal(e),
     }
+}
+
+/// PATCH /api/v1/security/policy — partial update (toggles from dashboard).
+async fn patch_security_policy(
+    State(s): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(pool) = s.db() else {
+        return err_unavailable();
+    };
+
+    // Load existing policy or defaults
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM security.policy WHERE key = 'security_policy'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let mut current = match row {
+        Some((json_str,)) => {
+            serde_json::from_str(&json_str).unwrap_or_else(|_| default_security_policy())
+        }
+        None => default_security_policy(),
+    };
+
+    // Merge incoming fields
+    if let (Some(current_obj), Some(body_obj)) = (current.as_object_mut(), body.as_object()) {
+        for (key, value) in body_obj {
+            current_obj.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Upsert to key/value table
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let json_str = serde_json::to_string(&current).unwrap_or_default();
+
+    let _ = sqlx::query(
+        "INSERT INTO security.policy (key, value, updated_at) VALUES ('security_policy', $1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2",
+    )
+    .bind(&json_str)
+    .bind(now)
+    .execute(pool)
+    .await;
+
+    Json(current).into_response()
 }
 
 // ── Security scans ────────────────────────────────────────────────────────────

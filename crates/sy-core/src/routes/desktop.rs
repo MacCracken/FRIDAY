@@ -13,6 +13,8 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/desktop/status", get(desktop_status))
+        .route("/api/v1/desktop/recording/active", get(active_recordings))
+        .route("/api/v1/desktop/recording/stop", post(stop_recording))
         .route("/api/v1/desktop/windows", get(list_windows))
         .route("/api/v1/desktop/capture", post(capture_screen))
         .route("/api/v1/desktop/sessions", get(list_sessions))
@@ -166,4 +168,21 @@ async fn end_session(State(state): State<AppState>, Path(id): Path<String>) -> i
         )
             .into_response(),
     }
+}
+
+async fn active_recordings() -> impl IntoResponse {
+    Json(serde_json::json!({"recordings": []}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StopRecordingRequest {
+    session_id: String,
+}
+
+async fn stop_recording(Json(body): Json<StopRecordingRequest>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "sessionId": body.session_id,
+        "status": "stopped",
+    }))
 }
