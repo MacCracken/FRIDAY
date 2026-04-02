@@ -43,12 +43,12 @@ if [ "$TLS_ENABLED" = "true" ]; then
 
     envsubst < /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile
 
-    # Fastify serves HTTP on 0.0.0.0:18789 for internal container traffic;
+    # sy-core serves HTTP on 0.0.0.0:18789 for internal container traffic;
     # Caddy terminates TLS on 443 for external access.
     export SECUREYEOMAN_HOST="${SECUREYEOMAN_HOST:-0.0.0.0}"
-    export SECUREYEOMAN_TLS_ENABLED="false"  # Fastify stays HTTP; Caddy terminates TLS
-    export TLS_ENABLED="false"               # Ensure Fastify doesn't pick up TLS from env_file
-    export TLS_TERMINATED_BY_PROXY="true"    # Tell Fastify TLS is handled by Caddy (for networkMode/health)
+    export SECUREYEOMAN_TLS_ENABLED="false"  # sy-core stays HTTP; Caddy terminates TLS
+    export TLS_ENABLED="false"               # Ensure sy-core doesn't pick up TLS from env_file
+    export TLS_TERMINATED_BY_PROXY="true"    # Tell sy-core TLS is handled by Caddy
 
     # Write supervisord override to enable caddy
     cat > /tmp/supervisord-caddy.conf <<OVERRIDE
@@ -56,7 +56,7 @@ if [ "$TLS_ENABLED" = "true" ]; then
 autostart=true
 OVERRIDE
 else
-    echo "TLS disabled — Fastify serves HTTP directly"
+    echo "TLS disabled — sy-core serves HTTP directly"
     # Ensure caddy stays off
     cat > /tmp/supervisord-caddy.conf <<OVERRIDE
 [program:caddy]

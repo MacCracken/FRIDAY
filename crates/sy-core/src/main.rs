@@ -34,7 +34,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .init();
 
-    let config = sy_types::CoreConfig::default();
+    let mut config = sy_types::CoreConfig::default();
+    // Override from environment (matches docker-compose env vars)
+    if let Ok(host) = std::env::var("SECUREYEOMAN_HOST") {
+        config.host = host;
+    }
+    if let Ok(port) = std::env::var("SECUREYEOMAN_PORT") {
+        if let Ok(p) = port.parse() {
+            config.port = p;
+        }
+    } else if std::env::var("PORT").is_ok() {
+        if let Ok(p) = std::env::var("PORT").unwrap().parse() {
+            config.port = p;
+        }
+    }
+    // Default to 18789 when running as the primary server (not dev mode)
+    if config.port == 3001 {
+        config.port = 18789;
+    }
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
 
     let mut app_state = state::AppState::new(config);

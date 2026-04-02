@@ -1,59 +1,85 @@
-# Dockerfile.dev — Node.js multi-stage build on AGNOS base
+# Dockerfile.dev — Rust + Dashboard build on AGNOS base
 #
-# Builder: node:22-alpine (compiles TypeScript)
-# Runtime: ghcr.io/maccracken/agnosticos:latest (LLM Gateway + Agent Runtime built-in)
+# Builder 1: Rust (compiles sy-core binary)
+# Builder 2: Node (compiles dashboard SPA only)
+# Runtime: ghcr.io/maccracken/agnosticos:2026.3.31 (LLM Gateway + Agent Runtime)
+#
+# No Node.js in the runtime image. sy-core is the sole application process.
 #
 # Used by docker-compose.yml for local docker compose up.
-#
-# For production deployments use the binary-based Dockerfile instead:
-#   npm run build:binary
-#   docker build -t secureyeoman .
 
-# ---- builder ----
-# Pin: update digest with: docker manifest inspect node:22-alpine | jq -r '.manifests[0].digest'
-# Last verified: 2026-03-12
+# Build args (must be before FROM to be usable in FROM lines)
 ARG NODE_IMAGE=node:22-alpine
-FROM ${NODE_IMAGE} AS builder
+
+# ---- rust builder ----
+FROM rust:1.91 AS rust-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace manifests for layer caching
+COPY crates/Cargo.toml crates/Cargo.toml
+COPY crates/sy-crypto/Cargo.toml crates/sy-crypto/Cargo.toml
+COPY crates/sy-hwprobe/Cargo.toml crates/sy-hwprobe/Cargo.toml
+COPY crates/sy-tee/Cargo.toml crates/sy-tee/Cargo.toml
+COPY crates/sy-privacy/Cargo.toml crates/sy-privacy/Cargo.toml
+COPY crates/sy-audit/Cargo.toml crates/sy-audit/Cargo.toml
+COPY crates/sy-sandbox/Cargo.toml crates/sy-sandbox/Cargo.toml
+COPY crates/sy-edge/Cargo.toml crates/sy-edge/Cargo.toml
+COPY crates/sy-types/Cargo.toml crates/sy-types/Cargo.toml
+COPY crates/sy-core/Cargo.toml crates/sy-core/Cargo.toml
+
+# Create stub lib.rs files for dependency caching
+RUN for d in sy-crypto sy-hwprobe sy-tee sy-privacy sy-audit sy-sandbox sy-edge sy-types; do \
+      mkdir -p crates/$d/src && echo "" > crates/$d/src/lib.rs; \
+    done && \
+    mkdir -p crates/sy-core/src && echo "fn main() {}" > crates/sy-core/src/main.rs
+
+# Pre-fetch and compile dependencies (cached layer)
+RUN cd crates && cargo build --release -p sy-core 2>/dev/null || true
+
+# Copy actual source
+COPY crates/ crates/
+
+# Build sy-core binary
+RUN cd crates && cargo build --release -p sy-core && \
+    cp target/release/sy-core /build/sy-core
+
+# ---- dashboard builder ----
+FROM ${NODE_IMAGE} AS dashboard-builder
 
 WORKDIR /app
 
-# Copy workspace manifests for layer caching
+# Copy workspace manifests for layer caching — include core's package.json
+# for transitive type deps (@types/node), but we don't build core.
 COPY .npmrc package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/core/package.json packages/core/
-COPY packages/mcp/package.json packages/mcp/
 COPY packages/dashboard/package.json packages/dashboard/
 
-# --ignore-scripts: skip "prepare" hook (git config for .githooks) — no .git in builder
-# npm install (not ci): tolerates transitive deps with unavailable git URLs (e.g. baileys → libsignal)
-# --include=optional: ensure platform-specific binaries (rollup musl) are installed in Alpine
 RUN npm install --ignore-scripts --include=optional
 
-# Copy source
 COPY tsconfig.json ./
-COPY packages/ packages/
+COPY packages/shared/ packages/shared/
+COPY packages/dashboard/ packages/dashboard/
 
-# Build: shared → core + mcp + dashboard
-RUN npm run build
+# Build shared + dashboard only (core is Rust now)
+RUN npm run build --workspace=@secureyeoman/shared && \
+    npm run build --workspace=@secureyeoman/dashboard
 
 # ---- runtime ----
 FROM ghcr.io/maccracken/agnosticos:2026.3.31
 
 USER root
 
-# Install Node.js 22 on Debian bookworm
+# Runtime deps — NO Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget \
-    ca-certificates \
-    gnupg \
- && mkdir -p /etc/apt/keyrings \
- && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
- && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
-    > /etc/apt/sources.list.d/nodesource.list \
- && apt-get update && apt-get install -y --no-install-recommends nodejs gettext-base supervisor \
+    gettext-base \
+    supervisor \
     postgresql-17 postgresql-17-pgvector gosu \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 1001 secureyeoman && useradd -u 1001 -g secureyeoman -G agnos -d /home/secureyeoman -m secureyeoman \
@@ -69,28 +95,15 @@ RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /us
 
 ENV COMMUNITY_REPO_PATH=/usr/share/secureyeoman/community-repo
 
-WORKDIR /app
+# Copy the sy-core binary
+COPY --from=rust-builder /build/sy-core /usr/local/bin/secureyeoman
+RUN chmod +x /usr/local/bin/secureyeoman
 
-# Workspace root (for package resolution)
-COPY --from=builder /app/package.json /app/package-lock.json ./
-COPY --from=builder /app/node_modules ./node_modules/
+# SQL migration files (if they exist — ignore if not present)
+COPY dist/migration[s]/ /usr/local/bin/migrations/
 
-# shared
-COPY --from=builder /app/packages/shared/package.json packages/shared/
-COPY --from=builder /app/packages/shared/dist packages/shared/dist/
-
-# core
-COPY --from=builder /app/packages/core/package.json packages/core/
-COPY --from=builder /app/packages/core/dist packages/core/dist/
-COPY --from=builder /app/packages/core/node_modules packages/core/node_modules/
-
-# mcp (used by the mcp-server subcommand)
-COPY --from=builder /app/packages/mcp/package.json packages/mcp/
-COPY --from=builder /app/packages/mcp/dist packages/mcp/dist/
-COPY --from=builder /app/packages/mcp/node_modules packages/mcp/node_modules/
-
-# dashboard (served by core gateway via @fastify/static)
-COPY --from=builder /app/packages/dashboard/dist packages/dashboard/dist/
+# Dashboard SPA (served by sy-core via static file serving)
+COPY --from=dashboard-builder /app/packages/dashboard/dist /usr/share/secureyeoman/dashboard/
 
 # Embedded PostgreSQL config
 COPY docker/postgresql.conf /etc/postgresql/postgresql.conf
@@ -107,11 +120,14 @@ RUN mkdir -p /var/log/supervisor /etc/caddy /data/caddy \
 COPY docker/entrypoint-combined.sh /usr/local/bin/entrypoint-combined.sh
 RUN chmod +x /usr/local/bin/entrypoint-combined.sh
 
+# Use JSON log format
+ENV SECUREYEOMAN_LOG_FORMAT=json
+
 EXPOSE 18789 443 5432 8088 8090
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-  CMD node /app/packages/core/dist/cli.js health --json || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["curl", "-sf", "http://127.0.0.1:18789/health"]
 
 # Entrypoint runs as root for PG init; supervisord drops to secureyeoman/postgres per program.
 ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint-combined.sh"]
-CMD ["node", "/app/packages/core/dist/cli.js", "start"]
+CMD ["secureyeoman", "start"]
