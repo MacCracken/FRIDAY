@@ -265,6 +265,25 @@ async fn chat_stream(
         None
     };
 
+    // Inject brain context (memories + knowledge) into system prompt
+    let mut system_prompt = system_prompt;
+    if let Some(brain) = state.brain() {
+        match brain
+            .get_relevant_context(&body.message, body.personality_id.as_deref())
+            .await
+        {
+            Ok(context) if !context.is_empty() => {
+                let sp = system_prompt.get_or_insert_with(String::new);
+                sp.push_str("\n\n");
+                sp.push_str(&context);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to retrieve brain context");
+            }
+            _ => {}
+        }
+    }
+
     // Build OpenAI-compatible messages array
     let mut messages = Vec::with_capacity(body.history.len() + 2);
 
@@ -486,16 +505,17 @@ async fn chat_stream(
 
     let provider_name = if is_anthropic { "anthropic" } else if has_openai { "openai" } else { "hoosh" };
 
+    // Resolve the conversation ID for persistence and the done event
+    let conv_id = body
+        .conversation_id
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .unwrap_or("")
+        .to_string();
+
     // Persist messages to DB if we have a conversation
     // (Dashboard creates the conversation before sending the stream request)
     if let Some(pool) = state.db() {
-        let conv_id = match body.conversation_id {
-            Some(ref cid) if !cid.is_empty() => cid.clone(),
-            _ => {
-                // No conversation ID — skip persistence (dashboard will retry with one)
-                String::new()
-            }
-        };
         if conv_id.is_empty() {
             // Skip message persistence — no conversation to attach to
         } else {
@@ -519,17 +539,18 @@ async fn chat_stream(
     }
 
     // Final done event with all fields the dashboard expects
-    events.push(Ok(Event::default().data(
-        serde_json::json!({
-            "type": "done",
-            "content": full_content,
-            "model": response_model,
-            "provider": provider_name,
-            "tokensUsed": tokens_used,
-            "creationEvents": [],
-        })
-        .to_string(),
-    )));
+    let mut done_event = serde_json::json!({
+        "type": "done",
+        "content": full_content,
+        "model": response_model,
+        "provider": provider_name,
+        "tokensUsed": tokens_used,
+        "creationEvents": [],
+    });
+    if !conv_id.is_empty() {
+        done_event["conversationId"] = serde_json::Value::String(conv_id);
+    }
+    events.push(Ok(Event::default().data(done_event.to_string())));
 
     Sse::new(tokio_stream::iter(events))
         .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))

@@ -37,13 +37,17 @@ pub async fn get_server(pool: &PgPool, id: &str) -> Result<Option<McpServerRow>,
 pub struct McpToolRow {
     pub name: String,
     pub server_id: String,
+    pub server_name: Option<String>,
     pub description: Option<String>,
     pub input_schema: Option<serde_json::Value>,
 }
 
 pub async fn list_tools(pool: &PgPool) -> Result<Vec<McpToolRow>, sqlx::Error> {
     sqlx::query_as::<_, McpToolRow>(
-        "SELECT name, server_id, description, input_schema FROM mcp.server_tools ORDER BY name ASC",
+        "SELECT t.name, t.server_id, s.name as server_name, t.description, t.input_schema
+         FROM mcp.server_tools t
+         LEFT JOIN mcp.servers s ON t.server_id = s.id
+         ORDER BY t.name ASC",
     )
     .fetch_all(pool)
     .await

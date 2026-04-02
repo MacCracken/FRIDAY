@@ -8,9 +8,26 @@ use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 
 use crate::db::models as model_db;
 use crate::state::AppState;
+
+/// In-memory cache for model info (provider model lists are slow to query).
+struct ModelInfoCache {
+    data: Option<serde_json::Value>,
+    fetched_at: std::time::Instant,
+}
+
+static MODEL_INFO_CACHE: LazyLock<Mutex<ModelInfoCache>> = LazyLock::new(|| {
+    Mutex::new(ModelInfoCache {
+        data: None,
+        fetched_at: std::time::Instant::now(),
+    })
+});
+
+const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -150,64 +167,204 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response();
     };
-    // Check which providers are actually configured
-    let has_openai = std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
-    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false);
-    // Hoosh/AGNOS gateway: only count as available if an API key is explicitly set,
-    // OR if there's a non-default URL. The gateway runs inside the container by default
-    // but has no LLM providers without configuration.
+
+    // Return cached result if still fresh
+    {
+        let cache = MODEL_INFO_CACHE.lock().await;
+        if let Some(ref data) = cache.data {
+            if cache.fetched_at.elapsed() < MODEL_CACHE_TTL {
+                return Json(data.clone()).into_response();
+            }
+        }
+    }
+
+    // Query actual providers for available models
+    let client = reqwest::Client::new();
+    let mut available: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+    // Anthropic — fetch models from API
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !key.is_empty() {
+            match client
+                .get("https://api.anthropic.com/v1/models")
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01")
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        let models: Vec<serde_json::Value> = data
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .map(|m| {
+                                        serde_json::json!({
+                                            "id": m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                            "name": m.get("display_name").or_else(|| m.get("id")).and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !models.is_empty() {
+                            available.insert("anthropic".into(), serde_json::json!(models));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // OpenAI — fetch models from API
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            match client
+                .get("https://api.openai.com/v1/models")
+                .bearer_auth(&key)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        let models: Vec<serde_json::Value> = data
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter(|m| {
+                                        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                        id.starts_with("gpt-") || id.starts_with("o1") || id.starts_with("o3")
+                                    })
+                                    .map(|m| {
+                                        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                        serde_json::json!({"id": id, "name": id})
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !models.is_empty() {
+                            available.insert("openai".into(), serde_json::json!(models));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Ollama — fetch local models
+    let ollama_url = std::env::var("OLLAMA_HOST")
+        .or_else(|_| std::env::var("OLLAMA_URL"))
+        .unwrap_or_else(|_| "http://localhost:11434".into());
+    if let Ok(resp) = client
+        .get(format!("{ollama_url}/api/tags"))
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                let models: Vec<serde_json::Value> = data
+                    .get("models")
+                    .and_then(|m| m.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|m| {
+                                let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                serde_json::json!({"id": name, "name": name})
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !models.is_empty() {
+                    available.insert("ollama".into(), serde_json::json!(models));
+                }
+            }
+        }
+    }
+
+    // Hoosh/AGNOS gateway
     let has_hoosh = std::env::var("AGNOS_GATEWAY_API_KEY").map(|k| !k.is_empty()).unwrap_or(false)
         || std::env::var("HOOSH_URL").map(|u| !u.is_empty()).unwrap_or(false);
-
-    let mut available: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    if has_openai {
-        available.insert("openai".into(), serde_json::json!([
-            {"id": "gpt-4o", "name": "GPT-4o"},
-            {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
-        ]));
-    }
-    if has_anthropic {
-        available.insert("anthropic".into(), serde_json::json!([
-            {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
-            {"id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5"},
-        ]));
-    }
     if has_hoosh {
-        available.insert("hoosh".into(), serde_json::json!([
-            {"id": "default", "name": "AGNOS Gateway (auto-route)"},
-        ]));
+        let hoosh_url = std::env::var("HOOSH_URL")
+            .or_else(|_| std::env::var("AGNOS_GATEWAY_URL"))
+            .unwrap_or_else(|_| "http://127.0.0.1:8088".into());
+        if let Ok(resp) = client
+            .get(format!("{hoosh_url}/v1/models"))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    let models: Vec<serde_json::Value> = data
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|m| {
+                                    let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    serde_json::json!({"id": id, "name": id})
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !models.is_empty() {
+                        available.insert("hoosh".into(), serde_json::json!(models));
+                    }
+                }
+            }
+        }
     }
 
-    match model_db::get_model_info(pool, "default").await {
+    let has_openai = available.contains_key("openai");
+    let has_anthropic = available.contains_key("anthropic");
+
+    let result = match model_db::get_model_info(pool, "default").await {
         Ok(Some(row)) => {
             let provider = row.provider.clone();
             let model_name = row.model_name.clone();
-            Json(serde_json::json!({
+            serde_json::json!({
                 "current": {
                     "provider": provider,
                     "model": model_name,
                 },
                 "available": available,
-            }))
-            .into_response()
+            })
         }
         Ok(None) => {
             let default_provider = if has_hoosh { "hoosh" } else if has_openai { "openai" } else if has_anthropic { "anthropic" } else { "none" };
-            Json(serde_json::json!({
+            serde_json::json!({
                 "current": {
                     "provider": default_provider,
                     "model": "default",
                 },
                 "available": available,
-            }))
-            .into_response()
+            })
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    // Cache the successful result
+    {
+        let mut cache = MODEL_INFO_CACHE.lock().await;
+        cache.data = Some(result.clone());
+        cache.fetched_at = std::time::Instant::now();
     }
+
+    Json(result).into_response()
 }
 
 #[derive(Deserialize)]
@@ -248,7 +405,8 @@ async fn update_model_info(
 #[serde(rename_all = "camelCase")]
 struct SwitchModelRequest {
     provider: String,
-    model_name: String,
+    #[serde(alias = "modelName")]
+    model: String,
     config: Option<serde_json::Value>,
 }
 
@@ -271,14 +429,14 @@ async fn switch_model(
         &id,
         "default",
         &body.provider,
-        &body.model_name,
+        &body.model,
         &config,
     )
     .await
     {
-        Ok(row) => Json(serde_json::json!({
-            "switched": true,
-            "model": serde_json::to_value(row).unwrap(),
+        Ok(_row) => Json(serde_json::json!({
+            "success": true,
+            "model": body.model,
         }))
         .into_response(),
         Err(e) => (
