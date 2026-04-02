@@ -53,10 +53,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app_state = state::AppState::new(config);
 
-    // Connect to database if DATABASE_URL is set
-    match db::pool::create_pool().await {
+    // Connect to database — retry a few times for embedded PG startup
+    let pool_result = {
+        let mut result = db::pool::create_pool().await;
+        for attempt in 1..=5 {
+            if result.is_ok() { break; }
+            info!("Database not ready, retrying ({attempt}/5)...");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            result = db::pool::create_pool().await;
+        }
+        result
+    };
+    match pool_result {
         Ok(pool) => {
             info!("Connected to PostgreSQL");
+
+            // Load persisted secrets from DB and set as env vars
+            let secrets: Vec<(String, String)> = sqlx::query_as(
+                "SELECT key, value FROM security.policy WHERE key LIKE 'secret:%'",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+
+            for (key, value) in &secrets {
+                if let Some(name) = key.strip_prefix("secret:") {
+                    if !value.is_empty() {
+                        // SAFETY: runs at startup before any concurrent env reads
+                        unsafe { std::env::set_var(name, value) };
+                        info!(secret = name, "loaded persisted secret");
+                    }
+                }
+            }
+            if !secrets.is_empty() {
+                info!(count = secrets.len(), "persisted secrets loaded");
+            }
+
             app_state = app_state.with_db(pool);
         }
         Err(e) => {

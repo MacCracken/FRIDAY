@@ -7,13 +7,8 @@ dist/
 **/dist/
 *.tsbuildinfo
 
-# Bun compile target toolchain caches — bun build --compile --target bun-<os>-<arch>
-# downloads the target Bun binary into <target-name>/ in the CWD
-bun-linux-x64/
-bun-linux-arm64/
-bun-darwin-arm64/
-bun-darwin-x64/
-bun-windows-x64/
+# Build stats / benchmarks
+stats/
 
 # Vite / Vitest cache
 .vite/
@@ -47,9 +42,6 @@ Thumbs.db
 crates/target/
 crates/**/target/
 
-# Native addon binaries (built by napi-rs, not committed)
-packages/core/native/*.node
-
 # Lock files
 *.lock
 
@@ -68,9 +60,6 @@ certs/
 
 # License signing key (maintainer only — never commit)
 .license-private.pem
-
-# Local config (machine-specific TLS paths etc.)
-secureyeoman.yaml
 
 # Community skills — managed via bind mount in Docker; lives in secureyeoman-community-repo repo
 community-repo/

@@ -8,7 +8,7 @@
 - **License**: AGPL-3.0-only
 - **Node**: >=22.0.0
 - **Rust**: Edition 2024, rust-version 1.89
-- **Version**: CalVer `YYYY.M.D`, patches `YYYY.M.D-N`. Set via `npm run version:set <version>` — NEVER edit version manually
+- **Version**: SemVer `MAJOR.MINOR.PATCH` starting from 0.5.0 (Rust-native era). Previous CalVer releases are historical
 
 ## Monorepo Structure
 

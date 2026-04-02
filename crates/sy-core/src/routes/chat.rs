@@ -37,6 +37,8 @@ struct PaginationQuery {
     limit: i64,
     #[serde(default)]
     offset: i64,
+    #[serde(rename = "personalityId")]
+    personality_id: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -55,7 +57,10 @@ async fn list_conversations(
             .into_response();
     };
     match chat::list_conversations(pool, "default", q.limit.min(100), q.offset).await {
-        Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
+        Ok(rows) => {
+            let total = rows.len();
+            Json(serde_json::json!({"conversations": rows, "total": total})).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -121,7 +126,15 @@ async fn get_conversation(
             .into_response();
     };
     match chat::get_conversation(pool, &id, "default").await {
-        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(Some(row)) => {
+            // Include messages in the response
+            let messages = chat::list_messages(pool, &id, 200, 0)
+                .await
+                .unwrap_or_default();
+            let mut val = serde_json::to_value(&row).unwrap();
+            val["messages"] = serde_json::to_value(&messages).unwrap();
+            Json(val).into_response()
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Conversation not found"})),
@@ -210,7 +223,7 @@ fn hoosh_base_url() -> String {
 /// - done: { type: "done", content: "...", model: "...", provider: "hoosh" }
 /// - error: { type: "error", message: "..." }
 async fn chat_stream(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(body): Json<ChatStreamRequest>,
 ) -> impl IntoResponse {
     if body.message.trim().is_empty() {
@@ -222,10 +235,47 @@ async fn chat_stream(
     }
 
     let base_url = hoosh_base_url();
-    let url = format!("{base_url}/v1/chat/completions");
+
+    // Load personality system prompt if personality_id is provided
+    let pid = body.personality_id.clone();
+    let system_prompt = if let (Some(pool), Some(pid)) = (state.db(), pid.as_deref()) {
+        match crate::db::soul::get_personality(pool, &pid, "default").await {
+            Ok(Some(p)) => {
+                // Build a system prompt from personality data
+                let mut prompt = p.system_prompt.clone();
+                if !p.description.is_empty() {
+                    prompt = format!("You are {}. {}\n\n{}", p.name, p.description, prompt);
+                }
+                // Inject trait disposition if traits are set
+                if let Some(traits_obj) = p.traits.as_object() {
+                    if !traits_obj.is_empty() {
+                        let trait_lines: Vec<String> = traits_obj
+                            .iter()
+                            .map(|(k, v)| format!("- {}: {}", k, v.as_str().unwrap_or("balanced")))
+                            .collect();
+                        prompt.push_str("\n\n## Personality Traits\n");
+                        prompt.push_str(&trait_lines.join("\n"));
+                    }
+                }
+                Some(prompt)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     // Build OpenAI-compatible messages array
-    let mut messages = Vec::with_capacity(body.history.len() + 1);
+    let mut messages = Vec::with_capacity(body.history.len() + 2);
+
+    // Prepend system prompt from personality
+    if let Some(ref sp) = system_prompt {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": sp,
+        }));
+    }
+
     for msg in &body.history {
         messages.push(serde_json::json!({
             "role": msg.role,
@@ -237,17 +287,90 @@ async fn chat_stream(
         "content": body.message,
     }));
 
-    let model = body.model.as_deref().unwrap_or("default");
+    // Detect available providers first
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
+    let openai_key = std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
 
-    let oai_body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "stream": true,
-    });
+    let has_anthropic = anthropic_key.is_some();
+    let has_openai = openai_key.is_some();
 
-    // POST to hoosh
+    // Default model based on available provider
+    let default_model = if has_anthropic { "claude-sonnet-4-6" } else if has_openai { "gpt-4o" } else { "default" };
+    let model = body.model.as_deref().unwrap_or(default_model);
+
+    let is_anthropic = model.contains("claude")
+        || model.contains("anthropic")
+        || (has_anthropic && !has_openai);
+
     let client = reqwest::Client::new();
-    let response = match client.post(&url).json(&oai_body).send().await {
+    let response = if is_anthropic {
+        let key = match &anthropic_key {
+            Some(k) => k,
+            None => {
+                let event = Event::default().data(
+                    serde_json::json!({"type": "error", "message": "ANTHROPIC_API_KEY not configured"}).to_string(),
+                );
+                return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
+            }
+        };
+        // Anthropic: extract system messages into top-level `system` param
+        let (system_msgs, user_msgs): (Vec<_>, Vec<_>) = messages
+            .iter()
+            .partition(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"));
+        let system_text = system_msgs
+            .iter()
+            .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "messages": user_msgs,
+            "stream": true,
+        });
+        if !system_text.is_empty() {
+            body["system"] = serde_json::Value::String(system_text);
+        }
+
+        client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+    } else if let Some(ref key) = openai_key {
+        client
+            .post("https://api.openai.com/v1/chat/completions")
+            .bearer_auth(key)
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": true,
+            }))
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+    } else {
+        client
+            .post(&format!("{base_url}/v1/chat/completions"))
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": true,
+            }))
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+    };
+
+    let response = match response {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
             let status = r.status().as_u16();
@@ -277,10 +400,11 @@ async fn chat_stream(
         }
     };
 
-    // Parse OpenAI SSE lines and accumulate content
+    // Parse SSE lines and accumulate content
     let mut full_content = String::new();
     let mut events: Vec<Result<Event, Infallible>> = Vec::new();
     let mut response_model = model.to_string();
+    let mut tokens_used: u64 = 0;
 
     for line in response_text.lines() {
         let line = line.trim();
@@ -295,6 +419,18 @@ async fn chat_stream(
                 // Extract model from first chunk
                 if let Some(m) = chunk.get("model").and_then(|v| v.as_str()) {
                     response_model = m.to_string();
+                }
+                // Extract usage from OpenAI final chunk or Anthropic events
+                if let Some(usage) = chunk.get("usage") {
+                    if let Some(total) = usage.get("total_tokens").and_then(|t| t.as_u64()) {
+                        tokens_used = total;
+                    }
+                    // Anthropic: input_tokens + output_tokens
+                    let input = usage.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                    let output = usage.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                    if input + output > tokens_used {
+                        tokens_used = input + output;
+                    }
                 }
                 // Extract content delta from choices[0].delta.content
                 if let Some(content) = chunk
@@ -315,13 +451,82 @@ async fn chat_stream(
         }
     }
 
-    // Final done event
+    // If no content from OpenAI format, try Anthropic format
+    // Anthropic SSE: `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
+    if full_content.is_empty() {
+        for line in response_text.lines() {
+            let line = line.trim();
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                    // Anthropic content_block_delta
+                    if let Some(text) = chunk
+                        .get("delta")
+                        .and_then(|d| d.get("text"))
+                        .and_then(|t| t.as_str())
+                        .filter(|t| !t.is_empty())
+                    {
+                        full_content.push_str(text);
+                        events.push(Ok(Event::default().data(
+                            serde_json::json!({"type": "content_delta", "content": text})
+                                .to_string(),
+                        )));
+                    }
+                    // Anthropic message_start — extract model
+                    if let Some(m) = chunk
+                        .get("message")
+                        .and_then(|msg| msg.get("model"))
+                        .and_then(|m| m.as_str())
+                    {
+                        response_model = m.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let provider_name = if is_anthropic { "anthropic" } else if has_openai { "openai" } else { "hoosh" };
+
+    // Persist messages to DB if we have a conversation
+    // (Dashboard creates the conversation before sending the stream request)
+    if let Some(pool) = state.db() {
+        let conv_id = match body.conversation_id {
+            Some(ref cid) if !cid.is_empty() => cid.clone(),
+            _ => {
+                // No conversation ID — skip persistence (dashboard will retry with one)
+                String::new()
+            }
+        };
+        if conv_id.is_empty() {
+            // Skip message persistence — no conversation to attach to
+        } else {
+
+        // Save user message
+        let user_msg_id = uuid::Uuid::now_v7().to_string();
+        let _ = chat::insert_message(
+            pool, &user_msg_id, &conv_id, "user", &body.message,
+            Some(model), Some(provider_name), None,
+        ).await;
+
+        // Save assistant message
+        if !full_content.is_empty() {
+            let asst_msg_id = uuid::Uuid::now_v7().to_string();
+            let _ = chat::insert_message(
+                pool, &asst_msg_id, &conv_id, "assistant", &full_content,
+                Some(&response_model), Some(provider_name), Some(tokens_used as i32),
+            ).await;
+        }
+        } // end else (conv_id not empty)
+    }
+
+    // Final done event with all fields the dashboard expects
     events.push(Ok(Event::default().data(
         serde_json::json!({
             "type": "done",
             "content": full_content,
             "model": response_model,
-            "provider": "hoosh",
+            "provider": provider_name,
+            "tokensUsed": tokens_used,
+            "creationEvents": [],
         })
         .to_string(),
     )));
@@ -364,7 +569,10 @@ async fn chat_complete(
         "content": body.message,
     }));
 
-    let model = body.model.as_deref().unwrap_or("default");
+    let anthropic_avail = std::env::var("ANTHROPIC_API_KEY").ok().filter(|k| !k.is_empty()).is_some();
+    let openai_avail = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()).is_some();
+    let def_model = if anthropic_avail { "claude-sonnet-4-6" } else if openai_avail { "gpt-4o" } else { "default" };
+    let model = body.model.as_deref().unwrap_or(def_model);
 
     let oai_body = serde_json::json!({
         "model": model,

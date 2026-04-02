@@ -122,6 +122,25 @@ struct UpdatePersonalityRequest {
     system_prompt: String,
     #[serde(default = "default_traits")]
     traits: serde_json::Value,
+    // Accept the full body blob — includes mcpFeatures, activeHours, capabilities, etc.
+    #[serde(default)]
+    body: Option<serde_json::Value>,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    sex: Option<String>,
+    #[serde(default)]
+    preferred_language: Option<String>,
+    #[serde(default)]
+    include_archetypes: Option<bool>,
+    #[serde(default)]
+    inject_date_time: Option<bool>,
+    #[serde(default)]
+    empathy_resonance: Option<bool>,
+    #[serde(default)]
+    brain_config: Option<serde_json::Value>,
+    #[serde(default)]
+    default_model: Option<serde_json::Value>,
 }
 
 async fn update_personality(
@@ -143,11 +162,17 @@ async fn update_personality(
         &body.description,
         &body.system_prompt,
         &body.traits,
+        body.body.as_ref(),
+        body.voice.as_deref(),
+        body.sex.as_deref(),
+        body.include_archetypes,
+        body.brain_config.as_ref(),
+        body.default_model.as_ref(),
         "default",
     )
     .await
     {
-        Ok(Some(row)) => Json(serde_json::to_value(row).unwrap()).into_response(),
+        Ok(Some(row)) => Json(serde_json::json!({"personality": row})).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Personality not found"})),

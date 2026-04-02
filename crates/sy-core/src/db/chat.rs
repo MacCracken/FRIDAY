@@ -102,6 +102,35 @@ pub async fn delete_conversation(
     Ok(result.rows_affected() > 0)
 }
 
+/// Insert a chat message.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_message(
+    pool: &PgPool,
+    id: &str,
+    conversation_id: &str,
+    role: &str,
+    content: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    tokens_used: Option<i32>,
+) -> Result<MessageRow, sqlx::Error> {
+    sqlx::query_as::<_, MessageRow>(
+        "INSERT INTO chat.messages (id, conversation_id, role, content, model, provider, tokens_used, attachments_json, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, $8)
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(conversation_id)
+    .bind(role)
+    .bind(content)
+    .bind(model)
+    .bind(provider)
+    .bind(tokens_used)
+    .bind(now_ms())
+    .fetch_one(pool)
+    .await
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -36,24 +36,72 @@ struct GatewayProxyRequest {
 async fn gateway_proxy(Json(body): Json<GatewayProxyRequest>) -> impl IntoResponse {
     let model = body.model.clone().unwrap_or_else(|| "default".to_string());
 
-    // Try to proxy to Hoosh/AGNOS LLM Gateway
-    let hoosh_url = std::env::var("HOOSH_URL")
-        .or_else(|_| std::env::var("AGNOS_GATEWAY_URL"))
-        .unwrap_or_else(|_| "http://127.0.0.1:8088".to_string());
-
     let client = reqwest::Client::new();
-    let mut req = client
-        .post(format!("{hoosh_url}/v1/chat/completions"))
-        .json(&serde_json::json!({
-            "model": model,
-            "messages": body.messages,
-            "stream": false,
-        }))
-        .timeout(std::time::Duration::from_secs(120));
 
-    if let Ok(key) = std::env::var("AGNOS_GATEWAY_API_KEY") {
-        req = req.bearer_auth(key);
-    }
+    // Route to the appropriate provider based on model name or available keys
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
+    let openai_key = std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty());
+
+    let is_anthropic = model.contains("claude")
+        || model.contains("anthropic")
+        || (anthropic_key.is_some() && openai_key.is_none());
+
+    let mut req = if is_anthropic {
+        // Call Anthropic Messages API directly
+        let key = match &anthropic_key {
+            Some(k) => k.clone(),
+            None => {
+                return Json(serde_json::json!({
+                    "error": "ANTHROPIC_API_KEY not configured",
+                    "stub": true,
+                }))
+                .into_response();
+            }
+        };
+        client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 4096,
+                "messages": body.messages,
+            }))
+            .timeout(std::time::Duration::from_secs(120))
+    } else if let Some(ref key) = openai_key {
+        // Call OpenAI directly
+        client
+            .post("https://api.openai.com/v1/chat/completions")
+            .bearer_auth(key)
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": body.messages,
+            }))
+            .timeout(std::time::Duration::from_secs(120))
+    } else {
+        // Fall back to Hoosh/AGNOS LLM Gateway
+        let hoosh_url = std::env::var("HOOSH_URL")
+            .or_else(|_| std::env::var("AGNOS_GATEWAY_URL"))
+            .unwrap_or_else(|_| "http://127.0.0.1:8088".to_string());
+
+        let mut r = client
+            .post(format!("{hoosh_url}/v1/chat/completions"))
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": body.messages,
+                "stream": false,
+            }))
+            .timeout(std::time::Duration::from_secs(120));
+
+        if let Ok(key) = std::env::var("AGNOS_GATEWAY_API_KEY") {
+            r = r.bearer_auth(key);
+        }
+        r
+    };
 
     match req.send().await {
         Ok(resp) if resp.status().is_success() => {

@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: Phases 0-3, 5-7 complete. sy-core axum binary with **932 routes across 89 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters, auth (OAuth/SSO/SAML/WebAuthn), training (94 routes including judge, experiments, pretrain, federated, continual learning), security (100 routes including full SCIM v2, DLP, ATHI, SRA, constitutional AI, TEE, guardrail pipeline, WebAuthn, break-glass, access review, key rotation), agents (46 routes including swarms, councils, teams, profile skills), AI/chat (48 routes including batch inference, model management), integrations (forge, artifacts, registries, CI/CD timeline), eval harness, IaC, multimodal, policy-as-code, and 60+ sub-domain modules. **All TypeScript route files now have Rust counterparts** — HTTP layer migration complete. Phase 4 (daimon) in progress. Remaining Phase 7: config → TOML, CLI → clap. Then Phase 8 (manager/service logic port), Phase 9 (edge unification) and Phase 10 (flatten → 1.0.0).
+**Status**: **0.5.0 — Rust-native.** Node.js eliminated. sy-core is the sole application binary (23 MB, 932 routes, 89 modules). All managers wired (brain/RAG, orchestration, integration clients, bhava signal loop). sy-napi deleted. Ecosystem crates called directly. Dashboard running against pure Rust API with response shape fixes in progress. Remaining: dashboard compatibility sweep, flatten crates into sy-core, CLI → clap, config → TOML. Then 1.0.0.
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
@@ -462,4 +462,4 @@ See [dependency-watch.md](dependency-watch.md) for tracked third-party dependenc
 
 ---
 
-*Last updated: 2026-04-01. See [Changelog](../../CHANGELOG.md) for full history of completed work.*
+*Last updated: 2026-04-02. See [Changelog](../../CHANGELOG.md) for full history of completed work.*

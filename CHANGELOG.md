@@ -1,12 +1,21 @@
 # Changelog
 
-All notable changes to SecureYeoman are documented in this file. Versions correspond to git tags.
+All notable changes to SecureYeoman are documented in this file.
 
-**Versioning**: CalVer `YYYY.M.D` for daily releases, `YYYY.M.D-N` for same-day patches (e.g. `2026.3.12-1`). Set via `npm run version:set <version>`.
+**Versioning**: SemVer `MAJOR.MINOR.PATCH` starting from 0.5.0 (Rust-native era). Previous CalVer releases (`2026.M.D`) are preserved below as history.
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-04-02
+
+*The Rust-native release. Node.js removed from the runtime. sy-core is the sole application binary.*
+
+### Architecture — Pure Rust
+
+- **Node.js eliminated** — No Node, no npm, no node_modules in the runtime image. sy-core (23 MB binary) is the sole application process alongside PostgreSQL, Caddy, and AGNOS
+- **sy-napi removed** — The NAPI bridge crate is deleted. All ecosystem crates (bhava, szal, bote, dhvani, agnosai, majra) are called directly from sy-core via the `ecosystem` module — zero serialization overhead
+- **Fastify proxy removed** — No fallback to TypeScript. All 932 routes handled by axum
+- **Dockerfile.dev rewritten** — Rust builder + dashboard-only Node builder (for Vite SPA). No Node in the runtime stage
 
 ### Phase 7.7 — Route Migration Complete (932 routes, 89 modules)
 
@@ -34,9 +43,60 @@ All notable changes to SecureYeoman are documented in this file. Versions corres
 - **Architecture** — bhava computes what the entity feels, LLM renders what the entity says, SY orchestrates the loop. No personality logic in prompt engineering, no emotion math in the LLM, no orchestration in bhava. Clean separation, each layer in its domain
 - **Tests** — 20 Rust tests (zodiac, regulation, stress, energy, flow, circadian, monitor, signal tick), 31 TypeScript tests (fallback path + native path), 33 benchmarks (signal tick, monitor feed, regulation, subsystem ticks)
 
+### Phase 8 — Manager & Service Wiring
+
+All route handlers wired to real managers — routes call business logic, not just DB CRUD.
+
+- **BrainManager** — `remember()` embeds + vector indexes, `recall()` does hybrid semantic + FTS search with RRF merge + ACT-R activation ranking, `learn()` indexes knowledge, `forget()` cleans up vectors. Wired into brain routes: create_memory, search, delete, create_knowledge
+- **Embedding providers** — OpenAI (`/v1/embeddings`), Ollama (`/api/embed`), Hoosh/AGNOS gateway, Noop. Auto-selected from env vars at startup (OPENAI_API_KEY → OLLAMA_HOST → AGNOS_GATEWAY_URL → noop)
+- **Vector store** — `VectorStore` trait + `InMemoryVectorStore` (brute-force cosine similarity). Production backends (FAISS, Qdrant) plug in via the trait
+- **Chunker** — Sentence-aware overlapping text chunking (800 tokens, 15% overlap). Used by `ingest_text()`
+- **ACT-R activation** — `actr_activation(access_count, age_days)` + `composite_score()` combining content match, activation, Hebbian boost, salience, confidence
+- **Integration clients** — 8 typed API clients (GitHub, Jira, Notion, Linear, Todoist, Gmail, Google Calendar, Twitter). Auto-initialized from env vars. Routes use typed client when available, fall back to proxy
+- **HooshDelegate** — Real LLM delegation via AGNOS gateway `/v1/chat/completions`. Replaces EchoDelegate in workflow engine, swarm, council, and team executors
+- **Workflow engine wired** — `POST /workflows/{id}/run` spawns async DAG execution via `WorkflowEngine::execute()` with `HooshDelegate`. Updates run status (running → completed/failed) in DB
+- **Swarm executor wired** — `POST /swarms` loads template, spawns `SwarmExecutor::execute()` with sequential/parallel/dynamic strategies via Hoosh
+- **Council executor wired** — `POST /councils` loads template, spawns `CouncilExecutor::execute()` with multi-round deliberation + facilitator synthesis via Hoosh
+- **Team executor wired** — `POST /teams/{id}/run` loads team, spawns `TeamExecutor::execute()` with LLM-directed dynamic assignment via Hoosh
+- **Bhava signal loop wired** — `MoodEngine.signalTick()` runs decay → stress → energy → flow → circadian via composite state. `SoulManager.processSentimentFeedback()` triggers signal tick after LLM response. `composeSoulPrompt()` injects psychophysiological state (stress/energy/flow/alertness) into system prompt
+
+### Ecosystem — Direct Crate Integration
+
+All ecosystem crates now called directly from sy-core (previously via NAPI bridge):
+
+- **bhava 2.0** → `ecosystem::personality` — profile_from_traits, compose_system_prompt, signal_tick, apply_sentiment_feedback, zodiac_manifest. Zero JSON serialization
+- **szal 1.0** → `ecosystem::workflow_primitives` — evaluate_condition, resolve_template, validate_flow. Direct struct calls
+- **bote 0.50** → `ecosystem::tools` — ToolRegistry, CompiledSchema, validate_tool_input
+- **dhvani 1.0** → `ecosystem::voice` — G2P phoneme conversion, audio buffer types
+- **agnosai 1.0** — crew orchestration (dependency added, ready to wire)
+- **majra 1.0** — pub/sub, rate limiting, heartbeat (dependency added, ready to wire)
+
+### Dashboard Compatibility
+
+Response shape fixes for Rust API → React dashboard compatibility:
+
+- **22 list endpoints wrapped** — Raw arrays wrapped in expected objects (`{ personalities: [...] }`, `{ skills: [...] }`, `{ events: [...] }`, etc.) across soul, auth, integrations, MCP, agents, brain, spirit, security, marketplace, reports, extensions
+- **Health endpoint** — Added `checks.database`, `checks.auditChain`, `checks.mcp`, `networkMode` fields
+- **Security policy** — GET returns `SecurityPolicy` shape from key/value table, PATCH merges partial updates (toggle persistence)
+- **TLS status** — Returns `TlsCertStatus` shape from environment (Caddy config)
+- **Model info** — Returns `{ current, available }` shape with provider detection from env vars
+- **Audit chain** — Added `/audit/verify`, `/audit/repair`, `/audit/retention` endpoints + `chainValid` in stats
+- **Heartbeat** — Added `/brain/heartbeat/tasks` + `/brain/heartbeat/status` with correct `HeartbeatStatus` shape
+- **System metrics** — Real memory from `/proc/meminfo`, CPU from `/proc/loadavg`, correct `MetricsSnapshot` shape
+- **GPU probe** — `/system/gpu` via `sy-hwprobe::probe_all()`, `/system/local-models` via Ollama
+- **Capture** — Added `/desktop/recording/active` + `/desktop/recording/stop`, wrapped consent list
+- **Security events** — Graceful empty response when table doesn't exist (no 500)
+- **Login screen** — Shows "Public (TLS Secured)" when Caddy terminates TLS
+
 ### Infrastructure
 
-- **AGNOS Docker pin** — All Dockerfiles and docker-compose.yml pinned to `ghcr.io/maccracken/agnosticos:2026.3.31` (was `:latest`). Affected: Dockerfile, Dockerfile.dev, docker/Dockerfile.release, docker-compose.yml agnosticos service
+- **AGNOS Docker pin** — All Dockerfiles and docker-compose.yml pinned to `ghcr.io/maccracken/agnosticos:2026.3.31`
+- **Database pool** — Auto-composes `DATABASE_URL` from individual env vars (`DATABASE_HOST`, `DATABASE_USER`, `DATABASE_NAME`, `POSTGRES_PASSWORD`) when `DATABASE_URL` not set
+- **Port configuration** — `SECUREYEOMAN_PORT` / `SECUREYEOMAN_HOST` env vars respected. Default port 18789 for primary server
+- **Caddy proxy headers** — `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` forwarded to sy-core
+- **WebSocket auth bypass** — `/ws/` prefix added to public routes (WS auth handled by handler via `Sec-WebSocket-Protocol`)
+- **MCP sidecar** — Runs as second sy-core instance on port 3001 (no Node)
+- **Versioning** — Switched from CalVer (`YYYY.M.D`) to SemVer (`MAJOR.MINOR.PATCH`)
 
 ### Compliance Roadmap
 
@@ -44,6 +104,12 @@ Added compliance & certification section to roadmap:
 - **Tier 1**: ISO 42001 (AI management), SOC 2 Type II, ISO 27001 (information security)
 - **Tier 2**: ISO 9001 (quality), ISO 27701 (privacy/GDPR), EU AI Act
 - **Tier 3**: ISO 27017/27018 (cloud), FedRAMP
+
+---
+
+## Pre-0.5.0 (CalVer Era)
+
+*Historical releases from the TypeScript/hybrid architecture period.*
 
 ### Phase 7 — Route Expansion (328 routes, 49 modules)
 

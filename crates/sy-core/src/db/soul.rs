@@ -115,6 +115,7 @@ pub async fn create_personality(
 }
 
 /// Update an existing personality.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_personality(
     pool: &PgPool,
     id: &str,
@@ -122,17 +123,37 @@ pub async fn update_personality(
     description: &str,
     system_prompt: &str,
     traits: &serde_json::Value,
+    body: Option<&serde_json::Value>,
+    voice: Option<&str>,
+    sex: Option<&str>,
+    include_archetypes: Option<bool>,
+    brain_config: Option<&serde_json::Value>,
+    default_model: Option<&serde_json::Value>,
     tenant_id: &str,
 ) -> Result<Option<PersonalityRow>, sqlx::Error> {
     sqlx::query_as::<_, PersonalityRow>(
-        "UPDATE soul.personalities SET name = $1, description = $2, system_prompt = $3, traits = $4, updated_at = $5
-         WHERE id = $6 AND tenant_id = $7
+        "UPDATE soul.personalities SET
+            name = $1, description = $2, system_prompt = $3, traits = $4,
+            body = COALESCE($5, body),
+            voice = COALESCE($6, voice),
+            sex = COALESCE($7, sex),
+            include_archetypes = COALESCE($8, include_archetypes),
+            brain_config = COALESCE($9, brain_config),
+            default_model = COALESCE($10, default_model),
+            updated_at = $11
+         WHERE id = $12 AND tenant_id = $13
          RETURNING *",
     )
     .bind(name)
     .bind(description)
     .bind(system_prompt)
     .bind(traits)
+    .bind(body)
+    .bind(voice)
+    .bind(sex)
+    .bind(include_archetypes)
+    .bind(brain_config)
+    .bind(default_model)
     .bind(now_ms())
     .bind(id)
     .bind(tenant_id)
