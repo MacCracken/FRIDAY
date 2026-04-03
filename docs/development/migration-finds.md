@@ -307,10 +307,10 @@ These are implemented but functionally no-ops despite not being marked `todo!()`
 | R-3 | ~~**RBAC enforcement**~~ | P0 | Large | R-1 | **DONE** (15 tests, 5 roles) |
 | R-4 | ~~**Body size limits**~~ | P0 | Small | R-1 | **DONE** (4 tiers, 12 tests) |
 | R-5 | ~~**Backpressure + IP reputation**~~ | P1 | Medium | R-2 | **DONE** (IP rep: decay/LRU/8 tests; BP: 3 levels/8 tests) |
-| R-6 | **Ownership guards** | P1 | Large | R-3 |
+| R-6 | ~~**Ownership guards**~~ | P1 | Large | R-3 | **Phase 1 DONE** (trait + utility + 7 tests; handler wiring pending DB migration) |
 | R-7 | ~~**Local network check**~~ | P1 | Small | R-1 | **DONE** (RFC1918+loopback, 14 tests) |
 | R-8 | **Request fingerprinting** | P2 | Medium | R-5 |
-| R-9 | **Fix chat streaming** | P1 | Medium | — |
+| R-9 | ~~**Fix chat streaming**~~ | P1 | Medium | — | **DONE** (channel-based true SSE) |
 | R-10 | **Dashboard endpoint gap-fill** | P1 | Large | R-3 |
 | R-11 | **Response shape alignment** | P1 | Medium | R-10 |
 | R-12 | ~~**Integration test harness**~~ | P0 | Medium | R-1 | **DONE** (lib.rs + 8 tests) |

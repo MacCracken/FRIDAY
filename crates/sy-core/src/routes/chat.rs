@@ -413,108 +413,7 @@ async fn chat_stream(
         }
     };
 
-    // Read the OpenAI SSE response body and map to SY events.
-    // OpenAI SSE format: `data: {JSON}\n\n` lines, ending with `data: [DONE]\n\n`.
-    let response_text = match response.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            let event = Event::default().data(
-                serde_json::json!({"type": "error", "message": format!("Failed to read LLM response: {e}")}).to_string(),
-            );
-            return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
-        }
-    };
-
-    // Parse SSE lines and accumulate content
-    let mut full_content = String::new();
-    let mut events: Vec<Result<Event, Infallible>> = Vec::new();
-    let mut response_model = model.to_string();
-    let mut tokens_used: u64 = 0;
-
-    for line in response_text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with(':') {
-            continue; // Skip empty lines and comments
-        }
-        if let Some(data) = line.strip_prefix("data: ") {
-            if data == "[DONE]" {
-                break;
-            }
-            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                // Extract model from first chunk
-                if let Some(m) = chunk.get("model").and_then(|v| v.as_str()) {
-                    response_model = m.to_string();
-                }
-                // Extract usage from OpenAI final chunk or Anthropic events
-                if let Some(usage) = chunk.get("usage") {
-                    if let Some(total) = usage.get("total_tokens").and_then(|t| t.as_u64()) {
-                        tokens_used = total;
-                    }
-                    // Anthropic: input_tokens + output_tokens
-                    let input = usage
-                        .get("input_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0);
-                    let output = usage
-                        .get("output_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0);
-                    if input + output > tokens_used {
-                        tokens_used = input + output;
-                    }
-                }
-                // Extract content delta from choices[0].delta.content
-                if let Some(content) = chunk
-                    .get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("delta"))
-                    .and_then(|d| d.get("content"))
-                    .and_then(|c| c.as_str())
-                    .filter(|c| !c.is_empty())
-                {
-                    full_content.push_str(content);
-                    events.push(Ok(Event::default().data(
-                        serde_json::json!({"type": "content_delta", "content": content})
-                            .to_string(),
-                    )));
-                }
-            }
-        }
-    }
-
-    // If no content from OpenAI format, try Anthropic format
-    // Anthropic SSE: `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
-    if full_content.is_empty() {
-        for line in response_text.lines() {
-            let line = line.trim();
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                    // Anthropic content_block_delta
-                    if let Some(text) = chunk
-                        .get("delta")
-                        .and_then(|d| d.get("text"))
-                        .and_then(|t| t.as_str())
-                        .filter(|t| !t.is_empty())
-                    {
-                        full_content.push_str(text);
-                        events.push(Ok(Event::default().data(
-                            serde_json::json!({"type": "content_delta", "content": text})
-                                .to_string(),
-                        )));
-                    }
-                    // Anthropic message_start — extract model
-                    if let Some(m) = chunk
-                        .get("message")
-                        .and_then(|msg| msg.get("model"))
-                        .and_then(|m| m.as_str())
-                    {
-                        response_model = m.to_string();
-                    }
-                }
-            }
-        }
-    }
-
+    // True SSE streaming — process LLM chunks as they arrive via a channel.
     let provider_name = if is_anthropic {
         "anthropic"
     } else if has_openai {
@@ -523,7 +422,6 @@ async fn chat_stream(
         "hoosh"
     };
 
-    // Resolve the conversation ID for persistence and the done event
     let conv_id = body
         .conversation_id
         .as_deref()
@@ -531,59 +429,192 @@ async fn chat_stream(
         .unwrap_or("")
         .to_string();
 
-    // Persist messages to DB if we have a conversation
-    // (Dashboard creates the conversation before sending the stream request)
-    if let Some(pool) = state.db() {
-        if conv_id.is_empty() {
-            // Skip message persistence — no conversation to attach to
-        } else {
-            // Save user message
-            let user_msg_id = uuid::Uuid::now_v7().to_string();
+    // Persist user message before streaming starts
+    let pool = state.db().cloned();
+    if let Some(ref pool) = pool
+        && !conv_id.is_empty()
+    {
+        let user_msg_id = uuid::Uuid::now_v7().to_string();
+        let _ = chat::insert_message(
+            pool,
+            &user_msg_id,
+            &conv_id,
+            "user",
+            &body.message,
+            Some(model),
+            Some(provider_name),
+            None,
+        )
+        .await;
+    }
+
+    // Channel for streaming SSE events from the background task to the response
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(64);
+    let model_owned = model.to_string();
+    let provider_owned = provider_name.to_string();
+    let conv_id_owned = conv_id.clone();
+
+    // Spawn background task that reads the LLM byte stream and emits SSE events
+    tokio::spawn(async move {
+        use futures::StreamExt;
+
+        let mut buffer = String::new();
+        let mut full_content = String::new();
+        let mut response_model = model_owned.clone();
+        let mut tokens_used: u64 = 0;
+        let is_anthropic_format = is_anthropic;
+
+        let mut byte_stream = response.bytes_stream();
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx
+                        .send(Ok(Event::default().data(
+                            serde_json::json!({"type": "error", "message": format!("Stream error: {e}")})
+                                .to_string(),
+                        )))
+                        .await;
+                    break;
+                }
+            };
+
+            // Append chunk bytes to buffer, handling partial UTF-8
+            match std::str::from_utf8(&chunk) {
+                Ok(s) => buffer.push_str(s),
+                Err(_) => {
+                    // Lossy conversion for partial UTF-8 (rare but possible)
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                }
+            }
+
+            // Process complete SSE events (delimited by \n\n)
+            while let Some(pos) = buffer.find("\n\n") {
+                let event_block = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+
+                for line in event_block.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    let Some(data) = line.strip_prefix("data: ") else {
+                        continue;
+                    };
+                    if data == "[DONE]" {
+                        continue; // Stream is ending — done event sent below
+                    }
+                    let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(data) else {
+                        continue;
+                    };
+
+                    // Extract model from any chunk that has it
+                    if let Some(m) = chunk_json.get("model").and_then(|v| v.as_str()) {
+                        response_model = m.to_string();
+                    }
+                    // Anthropic message_start — model is nested
+                    if let Some(m) = chunk_json
+                        .get("message")
+                        .and_then(|msg| msg.get("model"))
+                        .and_then(|m| m.as_str())
+                    {
+                        response_model = m.to_string();
+                    }
+
+                    // Extract usage (OpenAI or Anthropic)
+                    if let Some(usage) = chunk_json.get("usage") {
+                        if let Some(total) = usage.get("total_tokens").and_then(|t| t.as_u64()) {
+                            tokens_used = total;
+                        }
+                        let input = usage
+                            .get("input_tokens")
+                            .and_then(|t| t.as_u64())
+                            .unwrap_or(0);
+                        let output = usage
+                            .get("output_tokens")
+                            .and_then(|t| t.as_u64())
+                            .unwrap_or(0);
+                        if input + output > tokens_used {
+                            tokens_used = input + output;
+                        }
+                    }
+
+                    // Extract content delta — OpenAI format
+                    if let Some(content) = chunk_json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("delta"))
+                        .and_then(|d| d.get("content"))
+                        .and_then(|c| c.as_str())
+                        .filter(|c| !c.is_empty())
+                    {
+                        full_content.push_str(content);
+                        let _ = tx
+                            .send(Ok(Event::default().data(
+                                serde_json::json!({"type": "content_delta", "content": content})
+                                    .to_string(),
+                            )))
+                            .await;
+                    }
+
+                    // Extract content delta — Anthropic format
+                    if is_anthropic_format
+                        && let Some(text) = chunk_json
+                            .get("delta")
+                            .and_then(|d| d.get("text"))
+                            .and_then(|t| t.as_str())
+                            .filter(|t| !t.is_empty())
+                    {
+                        full_content.push_str(text);
+                        let _ = tx
+                            .send(Ok(Event::default().data(
+                                serde_json::json!({"type": "content_delta", "content": text})
+                                    .to_string(),
+                            )))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        // Persist assistant message after stream completes
+        if let Some(ref pool) = pool
+            && !conv_id_owned.is_empty()
+            && !full_content.is_empty()
+        {
+            let asst_msg_id = uuid::Uuid::now_v7().to_string();
             let _ = chat::insert_message(
                 pool,
-                &user_msg_id,
-                &conv_id,
-                "user",
-                &body.message,
-                Some(model),
-                Some(provider_name),
-                None,
+                &asst_msg_id,
+                &conv_id_owned,
+                "assistant",
+                &full_content,
+                Some(&response_model),
+                Some(&provider_owned),
+                Some(tokens_used as i32),
             )
             .await;
+        }
 
-            // Save assistant message
-            if !full_content.is_empty() {
-                let asst_msg_id = uuid::Uuid::now_v7().to_string();
-                let _ = chat::insert_message(
-                    pool,
-                    &asst_msg_id,
-                    &conv_id,
-                    "assistant",
-                    &full_content,
-                    Some(&response_model),
-                    Some(provider_name),
-                    Some(tokens_used as i32),
-                )
-                .await;
-            }
-        } // end else (conv_id not empty)
-    }
-
-    // Final done event with all fields the dashboard expects
-    let mut done_event = serde_json::json!({
-        "type": "done",
-        "content": full_content,
-        "model": response_model,
-        "provider": provider_name,
-        "tokensUsed": tokens_used,
-        "creationEvents": [],
+        // Send done event with accumulated content
+        let mut done_event = serde_json::json!({
+            "type": "done",
+            "content": full_content,
+            "model": response_model,
+            "provider": provider_owned,
+            "tokensUsed": tokens_used,
+            "creationEvents": [],
+        });
+        if !conv_id_owned.is_empty() {
+            done_event["conversationId"] = serde_json::Value::String(conv_id_owned);
+        }
+        let _ = tx
+            .send(Ok(Event::default().data(done_event.to_string())))
+            .await;
     });
-    if !conv_id.is_empty() {
-        done_event["conversationId"] = serde_json::Value::String(conv_id);
-    }
-    events.push(Ok(Event::default().data(done_event.to_string())));
 
-    Sse::new(tokio_stream::iter(events))
+    Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
         .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
         .into_response()
 }
