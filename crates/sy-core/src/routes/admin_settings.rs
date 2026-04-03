@@ -92,12 +92,11 @@ async fn list_secrets(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     // Use security.policy as a key/value store for secrets (prefix: secret:)
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT key FROM security.policy WHERE key LIKE 'secret:%' ORDER BY key",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT key FROM security.policy WHERE key LIKE 'secret:%' ORDER BY key")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     let keys: Vec<String> = rows
         .into_iter()
@@ -123,9 +122,7 @@ async fn check_secret(
         row.is_some()
     } else {
         // Check env var as fallback
-        std::env::var(&name)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
+        std::env::var(&name).map(|v| !v.is_empty()).unwrap_or(false)
     };
 
     Json(serde_json::json!({"name": name, "exists": exists}))
@@ -170,7 +167,11 @@ async fn set_secret(
             // Also set as env var so the running process picks it up immediately
             // SAFETY: single-threaded init; no concurrent env reads during set
             unsafe { std::env::set_var(&name, &body.value) };
-            (StatusCode::OK, Json(serde_json::json!({"saved": true, "name": name}))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"saved": true, "name": name})),
+            )
+                .into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

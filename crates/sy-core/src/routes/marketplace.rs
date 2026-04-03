@@ -388,11 +388,16 @@ async fn community_sync(
     let repo_path = std::env::var("COMMUNITY_REPO_PATH")
         .unwrap_or_else(|_| "/usr/share/secureyeoman/community-repo".to_string());
 
-    const DEFAULT_COMMUNITY_GIT_URL: &str = "https://github.com/MacCracken/secureyeoman-community-repo";
+    const DEFAULT_COMMUNITY_GIT_URL: &str =
+        "https://github.com/MacCracken/secureyeoman-community-repo";
 
     let repo_url = body
         .and_then(|b| b.repo_url.clone())
-        .or_else(|| std::env::var("COMMUNITY_GIT_URL").ok().filter(|u| !u.is_empty()))
+        .or_else(|| {
+            std::env::var("COMMUNITY_GIT_URL")
+                .ok()
+                .filter(|u| !u.is_empty())
+        })
         .or_else(|| Some(DEFAULT_COMMUNITY_GIT_URL.to_string()));
 
     let mut result = serde_json::json!({
@@ -473,77 +478,95 @@ async fn community_sync(
     }
 
     for path in find_json_files(&skills_dir) {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        if name.is_empty() {
+                            errors.push(format!("Skipped {:?}: missing name", path.file_name()));
+                            skipped += 1;
+                            continue;
+                        }
 
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    match serde_json::from_str::<serde_json::Value>(&content) {
-                        Ok(data) => {
-                            let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            if name.is_empty() {
-                                errors.push(format!("Skipped {:?}: missing name", path.file_name()));
-                                skipped += 1;
-                                continue;
-                            }
+                        let description = data
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+                        let version = data
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("1.0.0");
+                        let author = data
+                            .get("author")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("Community");
+                        let category = data
+                            .get("category")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("general");
+                        let tags = data.get("tags").cloned().unwrap_or(serde_json::json!([]));
+                        let instructions = data
+                            .get("instructions")
+                            .and_then(|i| i.as_str())
+                            .unwrap_or("");
+                        let tools = data.get("tools").cloned().unwrap_or(serde_json::json!([]));
 
-                            let description = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                            let version = data.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
-                            let author = data.get("author").and_then(|a| a.as_str()).unwrap_or("Community");
-                            let category = data.get("category").and_then(|c| c.as_str()).unwrap_or("general");
-                            let tags = data.get("tags").cloned().unwrap_or(serde_json::json!([]));
-                            let instructions = data.get("instructions").and_then(|i| i.as_str()).unwrap_or("");
-                            let tools = data.get("tools").cloned().unwrap_or(serde_json::json!([]));
+                        // Upsert into marketplace.skills with source='community'
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64;
 
-                            // Upsert into marketplace.skills with source='community'
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as i64;
-
-                            // Check if skill exists by name + source
-                            let existing: Option<(String,)> = sqlx::query_as(
+                        // Check if skill exists by name + source
+                        let existing: Option<(String,)> = sqlx::query_as(
                                 "SELECT id FROM marketplace.skills WHERE name = $1 AND source = 'community'"
                             ).bind(name).fetch_optional(pool).await.unwrap_or(None);
-                            let is_update = existing.is_some();
+                        let is_update = existing.is_some();
 
-                            let result = if let Some((existing_id,)) = existing {
-                                // Update existing
-                                sqlx::query(
+                        let result = if let Some((existing_id,)) = existing {
+                            // Update existing
+                            sqlx::query(
                                     "UPDATE marketplace.skills SET description=$1, version=$2, author=$3, category=$4, tags=$5, instructions=$6, tools=$7, updated_at=$8 WHERE id=$9"
                                 )
                                 .bind(description).bind(version).bind(author).bind(category)
                                 .bind(&tags).bind(instructions).bind(&tools).bind(now)
                                 .bind(&existing_id)
                                 .execute(pool).await
-                            } else {
-                                // Insert new
-                                sqlx::query(
+                        } else {
+                            // Insert new
+                            sqlx::query(
                                     "INSERT INTO marketplace.skills (id, name, description, version, author, category, tags, instructions, tools, source, installed, download_count, published_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'community',false,0,$10,$10)"
                                 )
                                 .bind(uuid::Uuid::now_v7().to_string())
                                 .bind(name).bind(description).bind(version).bind(author)
                                 .bind(category).bind(&tags).bind(instructions).bind(&tools).bind(now)
                                 .execute(pool).await
-                            };
+                        };
 
-                            match result {
-                                Ok(_) => {
-                                    if is_update { updated += 1; } else { added += 1; }
+                        match result {
+                            Ok(_) => {
+                                if is_update {
+                                    updated += 1;
+                                } else {
+                                    added += 1;
                                 }
-                                Err(e) => errors.push(format!("{name}: {e}")),
                             }
-                        }
-                        Err(e) => {
-                            errors.push(format!("{:?}: invalid JSON: {e}", path.file_name()));
-                            skipped += 1;
+                            Err(e) => errors.push(format!("{name}: {e}")),
                         }
                     }
-                }
-                Err(e) => {
-                    errors.push(format!("{:?}: read error: {e}", path.file_name()));
-                    skipped += 1;
+                    Err(e) => {
+                        errors.push(format!("{:?}: invalid JSON: {e}", path.file_name()));
+                        skipped += 1;
+                    }
                 }
             }
-    }  // end for path in find_json_files (skills)
+            Err(e) => {
+                errors.push(format!("{:?}: read error: {e}", path.file_name()));
+                skipped += 1;
+            }
+        }
+    } // end for path in find_json_files (skills)
 
     // ── Sync community workflows ────────────────────────────────────────
     let mut workflows_added = 0i64;
@@ -555,12 +578,23 @@ async fn community_sync(
                 Ok(content) => {
                     if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                         let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        if name.is_empty() { continue; }
-                        let description = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let description = data
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
                         let steps = data.get("steps").cloned().unwrap_or(serde_json::json!([]));
                         let edges = data.get("edges").cloned().unwrap_or(serde_json::json!([]));
-                        let triggers = data.get("triggers").cloned().unwrap_or(serde_json::json!([]));
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                        let triggers = data
+                            .get("triggers")
+                            .cloned()
+                            .unwrap_or(serde_json::json!([]));
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64;
 
                         let existing: Option<(uuid::Uuid,)> = sqlx::query_as(
                             "SELECT id FROM workflow.definitions WHERE name = $1 AND created_by = 'community'"
@@ -577,7 +611,9 @@ async fn community_sync(
                                 .bind(uuid::Uuid::now_v7()).bind(name).bind(description).bind(&steps).bind(&edges).bind(&triggers).bind(now)
                                 .execute(pool).await
                         };
-                        if let Err(e) = r { errors.push(format!("workflow {name}: {e}")); }
+                        if let Err(e) = r {
+                            errors.push(format!("workflow {name}: {e}"));
+                        }
                     }
                 }
                 Err(e) => errors.push(format!("workflow {:?}: {e}", path.file_name())),
@@ -595,11 +631,22 @@ async fn community_sync(
                 Ok(content) => {
                     if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                         let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        if name.is_empty() { continue; }
-                        let description = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                        let strategy = data.get("strategy").and_then(|s| s.as_str()).unwrap_or("parallel");
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let description = data
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+                        let strategy = data
+                            .get("strategy")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("parallel");
                         let roles = data.get("roles").cloned().unwrap_or(serde_json::json!([]));
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64;
 
                         let existing: Option<(String,)> = sqlx::query_as(
                             "SELECT id FROM agents.swarm_templates WHERE name = $1 AND is_builtin = false"
@@ -612,12 +659,17 @@ async fn community_sync(
                                 .execute(pool).await
                         } else {
                             swarms_added += 1;
-                            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as i64;
                             sqlx::query("INSERT INTO agents.swarm_templates (id, name, description, strategy, roles, is_builtin, created_at) VALUES ($1,$2,$3,$4,$5,false,$6)")
                                 .bind(uuid::Uuid::now_v7().to_string()).bind(name).bind(description).bind(strategy).bind(&roles).bind(now_ms)
                                 .execute(pool).await
                         };
-                        if let Err(e) = r { errors.push(format!("swarm {name}: {e}")); }
+                        if let Err(e) = r {
+                            errors.push(format!("swarm {name}: {e}"));
+                        }
                     }
                 }
                 Err(e) => errors.push(format!("swarm {:?}: {e}", path.file_name())),
@@ -635,13 +687,31 @@ async fn community_sync(
                 Ok(content) => {
                     if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                         let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        if name.is_empty() { continue; }
-                        let description = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                        let members = data.get("members").cloned().unwrap_or(serde_json::json!([]));
-                        let facilitator = data.get("facilitatorProfile").and_then(|f| f.as_str()).unwrap_or("facilitator");
-                        let strategy = data.get("deliberationStrategy").and_then(|s| s.as_str()).unwrap_or("rounds");
-                        let voting = data.get("votingStrategy").and_then(|s| s.as_str()).unwrap_or("facilitator_judgment");
-                        let max_rounds = data.get("maxRounds").and_then(|m| m.as_i64()).unwrap_or(3) as i32;
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let description = data
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+                        let members = data
+                            .get("members")
+                            .cloned()
+                            .unwrap_or(serde_json::json!([]));
+                        let facilitator = data
+                            .get("facilitatorProfile")
+                            .and_then(|f| f.as_str())
+                            .unwrap_or("facilitator");
+                        let strategy = data
+                            .get("deliberationStrategy")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("rounds");
+                        let voting = data
+                            .get("votingStrategy")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("facilitator_judgment");
+                        let max_rounds =
+                            data.get("maxRounds").and_then(|m| m.as_i64()).unwrap_or(3) as i32;
 
                         let existing: Option<(String,)> = sqlx::query_as(
                             "SELECT id FROM agents.council_templates WHERE name = $1 AND is_builtin = false"
@@ -654,12 +724,17 @@ async fn community_sync(
                                 .execute(pool).await
                         } else {
                             councils_added += 1;
-                            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as i64;
                             sqlx::query("INSERT INTO agents.council_templates (id, name, description, members, facilitator_profile, deliberation_strategy, voting_strategy, max_rounds, is_builtin, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false,$9)")
                                 .bind(uuid::Uuid::now_v7().to_string()).bind(name).bind(description).bind(&members).bind(facilitator).bind(strategy).bind(voting).bind(max_rounds).bind(now_ms)
                                 .execute(pool).await
                         };
-                        if let Err(e) = r { errors.push(format!("council {name}: {e}")); }
+                        if let Err(e) = r {
+                            errors.push(format!("council {name}: {e}"));
+                        }
                     }
                 }
                 Err(e) => errors.push(format!("council {:?}: {e}", path.file_name())),
@@ -676,16 +751,32 @@ async fn community_sync(
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                     let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    if name.is_empty() { continue; }
-                    let description = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                    let version = data.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
-                    let author = data.get("author")
-                        .and_then(|a| a.get("name").and_then(|n| n.as_str()).or_else(|| a.as_str()))
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let description = data
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
+                    let version = data
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1.0.0");
+                    let author = data
+                        .get("author")
+                        .and_then(|a| {
+                            a.get("name")
+                                .and_then(|n| n.as_str())
+                                .or_else(|| a.as_str())
+                        })
                         .unwrap_or("Community");
                     let is_dark = data.get("isDark").and_then(|d| d.as_bool()).unwrap_or(true);
                     let mut tags = vec!["theme", "community-theme"];
                     tags.push(if is_dark { "dark" } else { "light" });
-                    let now_t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let now_t = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
 
                     let existing: Option<(String,)> = sqlx::query_as(
                         "SELECT id FROM marketplace.skills WHERE name = $1 AND source = 'community' AND category = 'theme'"
@@ -704,7 +795,13 @@ async fn community_sync(
                             .execute(pool).await
                     };
                     match r {
-                        Ok(_) => { if is_upd { themes_updated += 1; } else { themes_added += 1; } }
+                        Ok(_) => {
+                            if is_upd {
+                                themes_updated += 1;
+                            } else {
+                                themes_added += 1;
+                            }
+                        }
                         Err(e) => errors.push(format!("theme {name}: {e}")),
                     }
                 }
@@ -724,7 +821,11 @@ async fn community_sync(
                     let p = entry.path();
                     if p.is_dir() {
                         let md = p.join("personality.md");
-                        if md.exists() { files.push(md); } else { files.extend(find_personality_mds(&p)); }
+                        if md.exists() {
+                            files.push(md);
+                        } else {
+                            files.extend(find_personality_mds(&p));
+                        }
                     }
                 }
             }
@@ -734,7 +835,9 @@ async fn community_sync(
         for md_path in find_personality_mds(&personalities_dir) {
             if let Ok(content) = std::fs::read_to_string(&md_path) {
                 let parts: Vec<&str> = content.splitn(3, "---").collect();
-                if parts.len() < 3 { continue; }
+                if parts.len() < 3 {
+                    continue;
+                }
                 let fm = parts[1].trim();
                 let mut name = String::new();
                 let mut description = String::new();
@@ -742,18 +845,32 @@ async fn community_sync(
                 let mut version = String::new();
                 for line in fm.lines() {
                     let line = line.trim();
-                    if let Some(v) = line.strip_prefix("name:") { name = v.trim().trim_matches('"').to_string(); }
-                    else if let Some(v) = line.strip_prefix("description:") { description = v.trim().trim_matches('"').to_string(); }
-                    else if let Some(v) = line.strip_prefix("author:") { author = v.trim().trim_matches('"').to_string(); }
-                    else if let Some(v) = line.strip_prefix("version:") { version = v.trim().trim_matches('"').to_string(); }
+                    if let Some(v) = line.strip_prefix("name:") {
+                        name = v.trim().trim_matches('"').to_string();
+                    } else if let Some(v) = line.strip_prefix("description:") {
+                        description = v.trim().trim_matches('"').to_string();
+                    } else if let Some(v) = line.strip_prefix("author:") {
+                        author = v.trim().trim_matches('"').to_string();
+                    } else if let Some(v) = line.strip_prefix("version:") {
+                        version = v.trim().trim_matches('"').to_string();
+                    }
                 }
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
 
-                let category = md_path.parent().and_then(|p| p.parent())
-                    .and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("community");
+                let category = md_path
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("community");
                 let cat_label = format!("personality:{category}");
                 let tags = serde_json::json!(["personality", "community-personality", category]);
-                let now_t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                let now_t = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
 
                 let existing: Option<(String,)> = sqlx::query_as(
                     "SELECT id FROM marketplace.skills WHERE name = $1 AND source = 'community' AND category = $2"
@@ -771,7 +888,13 @@ async fn community_sync(
                         .execute(pool).await
                 };
                 match r {
-                    Ok(_) => { if is_upd { personalities_updated += 1; } else { personalities_added += 1; } }
+                    Ok(_) => {
+                        if is_upd {
+                            personalities_updated += 1;
+                        } else {
+                            personalities_added += 1;
+                        }
+                    }
                     Err(e) => errors.push(format!("personality {name}: {e}")),
                 }
             }
@@ -786,7 +909,7 @@ async fn community_sync(
     let _ = sqlx::query(
         "INSERT INTO marketplace.community_sync_status (id, last_synced_at, skills_synced, errors)
          VALUES ('default', $1, $2, $3)
-         ON CONFLICT (id) DO UPDATE SET last_synced_at = $1, skills_synced = $2, errors = $3"
+         ON CONFLICT (id) DO UPDATE SET last_synced_at = $1, skills_synced = $2, errors = $3",
     )
     .bind(now)
     .bind(added + updated)

@@ -2,7 +2,7 @@
 
 Self-hosted, enterprise-hardened, answerable only to you. Your data moves when you say so.
 
-**v2026.3.28** | AGPL-3.0 | 490 MCP Tools | 56 CLI Commands | ~22,000 Tests
+**v0.5.0** | AGPL-3.0 | 490 MCP Tools | 56 CLI Commands | ~22,000 Tests
 
 ---
 

@@ -14,6 +14,7 @@ use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::auth::jwt::validate_token;
+use crate::auth::permissions::{check_permission, resolve_permission};
 use crate::state::AppState;
 
 /// Routes that bypass authentication entirely.
@@ -126,6 +127,56 @@ fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
+}
+
+/// RBAC enforcement middleware — checks permissions after auth.
+///
+/// Runs after `require_auth`. If no `AuthContext` is present (public route),
+/// the request passes through. For authenticated requests, resolves the
+/// required permission from method + path and checks it against the user's role.
+/// Unmapped routes default to admin-only.
+pub async fn enforce_rbac(req: Request<Body>, next: Next) -> Response<Body> {
+    // Public routes have no AuthContext — skip RBAC
+    let auth = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return next.run(req).await,
+    };
+
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    match resolve_permission(&method, &path) {
+        Some(perm) => {
+            if !check_permission(&auth.role, perm.resource, perm.action) {
+                return (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(json!({
+                        "error": "Insufficient permissions",
+                        "statusCode": 403,
+                        "resource": perm.resource,
+                        "action": perm.action,
+                        "role": auth.role,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        None => {
+            // Unmapped route: admin only
+            if auth.role != "admin" {
+                return (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(json!({
+                        "error": "Access denied — unmapped route requires admin",
+                        "statusCode": 403,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    next.run(req).await
 }
 
 #[cfg(test)]

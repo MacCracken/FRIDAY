@@ -318,12 +318,17 @@ async fn chat_stream(
     let has_openai = openai_key.is_some();
 
     // Default model based on available provider
-    let default_model = if has_anthropic { "claude-sonnet-4-6" } else if has_openai { "gpt-4o" } else { "default" };
+    let default_model = if has_anthropic {
+        "claude-sonnet-4-6"
+    } else if has_openai {
+        "gpt-4o"
+    } else {
+        "default"
+    };
     let model = body.model.as_deref().unwrap_or(default_model);
 
-    let is_anthropic = model.contains("claude")
-        || model.contains("anthropic")
-        || (has_anthropic && !has_openai);
+    let is_anthropic =
+        model.contains("claude") || model.contains("anthropic") || (has_anthropic && !has_openai);
 
     let client = reqwest::Client::new();
     let response = if is_anthropic {
@@ -333,7 +338,8 @@ async fn chat_stream(
                 let event = Event::default().data(
                     serde_json::json!({"type": "error", "message": "ANTHROPIC_API_KEY not configured"}).to_string(),
                 );
-                return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)])).into_response();
+                return Sse::new(tokio_stream::iter(vec![Ok::<_, Infallible>(event)]))
+                    .into_response();
             }
         };
         // Anthropic: extract system messages into top-level `system` param
@@ -445,8 +451,14 @@ async fn chat_stream(
                         tokens_used = total;
                     }
                     // Anthropic: input_tokens + output_tokens
-                    let input = usage.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
-                    let output = usage.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                    let input = usage
+                        .get("input_tokens")
+                        .and_then(|t| t.as_u64())
+                        .unwrap_or(0);
+                    let output = usage
+                        .get("output_tokens")
+                        .and_then(|t| t.as_u64())
+                        .unwrap_or(0);
                     if input + output > tokens_used {
                         tokens_used = input + output;
                     }
@@ -503,7 +515,13 @@ async fn chat_stream(
         }
     }
 
-    let provider_name = if is_anthropic { "anthropic" } else if has_openai { "openai" } else { "hoosh" };
+    let provider_name = if is_anthropic {
+        "anthropic"
+    } else if has_openai {
+        "openai"
+    } else {
+        "hoosh"
+    };
 
     // Resolve the conversation ID for persistence and the done event
     let conv_id = body
@@ -519,22 +537,35 @@ async fn chat_stream(
         if conv_id.is_empty() {
             // Skip message persistence — no conversation to attach to
         } else {
-
-        // Save user message
-        let user_msg_id = uuid::Uuid::now_v7().to_string();
-        let _ = chat::insert_message(
-            pool, &user_msg_id, &conv_id, "user", &body.message,
-            Some(model), Some(provider_name), None,
-        ).await;
-
-        // Save assistant message
-        if !full_content.is_empty() {
-            let asst_msg_id = uuid::Uuid::now_v7().to_string();
+            // Save user message
+            let user_msg_id = uuid::Uuid::now_v7().to_string();
             let _ = chat::insert_message(
-                pool, &asst_msg_id, &conv_id, "assistant", &full_content,
-                Some(&response_model), Some(provider_name), Some(tokens_used as i32),
-            ).await;
-        }
+                pool,
+                &user_msg_id,
+                &conv_id,
+                "user",
+                &body.message,
+                Some(model),
+                Some(provider_name),
+                None,
+            )
+            .await;
+
+            // Save assistant message
+            if !full_content.is_empty() {
+                let asst_msg_id = uuid::Uuid::now_v7().to_string();
+                let _ = chat::insert_message(
+                    pool,
+                    &asst_msg_id,
+                    &conv_id,
+                    "assistant",
+                    &full_content,
+                    Some(&response_model),
+                    Some(provider_name),
+                    Some(tokens_used as i32),
+                )
+                .await;
+            }
         } // end else (conv_id not empty)
     }
 
@@ -590,9 +621,21 @@ async fn chat_complete(
         "content": body.message,
     }));
 
-    let anthropic_avail = std::env::var("ANTHROPIC_API_KEY").ok().filter(|k| !k.is_empty()).is_some();
-    let openai_avail = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()).is_some();
-    let def_model = if anthropic_avail { "claude-sonnet-4-6" } else if openai_avail { "gpt-4o" } else { "default" };
+    let anthropic_avail = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some();
+    let openai_avail = std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some();
+    let def_model = if anthropic_avail {
+        "claude-sonnet-4-6"
+    } else if openai_avail {
+        "gpt-4o"
+    } else {
+        "default"
+    };
     let model = body.model.as_deref().unwrap_or(def_model);
 
     let oai_body = serde_json::json!({

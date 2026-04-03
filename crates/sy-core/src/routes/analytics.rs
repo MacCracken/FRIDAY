@@ -30,14 +30,22 @@ async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
     if let Ok(meminfo) = tokio::fs::read_to_string("/proc/meminfo").await {
         for line in meminfo.lines() {
             if let Some(val) = line.strip_prefix("MemTotal:") {
-                memory_limit_mb = val.trim().split_whitespace().next()
+                memory_limit_mb = val
+                    .trim()
+                    .split_whitespace()
+                    .next()
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0) / 1024;
+                    .unwrap_or(0)
+                    / 1024;
             }
             if let Some(val) = line.strip_prefix("MemAvailable:") {
-                let avail = val.trim().split_whitespace().next()
+                let avail = val
+                    .trim()
+                    .split_whitespace()
+                    .next()
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0) / 1024;
+                    .unwrap_or(0)
+                    / 1024;
                 memory_used_mb = memory_limit_mb.saturating_sub(avail);
             }
         }
@@ -53,10 +61,13 @@ async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
     let cpu_percent = if let Ok(loadavg) = tokio::fs::read_to_string("/proc/loadavg").await {
         // Format: "0.15 0.10 0.05 1/234 5678"
         // First value is 1-minute load average. Divide by number of CPUs for percent.
-        let load_1m = loadavg.split_whitespace().next()
+        let load_1m = loadavg
+            .split_whitespace()
+            .next()
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(0.0);
-        let num_cpus = tokio::fs::read_to_string("/proc/cpuinfo").await
+        let num_cpus = tokio::fs::read_to_string("/proc/cpuinfo")
+            .await
             .map(|info| info.matches("processor").count() as f64)
             .unwrap_or(1.0)
             .max(1.0);
@@ -69,9 +80,12 @@ async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
     let disk_used_mb = if let Ok(stat) = tokio::fs::read_to_string("/proc/self/statm").await {
         // statm: size resident shared text lib data dt (in pages)
         // resident * page_size gives RSS
-        stat.split_whitespace().nth(1)
+        stat.split_whitespace()
+            .nth(1)
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0) * 4 / 1024 // pages → MB (4KB pages)
+            .unwrap_or(0)
+            * 4
+            / 1024 // pages → MB (4KB pages)
     } else {
         0
     };

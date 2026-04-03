@@ -6,7 +6,7 @@
 
 ## Hybrid TypeScript/Rust Architecture
 
-**Status**: **0.5.0 — Rust-native.** Node.js eliminated. sy-core is the sole application binary (23 MB, 932 routes, 89 modules). All managers wired (brain/RAG, orchestration, integration clients, bhava signal loop). sy-napi deleted. Ecosystem crates called directly. Dashboard running against pure Rust API with response shape fixes in progress. Remaining: dashboard compatibility sweep, flatten crates into sy-core, CLI → clap, config → TOML. Then 1.0.0.
+**Status**: **0.5.0 — Rust-native, middleware repair in progress.** Node.js eliminated. sy-core is the sole application binary (944 routes, 85 modules). Repair phases R-16 (version), R-1 (CORS), R-12 (test harness), R-2 (rate limiting), R-3 (RBAC), R-4 (body limits) complete — 6 of 16 middleware layers restored, 34 integration tests. Next: R-5 (backpressure + IP reputation), R-6 (ownership guards), R-9 (chat streaming). See **[Migration Findings](migration-finds.md)** for the full audit and repair plan.
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 

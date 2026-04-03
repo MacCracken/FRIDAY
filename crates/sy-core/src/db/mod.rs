@@ -65,6 +65,6 @@ pub mod models;
 pub mod multimodal;
 pub mod policy_as_code;
 pub mod reports;
+pub mod seed;
 pub mod video_stream;
 pub mod webhook_timeline;
-pub mod seed;

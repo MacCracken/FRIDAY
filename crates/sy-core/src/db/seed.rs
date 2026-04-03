@@ -58,7 +58,9 @@ async fn seed_personalities(pool: &PgPool) {
     )
     .bind(&friday_id).bind(friday_prompt).bind(&friday_traits).bind(&friday_body).bind(now)
     .execute(pool).await;
-    if let Err(e) = &r { tracing::error!(error = %e, "failed to seed FRIDAY"); }
+    if let Err(e) = &r {
+        tracing::error!(error = %e, "failed to seed FRIDAY");
+    }
 
     // T.Ron — security watchdog
     let tron_id = uuid::Uuid::now_v7().to_string();
@@ -77,7 +79,9 @@ async fn seed_personalities(pool: &PgPool) {
     )
     .bind(&tron_id).bind(tron_prompt).bind(&tron_traits).bind(&friday_body).bind(now)
     .execute(pool).await;
-    if let Err(e) = &r { tracing::error!(error = %e, "failed to seed T.Ron"); }
+    if let Err(e) = &r {
+        tracing::error!(error = %e, "failed to seed T.Ron");
+    }
 
     info!("Seeded FRIDAY and T.Ron personalities");
 }
@@ -89,15 +93,60 @@ async fn seed_agent_profiles(pool: &PgPool) {
         .as_millis() as i64;
 
     let profiles = [
-        ("researcher", "Researcher", "General-purpose research agent. Investigates topics, gathers information, and synthesizes findings.", 50000),
-        ("coder", "Coder", "Software development agent. Writes, reviews, and debugs code across languages.", 50000),
-        ("analyst", "Analyst", "Data analysis agent. Examines data, identifies patterns, and produces insights.", 50000),
-        ("summarizer", "Summarizer", "Content summarization agent. Distills long documents into concise summaries.", 20000),
-        ("context-engineer", "Context Engineer", "Context assembly agent. Gathers and structures relevant context for complex tasks.", 50000),
-        ("prompt-crafter", "Prompt Crafter", "Prompt engineering agent. Designs and refines prompts for optimal AI performance.", 30000),
-        ("spec-engineer", "Spec Engineer", "Specification writing agent. Produces detailed technical specifications from requirements.", 50000),
-        ("intent-engineer", "Intent Engineer", "Intent detection agent. Classifies user intent and routes to appropriate handlers.", 20000),
-        ("vision-analyst", "Vision Analyst", "Image and visual analysis agent. Describes, analyzes, and extracts information from images.", 30000),
+        (
+            "researcher",
+            "Researcher",
+            "General-purpose research agent. Investigates topics, gathers information, and synthesizes findings.",
+            50000,
+        ),
+        (
+            "coder",
+            "Coder",
+            "Software development agent. Writes, reviews, and debugs code across languages.",
+            50000,
+        ),
+        (
+            "analyst",
+            "Analyst",
+            "Data analysis agent. Examines data, identifies patterns, and produces insights.",
+            50000,
+        ),
+        (
+            "summarizer",
+            "Summarizer",
+            "Content summarization agent. Distills long documents into concise summaries.",
+            20000,
+        ),
+        (
+            "context-engineer",
+            "Context Engineer",
+            "Context assembly agent. Gathers and structures relevant context for complex tasks.",
+            50000,
+        ),
+        (
+            "prompt-crafter",
+            "Prompt Crafter",
+            "Prompt engineering agent. Designs and refines prompts for optimal AI performance.",
+            30000,
+        ),
+        (
+            "spec-engineer",
+            "Spec Engineer",
+            "Specification writing agent. Produces detailed technical specifications from requirements.",
+            50000,
+        ),
+        (
+            "intent-engineer",
+            "Intent Engineer",
+            "Intent detection agent. Classifies user intent and routes to appropriate handlers.",
+            20000,
+        ),
+        (
+            "vision-analyst",
+            "Vision Analyst",
+            "Image and visual analysis agent. Describes, analyzes, and extracts information from images.",
+            30000,
+        ),
     ];
 
     for (id_suffix, name, description, budget) in profiles {
@@ -110,7 +159,9 @@ async fn seed_agent_profiles(pool: &PgPool) {
         )
         .bind(&id).bind(name).bind(description).bind(&prompt).bind(budget)
         .execute(pool).await;
-        if let Err(e) = &r { tracing::error!(agent = name, error = %e, "failed to seed agent"); }
+        if let Err(e) = &r {
+            tracing::error!(agent = name, error = %e, "failed to seed agent");
+        }
     }
 
     info!("Seeded 9 builtin agent profiles");
@@ -125,7 +176,8 @@ async fn seed_default_user(_pool: &PgPool) {
 async fn seed_agent_name(pool: &PgPool) {
     let _ = sqlx::query(
         "INSERT INTO soul.meta (key, value) VALUES ('agentName', 'FRIDAY')
-         ON CONFLICT DO NOTHING"
+         ON CONFLICT DO NOTHING",
     )
-    .execute(pool).await;
+    .execute(pool)
+    .await;
 }

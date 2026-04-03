@@ -20,7 +20,17 @@ const TOOL_FILTER_RULES: &[(&[&str], &str)] = &[
     (&["web_"], "exposeWeb"),
     (&["browser_"], "exposeBrowser"),
     (&["desktop_"], "exposeDesktopControl"),
-    (&["network_", "netbox_", "nvd_", "subnet_", "wildcard_", "pcap_"], "exposeNetworkTools"),
+    (
+        &[
+            "network_",
+            "netbox_",
+            "nvd_",
+            "subnet_",
+            "wildcard_",
+            "pcap_",
+        ],
+        "exposeNetworkTools",
+    ),
     (&["twingate_"], "exposeTwingateTools"),
     (&["gmail_"], "exposeGmail"),
     (&["twitter_"], "exposeTwitter"),
@@ -33,7 +43,10 @@ const TOOL_FILTER_RULES: &[(&[&str], &str)] = &[
     (&["northflank_"], "exposeNorthflank"),
     (&["agnostic_"], "exposeAgnosticTools"),
     (&["agnos_"], "exposeAgnosTools"),
-    (&["bullshift_", "trading_", "market_"], "exposeBullshiftTools"),
+    (
+        &["bullshift_", "trading_", "market_"],
+        "exposeBullshiftTools",
+    ),
     (&["photisnadi_"], "exposePhotisnadiTools"),
     (&["ifran_"], "exposeIfranTools"),
     (&["delta_"], "exposeDeltaTools"),
@@ -287,8 +300,8 @@ async fn load_mcp_config(pool: &sqlx::PgPool) -> serde_json::Map<String, serde_j
     // Override with DB values (stored as text in mcp.config)
     if let Ok(rows) = mcp::get_config(pool).await {
         for row in rows {
-            let parsed: serde_json::Value = serde_json::from_str(&row.value)
-                .unwrap_or(serde_json::Value::String(row.value));
+            let parsed: serde_json::Value =
+                serde_json::from_str(&row.value).unwrap_or(serde_json::Value::String(row.value));
             config.insert(row.key, parsed);
         }
     }
@@ -483,12 +496,18 @@ async fn upsert_server(
     Json(body): Json<UpsertServerRequest>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Database not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
     // Check if server with same name exists
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM mcp.servers WHERE name = $1"
-    ).bind(&body.name).fetch_optional(pool).await.unwrap_or(None);
+    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM mcp.servers WHERE name = $1")
+        .bind(&body.name)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
 
     if let Some((id,)) = existing {
         // Update existing
@@ -500,7 +519,11 @@ async fn upsert_server(
         .execute(pool).await;
         match mcp::get_server(pool, &id).await {
             Ok(Some(row)) => Json(serde_json::json!({"server": row})).into_response(),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to fetch updated server"}))).into_response(),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Failed to fetch updated server"})),
+            )
+                .into_response(),
         }
     } else {
         // Create new
@@ -516,8 +539,16 @@ async fn upsert_server(
         .bind(body.enabled.unwrap_or(true)).bind(now)
         .execute(pool).await;
         match mcp::get_server(pool, &id).await {
-            Ok(Some(row)) => (StatusCode::CREATED, Json(serde_json::json!({"server": row}))).into_response(),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to create server"}))).into_response(),
+            Ok(Some(row)) => (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"server": row})),
+            )
+                .into_response(),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Failed to create server"})),
+            )
+                .into_response(),
         }
     }
 }
@@ -535,38 +566,70 @@ async fn patch_server(
     Json(body): Json<PatchServerRequest>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Database not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
-    let _ = sqlx::query("UPDATE mcp.servers SET enabled = COALESCE($1, enabled), updated_at = $2 WHERE id = $3")
-        .bind(body.enabled).bind(now_ms()).bind(&id)
-        .execute(pool).await;
+    let _ = sqlx::query(
+        "UPDATE mcp.servers SET enabled = COALESCE($1, enabled), updated_at = $2 WHERE id = $3",
+    )
+    .bind(body.enabled)
+    .bind(now_ms())
+    .bind(&id)
+    .execute(pool)
+    .await;
     match mcp::get_server(pool, &id).await {
         Ok(Some(row)) => {
             // Get tools for this server
             let tools: Vec<serde_json::Value> = sqlx::query_scalar(
-                "SELECT row_to_json(t) FROM mcp.server_tools t WHERE server_id = $1"
-            ).bind(&id).fetch_all(pool).await.unwrap_or_default();
+                "SELECT row_to_json(t) FROM mcp.server_tools t WHERE server_id = $1",
+            )
+            .bind(&id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
             Json(serde_json::json!({"server": row, "tools": tools})).into_response()
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Server not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Server not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
-async fn delete_server(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn delete_server(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     // Delete tools first, then server
-    let _ = sqlx::query("DELETE FROM mcp.server_tools WHERE server_id = $1").bind(&id).execute(pool).await;
-    let result = sqlx::query("DELETE FROM mcp.servers WHERE id = $1").bind(&id).execute(pool).await;
+    let _ = sqlx::query("DELETE FROM mcp.server_tools WHERE server_id = $1")
+        .bind(&id)
+        .execute(pool)
+        .await;
+    let result = sqlx::query("DELETE FROM mcp.servers WHERE id = $1")
+        .bind(&id)
+        .execute(pool)
+        .await;
     match result {
         Ok(r) if r.rows_affected() > 0 => StatusCode::NO_CONTENT.into_response(),
-        Ok(_) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Server not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Server not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -575,7 +638,11 @@ async fn check_server_health(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let Some(pool) = state.db() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Database not available"}))).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
     match mcp::get_server(pool, &id).await {
         Ok(Some(server)) => {
@@ -594,10 +661,19 @@ async fn check_server_health(
                 "serverId": id,
                 "status": if reachable { "healthy" } else { "unreachable" },
                 "checkedAt": chrono::Utc::now().to_rfc3339(),
-            })).into_response()
+            }))
+            .into_response()
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Server not found"}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Server not found"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 

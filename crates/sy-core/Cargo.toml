@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 description = "SecureYeoman core server — axum-based REST/WS API"
 
+[lib]
+name = "sy_core"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sy-core"
 path = "src/main.rs"
@@ -45,7 +49,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 base64 = "0.22"
 thiserror = "2"
+dashmap = "6"
 
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+bytes = "1"

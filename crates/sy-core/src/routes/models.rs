@@ -238,10 +238,15 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                                 arr.iter()
                                     .filter(|m| {
                                         let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                        id.starts_with("gpt-") || id.starts_with("o1") || id.starts_with("o3")
+                                        id.starts_with("gpt-")
+                                            || id.starts_with("o1")
+                                            || id.starts_with("o3")
                                     })
                                     .map(|m| {
-                                        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                        let id = m
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown");
                                         serde_json::json!({"id": id, "name": id})
                                     })
                                     .collect()
@@ -275,7 +280,8 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                     .map(|arr| {
                         arr.iter()
                             .map(|m| {
-                                let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let name =
+                                    m.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                                 serde_json::json!({"id": name, "name": name})
                             })
                             .collect()
@@ -289,8 +295,12 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
     }
 
     // Hoosh/AGNOS gateway
-    let has_hoosh = std::env::var("AGNOS_GATEWAY_API_KEY").map(|k| !k.is_empty()).unwrap_or(false)
-        || std::env::var("HOOSH_URL").map(|u| !u.is_empty()).unwrap_or(false);
+    let has_hoosh = std::env::var("AGNOS_GATEWAY_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+        || std::env::var("HOOSH_URL")
+            .map(|u| !u.is_empty())
+            .unwrap_or(false);
     if has_hoosh {
         let hoosh_url = std::env::var("HOOSH_URL")
             .or_else(|_| std::env::var("AGNOS_GATEWAY_URL"))
@@ -309,7 +319,8 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                         .map(|arr| {
                             arr.iter()
                                 .map(|m| {
-                                    let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    let id =
+                                        m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
                                     serde_json::json!({"id": id, "name": id})
                                 })
                                 .collect()
@@ -339,7 +350,15 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
             })
         }
         Ok(None) => {
-            let default_provider = if has_hoosh { "hoosh" } else if has_openai { "openai" } else if has_anthropic { "anthropic" } else { "none" };
+            let default_provider = if has_hoosh {
+                "hoosh"
+            } else if has_openai {
+                "openai"
+            } else if has_anthropic {
+                "anthropic"
+            } else {
+                "none"
+            };
             serde_json::json!({
                 "current": {
                     "provider": default_provider,
@@ -424,15 +443,8 @@ async fn switch_model(
     };
     let id = uuid::Uuid::now_v7().to_string();
     let config = body.config.unwrap_or(serde_json::json!({}));
-    match model_db::upsert_model_info(
-        pool,
-        &id,
-        "default",
-        &body.provider,
-        &body.model,
-        &config,
-    )
-    .await
+    match model_db::upsert_model_info(pool, &id, "default", &body.provider, &body.model, &config)
+        .await
     {
         Ok(_row) => Json(serde_json::json!({
             "success": true,

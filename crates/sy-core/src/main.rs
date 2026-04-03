@@ -1,26 +1,14 @@
-// Phase 7 migration: modules are scaffolded ahead of route migration.
-// Suppress dead_code until routes consume the full auth/permissions API.
-#![allow(dead_code)]
-
 //! SecureYeoman Core Server — axum-based REST/WS API.
 //!
 //! Phase 7 migration: replaces the Bun/Fastify TypeScript server with a Rust
 //! binary. During migration, unimplemented routes are forwarded to the existing
 //! Fastify server via a built-in reverse proxy.
 
-mod auth;
-mod brain;
-mod db;
-mod ecosystem;
-mod integrations;
-mod middleware;
-mod orchestration;
-mod proxy;
-mod routes;
-mod server;
-mod state;
-
 use std::net::SocketAddr;
+
+use sy_core::db;
+use sy_core::server;
+use sy_core::state;
 use tracing::info;
 
 #[tokio::main]
@@ -39,7 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(host) = std::env::var("SECUREYEOMAN_HOST") {
         config.host = host;
     }
-    let port_explicit = std::env::var("SECUREYEOMAN_PORT").ok().or_else(|| std::env::var("PORT").ok());
+    let port_explicit = std::env::var("SECUREYEOMAN_PORT")
+        .ok()
+        .or_else(|| std::env::var("PORT").ok());
     if let Some(ref port_str) = port_explicit {
         if let Ok(p) = port_str.parse() {
             config.port = p;
@@ -57,7 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool_result = {
         let mut result = db::pool::create_pool().await;
         for attempt in 1..=5 {
-            if result.is_ok() { break; }
+            if result.is_ok() {
+                break;
+            }
             info!("Database not ready, retrying ({attempt}/5)...");
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             result = db::pool::create_pool().await;
@@ -80,7 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for entry in &files {
                     let sql = std::fs::read_to_string(entry.path()).unwrap_or_default();
-                    if sql.is_empty() { continue; }
+                    if sql.is_empty() {
+                        continue;
+                    }
                     match sqlx::raw_sql(&sql).execute(&pool).await {
                         Ok(_) => info!(file = ?entry.file_name(), "migration applied"),
                         Err(e) => {
@@ -95,20 +89,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Seed default data if DB is empty (first boot)
-            let personality_count: (i64,) = sqlx::query_as("SELECT count(*) FROM soul.personalities")
-                .fetch_one(&pool).await.unwrap_or((0,));
+            let personality_count: (i64,) =
+                sqlx::query_as("SELECT count(*) FROM soul.personalities")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or((0,));
             if personality_count.0 == 0 {
                 info!("First boot — seeding default personalities and agents");
                 crate::db::seed::seed_defaults(&pool).await;
             }
 
             // Load persisted secrets from DB and set as env vars
-            let secrets: Vec<(String, String)> = sqlx::query_as(
-                "SELECT key, value FROM security.policy WHERE key LIKE 'secret:%'",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default();
+            let secrets: Vec<(String, String)> =
+                sqlx::query_as("SELECT key, value FROM security.policy WHERE key LIKE 'secret:%'")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap_or_default();
 
             for (key, value) in &secrets {
                 if let Some(name) = key.strip_prefix("secret:") {

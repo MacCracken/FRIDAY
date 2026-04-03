@@ -1,6 +1,6 @@
 {
   "name": "@secureyeoman/dashboard",
-  "version": "2026.3.28",
+  "version": "0.5.0",
   "description": "SecureYeoman Performance Metrics Dashboard",
   "type": "module",
   "private": true,

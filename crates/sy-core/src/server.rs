@@ -13,18 +13,55 @@
 //! Unimplemented routes fall through to the Fastify reverse proxy.
 
 use axum::Router;
+use axum::http::{HeaderName, HeaderValue, Method as HttpMethod};
 use axum::middleware as axum_mw;
 use axum::routing::get;
+
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use crate::auth::middleware::require_auth;
+use crate::auth::middleware::{enforce_rbac, require_auth};
+use crate::middleware::body_limit::BodyLimitLayer;
 use crate::middleware::correlation_id::CorrelationIdLayer;
+use crate::middleware::rate_limit::{RateLimitLayer, RateLimitState};
 use crate::middleware::security_headers::SecurityHeadersLayer;
 use crate::proxy::proxy_to_fastify;
 use crate::routes::health;
 use crate::state::AppState;
+
+/// Build the CORS layer from environment config.
+///
+/// Reads `SECUREYEOMAN_CORS_ORIGINS` (comma-separated). Defaults to `http://localhost:5173`.
+fn build_cors_layer() -> CorsLayer {
+    let origins_raw = std::env::var("SECUREYEOMAN_CORS_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+
+    let origins: Vec<HeaderValue> = origins_raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| HeaderValue::from_str(s).ok())
+        .collect();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            HttpMethod::GET,
+            HttpMethod::POST,
+            HttpMethod::PUT,
+            HttpMethod::PATCH,
+            HttpMethod::DELETE,
+            HttpMethod::OPTIONS,
+        ])
+        .allow_headers([
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("content-type"),
+            HeaderName::from_static("x-api-key"),
+            HeaderName::from_static("x-correlation-id"),
+        ])
+        .allow_credentials(true)
+}
 
 /// Build the full axum router with middleware stack.
 pub fn build_router(state: AppState) -> Router {
@@ -123,16 +160,16 @@ pub fn build_router(state: AppState) -> Router {
     // Fallback: proxy everything else to Fastify
     let app = api.fallback(proxy_to_fastify);
 
-    // Middleware stack (outermost = first to execute)
-    app.layer(axum_mw::from_fn_with_state(state.clone(), require_auth))
+    // Middleware stack (outermost → innermost execution order):
+    // TraceLayer → CompressionLayer → CorsLayer → RateLimitLayer → BodyLimitLayer →
+    // CorrelationIdLayer → SecurityHeadersLayer → require_auth → enforce_rbac → handler
+    app.layer(axum_mw::from_fn(enforce_rbac))
+        .layer(axum_mw::from_fn_with_state(state.clone(), require_auth))
         .layer(SecurityHeadersLayer)
         .layer(CorrelationIdLayer)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(BodyLimitLayer)
+        .layer(RateLimitLayer::new(RateLimitState::new()))
+        .layer(build_cors_layer())
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -186,6 +223,72 @@ mod tests {
             .await
             .unwrap();
         assert!(resp.headers().get("x-correlation-id").is_some());
+    }
+
+    #[tokio::test]
+    async fn cors_allows_configured_origin() {
+        // Default origin is http://localhost:5173
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/health")
+                    .header("origin", "http://localhost:5173")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("http://localhost:5173")
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_rejects_unknown_origin() {
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/health")
+                    .header("origin", "http://evil.example.com")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Should not echo back the disallowed origin
+        assert!(resp.headers().get("access-control-allow-origin").is_none());
+    }
+
+    #[tokio::test]
+    async fn cors_allows_credentials() {
+        let app = build_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/health")
+                    .header("origin", "http://localhost:5173")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-credentials")
+                .and_then(|v| v.to_str().ok()),
+            Some("true")
+        );
     }
 
     #[tokio::test]

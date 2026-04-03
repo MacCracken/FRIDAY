@@ -915,17 +915,16 @@ async fn get_security_policy(State(s): State<AppState>) -> impl IntoResponse {
         return err_unavailable();
     };
     // security.policy is a key/value table: key='security_policy', value=JSON string
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM security.policy WHERE key = 'security_policy'"
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM security.policy WHERE key = 'security_policy'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
     match row {
         Some((json_str,)) => {
-            let val: serde_json::Value = serde_json::from_str(&json_str)
-                .unwrap_or_else(|_| default_security_policy());
+            let val: serde_json::Value =
+                serde_json::from_str(&json_str).unwrap_or_else(|_| default_security_policy());
             Json(val).into_response()
         }
         None => Json(default_security_policy()).into_response(),
@@ -1009,12 +1008,11 @@ async fn patch_security_policy(
     };
 
     // Load existing policy or defaults
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM security.policy WHERE key = 'security_policy'",
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM security.policy WHERE key = 'security_policy'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
     let mut current = match row {
         Some((json_str,)) => {

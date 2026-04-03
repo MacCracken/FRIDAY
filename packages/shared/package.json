@@ -1,6 +1,6 @@
 {
   "name": "@secureyeoman/shared",
-  "version": "2026.3.28",
+  "version": "0.5.0",
   "description": "Shared types and utilities for SecureYeoman",
   "type": "module",
   "main": "./dist/index.js",
