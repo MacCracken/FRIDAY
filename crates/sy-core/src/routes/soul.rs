@@ -40,6 +40,15 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/soul/skills", get(list_skills))
         .route("/api/v1/soul/skills", post(create_skill))
         .route("/api/v1/soul/skills/{id}", delete(delete_skill))
+        // Dashboard expects these additional soul endpoints
+        .route("/api/v1/soul/agent-name", get(get_agent_name))
+        .route("/api/v1/soul/agent-name", put(set_agent_name))
+        .route("/api/v1/soul/personality", get(get_active_personality))
+        .route("/api/v1/soul/strategies", get(list_strategies))
+        .route(
+            "/api/v1/soul/personalities/clear-default",
+            post(clear_default_personality),
+        )
 }
 
 async fn list_personalities(State(state): State<AppState>) -> impl IntoResponse {
@@ -454,4 +463,94 @@ async fn delete_skill(State(state): State<AppState>, Path(id): Path<String>) -> 
         )
             .into_response(),
     }
+}
+
+// ── Agent Name ─────────────────────────────────────────────────────────
+
+async fn get_agent_name(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return Json(serde_json::json!({"name": "FRIDAY"})).into_response();
+    };
+    let name: String = sqlx::query_scalar(
+        "SELECT COALESCE(value, 'FRIDAY') FROM soul.config WHERE key = 'agent_name' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "FRIDAY".to_string());
+    Json(serde_json::json!({"name": name})).into_response()
+}
+
+#[derive(Deserialize)]
+struct AgentNameRequest {
+    name: String,
+}
+
+async fn set_agent_name(
+    State(state): State<AppState>,
+    Json(body): Json<AgentNameRequest>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let _ = sqlx::query(
+        "INSERT INTO soul.config (key, value) VALUES ('agent_name', $1) \
+         ON CONFLICT (key) DO UPDATE SET value = $1",
+    )
+    .bind(&body.name)
+    .execute(pool)
+    .await;
+    Json(serde_json::json!({"name": body.name})).into_response()
+}
+
+// ── Active Personality Shortcut ────────────────────────────────────────
+
+async fn get_active_personality(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    match soul::get_active_personality(pool, "default").await {
+        Ok(Some(p)) => Json(serde_json::json!({"personality": p})).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "No active personality"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Strategies ─────────────────────────────────────────────────────────
+
+async fn list_strategies() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "strategies": [
+            {"id": "balanced", "name": "Balanced", "description": "Default balanced reasoning", "isDefault": true},
+            {"id": "analytical", "name": "Analytical", "description": "Step-by-step logical analysis", "isDefault": false},
+            {"id": "creative", "name": "Creative", "description": "Open-ended creative exploration", "isDefault": false},
+            {"id": "concise", "name": "Concise", "description": "Brief, direct responses", "isDefault": false},
+        ]
+    }))
+}
+
+// ── Clear Default Personality ──────────────────────────────────────────
+
+async fn clear_default_personality(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let _ =
+        sqlx::query("UPDATE soul.personalities SET is_default = false WHERE tenant_id = 'default'")
+            .execute(pool)
+            .await;
+    StatusCode::NO_CONTENT.into_response()
 }

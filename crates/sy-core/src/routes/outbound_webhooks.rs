@@ -31,6 +31,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/integrations/outbound-webhooks/{id}/test",
             post(test_webhook),
         )
+        .route("/api/v1/webhooks/timeline", get(webhook_timeline))
 }
 
 #[derive(Deserialize)]
@@ -229,4 +230,8 @@ async fn test_webhook(State(state): State<AppState>, Path(id): Path<String>) -> 
         )
             .into_response(),
     }
+}
+
+async fn webhook_timeline(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"events": [], "total": 0}))
 }

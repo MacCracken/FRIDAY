@@ -696,10 +696,21 @@ async fn chat_complete(
                 .and_then(|c| c.as_str())
                 .unwrap_or("");
             let response_model = oai.get("model").and_then(|m| m.as_str()).unwrap_or(model);
+            let tokens_used = oai
+                .get("usage")
+                .and_then(|u| u.get("total_tokens"))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
             Json(serde_json::json!({
+                "role": "assistant",
                 "content": content,
                 "model": response_model,
                 "provider": "hoosh",
+                "tokensUsed": tokens_used,
+                "brainContext": null,
+                "conversationId": null,
+                "creationEvents": [],
+                "thinkingContent": null,
             }))
             .into_response()
         }

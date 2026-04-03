@@ -27,6 +27,12 @@ pub struct PersonalityRow {
     pub empathy_resonance: bool,
     pub avatar_url: Option<String>,
     pub tenant_id: String,
+    /// Dashboard expects voiceProfileId — not in DB, always null for now.
+    #[sqlx(default)]
+    pub voice_profile_id: Option<String>,
+    /// Dashboard expects brainConfig — not in DB, always null for now.
+    #[sqlx(default)]
+    pub brain_config: Option<serde_json::Value>,
 }
 
 /// Skill row from soul.skills table.

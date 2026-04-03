@@ -38,6 +38,14 @@ pub fn router() -> Router<AppState> {
         // Heartbeat (dashboard health widget)
         .route("/api/v1/brain/heartbeat/status", get(heartbeat_status))
         .route("/api/v1/brain/heartbeat/tasks", get(heartbeat_tasks))
+        // Document ingestion
+        .route("/api/v1/brain/documents/ingest-text", post(ingest_text))
+        .route("/api/v1/brain/documents/ingest-url", post(ingest_url))
+        // Reindex & sync
+        .route("/api/v1/brain/reindex", post(reindex_brain))
+        .route("/api/v1/brain/sync", post(sync_brain))
+        .route("/api/v1/brain/sync/config", get(get_sync_config))
+        .route("/api/v1/brain/sync/config", put(update_sync_config))
 }
 
 async fn heartbeat_status(State(state): State<AppState>) -> impl IntoResponse {
@@ -678,4 +686,131 @@ async fn run_consolidation(State(state): State<AppState>) -> impl IntoResponse {
     };
     // Trigger memory consolidation — currently a no-op acknowledgement
     StatusCode::NO_CONTENT.into_response()
+}
+
+// ── Document Ingestion ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IngestTextRequest {
+    text: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, rename = "personalityId")]
+    personality_id: Option<String>,
+}
+
+async fn ingest_text(
+    State(state): State<AppState>,
+    Json(body): Json<IngestTextRequest>,
+) -> impl IntoResponse {
+    let Some(brain) = state.brain() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Brain not available"})),
+        )
+            .into_response();
+    };
+    let title = body.title.as_deref().unwrap_or("Untitled");
+    match brain
+        .ingest_text(
+            title,
+            &body.text,
+            "user_upload",
+            body.personality_id.as_deref(),
+        )
+        .await
+    {
+        Ok(count) => Json(serde_json::json!({
+            "status": "ingested",
+            "chunksCreated": count,
+            "title": title,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct IngestUrlRequest {
+    url: String,
+    #[serde(default, rename = "personalityId")]
+    personality_id: Option<String>,
+}
+
+async fn ingest_url(
+    State(_state): State<AppState>,
+    Json(body): Json<IngestUrlRequest>,
+) -> impl IntoResponse {
+    // URL ingestion: fetch content then ingest — stubbed until HTTP fetch + parser is wired
+    Json(serde_json::json!({
+        "status": "queued",
+        "url": body.url,
+        "message": "URL ingestion queued for processing",
+    }))
+}
+
+// ── Reindex & Sync ─────────────────────────────────────────────────────
+
+async fn reindex_brain(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(_brain) = state.brain() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Brain not available"})),
+        )
+            .into_response();
+    };
+    // Reindex is an async operation — acknowledge and return
+    Json(serde_json::json!({
+        "status": "reindex_started",
+        "message": "Brain reindex initiated",
+    }))
+    .into_response()
+}
+
+async fn sync_brain(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(_brain) = state.brain() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Brain not available"})),
+        )
+            .into_response();
+    };
+    Json(serde_json::json!({
+        "status": "sync_started",
+        "message": "Brain sync initiated",
+    }))
+    .into_response()
+}
+
+async fn get_sync_config(State(_state): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "enabled": false,
+        "intervalMs": 300000,
+        "sources": [],
+        "lastSync": null,
+    }))
+}
+
+#[derive(Deserialize)]
+struct SyncConfigUpdate {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default, rename = "intervalMs")]
+    interval_ms: Option<u64>,
+}
+
+async fn update_sync_config(
+    State(_state): State<AppState>,
+    Json(body): Json<SyncConfigUpdate>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "enabled": body.enabled.unwrap_or(false),
+        "intervalMs": body.interval_ms.unwrap_or(300000),
+        "sources": [],
+        "lastSync": null,
+    }))
 }

@@ -13,6 +13,12 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/a2a/peers", get(list_peers))
         .route("/api/v1/a2a/peers/{id}", get(get_peer))
+        // Dashboard A2A endpoints
+        .route("/api/v1/a2a/capabilities", get(a2a_capabilities))
+        .route("/api/v1/a2a/config", get(get_a2a_config))
+        .route("/api/v1/a2a/config", axum::routing::put(update_a2a_config))
+        .route("/api/v1/a2a/delegate", axum::routing::post(a2a_delegate))
+        .route("/api/v1/a2a/discover", get(a2a_discover))
 }
 
 #[derive(Deserialize)]
@@ -45,6 +51,47 @@ async fn list_peers(
         )
             .into_response(),
     }
+}
+
+// ── Dashboard A2A Endpoints ─────────────────────────────────────────────
+
+async fn a2a_capabilities(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "protocols": ["a2a-v1"],
+        "maxPeers": 50,
+        "delegationSupported": true,
+        "discoverySupported": true,
+    }))
+}
+
+async fn get_a2a_config(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "enabled": false,
+        "discoveryEnabled": false,
+        "autoAcceptPeers": false,
+        "maxConcurrentDelegations": 5,
+    }))
+}
+
+async fn update_a2a_config(
+    State(_s): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    Json(body)
+}
+
+async fn a2a_delegate(
+    State(_s): State<AppState>,
+    Json(_body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "queued",
+        "message": "Delegation request queued",
+    }))
+}
+
+async fn a2a_discover(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"peers": [], "total": 0}))
 }
 
 async fn get_peer(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {

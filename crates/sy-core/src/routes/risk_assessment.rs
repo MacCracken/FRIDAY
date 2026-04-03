@@ -22,6 +22,13 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/risk/dashboard", get(risk_dashboard))
         .route("/api/v1/risk/config", get(risk_config))
+        // Dashboard risk page endpoints
+        .route("/api/v1/risk/departments", get(risk_departments))
+        .route("/api/v1/risk/feeds", get(risk_feeds))
+        .route("/api/v1/risk/findings", get(risk_findings))
+        .route("/api/v1/risk/heatmap", get(risk_heatmap))
+        .route("/api/v1/risk/register", get(risk_register))
+        .route("/api/v1/risk/summary", get(risk_summary))
 }
 
 #[derive(Deserialize)]
@@ -207,4 +214,39 @@ async fn risk_config(State(_s): State<AppState>) -> impl IntoResponse {
         "autoScoreEnabled": false
     }))
     .into_response()
+}
+
+// ── Dashboard Risk Page Endpoints ──────────────────────────────────────
+
+async fn risk_departments(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"items": [], "total": 0}))
+}
+
+async fn risk_feeds(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"feeds": [], "total": 0}))
+}
+
+async fn risk_findings(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"findings": [], "total": 0}))
+}
+
+async fn risk_heatmap(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"cells": [], "dimensions": {"rows": 0, "cols": 0}}))
+}
+
+async fn risk_register(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"items": [], "total": 0}))
+}
+
+async fn risk_summary(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "totalRisks": 0,
+        "criticalCount": 0,
+        "highCount": 0,
+        "mediumCount": 0,
+        "lowCount": 0,
+        "mitigatedCount": 0,
+        "overallScore": 0.0,
+        "trend": "stable",
+    }))
 }

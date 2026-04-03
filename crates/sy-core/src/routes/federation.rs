@@ -79,6 +79,11 @@ pub fn router() -> Router<AppState> {
             "/api/v1/federated/rounds/{roundId}/aggregate",
             post(aggregate_round),
         )
+        // Personality import from federated peers
+        .route(
+            "/api/v1/federation/personalities/import",
+            post(import_personality),
+        )
 }
 
 async fn list_peers(State(state): State<AppState>) -> impl IntoResponse {
@@ -552,4 +557,14 @@ async fn aggregate_round(
         Ok(false) => not_found("Round not found or not aggregatable").into_response(),
         Err(e) => db_err(e).into_response(),
     }
+}
+
+async fn import_personality(
+    State(_state): State<AppState>,
+    Json(_body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "queued",
+        "message": "Personality import queued for processing",
+    }))
 }

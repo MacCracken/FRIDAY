@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/intent/patterns/{id}", delete(delete_pattern))
         .route("/api/v1/intent/detect", post(detect_intent))
         .route("/api/v1/intent/config", get(intent_config))
+        .route("/api/v1/intent/active", get(active_intent))
 }
 
 #[derive(Deserialize)]
@@ -200,4 +201,11 @@ async fn intent_config(State(_s): State<AppState>) -> impl IntoResponse {
         "categories": ["command", "query", "action", "navigation"]
     }))
     .into_response()
+}
+
+async fn active_intent(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "active": null,
+        "message": "No active intent"
+    }))
 }

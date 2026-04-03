@@ -22,6 +22,15 @@ pub fn router() -> Router<AppState> {
             "/api/v1/sandbox/quarantine/{id}/approve",
             post(approve_quarantine),
         )
+        // Dashboard expects these additional sandbox endpoints
+        .route("/api/v1/sandbox/capabilities", get(sandbox_capabilities))
+        .route("/api/v1/sandbox/health", get(sandbox_health))
+        .route("/api/v1/sandbox/policy", get(get_sandbox_policy))
+        .route(
+            "/api/v1/sandbox/policy",
+            axum::routing::put(update_sandbox_policy),
+        )
+        .route("/api/v1/sandbox/threats", get(list_threats))
 }
 
 #[derive(Deserialize)]
@@ -197,4 +206,46 @@ async fn approve_quarantine(
         )
             .into_response(),
     }
+}
+
+// ── Dashboard Sandbox Endpoints ────────────────────────────────────────
+
+async fn sandbox_capabilities() -> impl IntoResponse {
+    let caps = sy_sandbox::detect_capabilities();
+    Json(serde_json::json!({
+        "seccomp": caps.seccomp_available,
+        "landlock": caps.landlock_available,
+        "cgroupV2": caps.cgroup_v2,
+        "namespaces": caps.namespaces_available,
+    }))
+}
+
+async fn sandbox_health() -> impl IntoResponse {
+    let caps = sy_sandbox::detect_capabilities();
+    Json(serde_json::json!({
+        "status": "ok",
+        "seccomp": caps.seccomp_available,
+        "landlock": caps.landlock_available,
+        "cgroupV2": caps.cgroup_v2,
+    }))
+}
+
+async fn get_sandbox_policy(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "defaultAction": "allow",
+        "rules": [],
+        "blockedSyscalls": [],
+        "allowedPaths": [],
+    }))
+}
+
+async fn update_sandbox_policy(
+    State(_s): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    Json(body)
+}
+
+async fn list_threats(State(_s): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({"threats": [], "total": 0}))
 }

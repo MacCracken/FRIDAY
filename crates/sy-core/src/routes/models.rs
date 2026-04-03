@@ -57,6 +57,12 @@ pub fn router() -> Router<AppState> {
         // Health
         .route("/api/v1/model/health", get(model_health))
         .route("/api/v1/ai/health", get(ai_health))
+        // Model configuration (dashboard settings page)
+        .route("/api/v1/model/config", get(get_model_config))
+        .route(
+            "/api/v1/model/config",
+            axum::routing::put(update_model_config),
+        )
 }
 
 #[derive(Deserialize)]
@@ -682,4 +688,36 @@ async fn ai_health(State(_state): State<AppState>) -> impl IntoResponse {
             "cache": "ok",
         },
     }))
+}
+
+/// GET /api/v1/model/config — model configuration for the settings page.
+async fn get_model_config(State(_state): State<AppState>) -> impl IntoResponse {
+    let anthropic_avail = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some();
+    let openai_avail = std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some();
+
+    Json(serde_json::json!({
+        "providers": {
+            "anthropic": {"enabled": anthropic_avail, "models": ["claude-sonnet-4-6", "claude-haiku-4-5"]},
+            "openai": {"enabled": openai_avail, "models": ["gpt-4o", "gpt-4o-mini"]},
+            "hoosh": {"enabled": true, "models": ["default"]},
+        },
+        "defaultModel": if anthropic_avail { "claude-sonnet-4-6" } else if openai_avail { "gpt-4o" } else { "default" },
+        "routingStrategy": "priority",
+        "maxTokens": 4096,
+    }))
+}
+
+/// PUT /api/v1/model/config — update model configuration.
+async fn update_model_config(
+    State(_state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    // Accept the config update and echo back — persistence TBD
+    Json(body)
 }
