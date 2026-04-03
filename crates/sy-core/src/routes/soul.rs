@@ -166,7 +166,6 @@ async fn update_personality(
         body.voice.as_deref(),
         body.sex.as_deref(),
         body.include_archetypes,
-        body.brain_config.as_ref(),
         body.default_model.as_ref(),
         "default",
     )

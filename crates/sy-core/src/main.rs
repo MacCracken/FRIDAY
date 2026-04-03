@@ -68,6 +68,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(pool) => {
             info!("Connected to PostgreSQL");
 
+            // Run migrations from /usr/local/bin/migrations/ if they exist
+            let migrations_dir = std::path::Path::new("/usr/local/bin/migrations");
+            if migrations_dir.exists() {
+                let mut files: Vec<_> = std::fs::read_dir(migrations_dir)
+                    .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("sql"))
+                    .collect();
+                files.sort_by_key(|e| e.file_name());
+
+                for entry in &files {
+                    let sql = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                    if sql.is_empty() { continue; }
+                    match sqlx::raw_sql(&sql).execute(&pool).await {
+                        Ok(_) => info!(file = ?entry.file_name(), "migration applied"),
+                        Err(e) => {
+                            // Ignore "already exists" errors (idempotent migrations)
+                            let msg = e.to_string();
+                            if !msg.contains("already exists") && !msg.contains("duplicate key") {
+                                tracing::warn!(file = ?entry.file_name(), error = %e, "migration warning");
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Seed default data if DB is empty (first boot)
+            let personality_count: (i64,) = sqlx::query_as("SELECT count(*) FROM soul.personalities")
+                .fetch_one(&pool).await.unwrap_or((0,));
+            if personality_count.0 == 0 {
+                info!("First boot — seeding default personalities and agents");
+                crate::db::seed::seed_defaults(&pool).await;
+            }
+
             // Load persisted secrets from DB and set as env vars
             let secrets: Vec<(String, String)> = sqlx::query_as(
                 "SELECT key, value FROM security.policy WHERE key LIKE 'secret:%'",

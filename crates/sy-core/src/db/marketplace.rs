@@ -27,9 +27,40 @@ pub async fn list_skills(
     pool: &PgPool,
     category: Option<&str>,
     installed: Option<bool>,
+    source: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<MarketplaceSkillRow>, sqlx::Error> {
+    // Handle combined source + category filters
+    match (source, category) {
+        (Some("community"), Some("personality")) => {
+            return sqlx::query_as::<_, MarketplaceSkillRow>(
+                "SELECT * FROM marketplace.skills WHERE source = 'community' AND category LIKE 'personality%' ORDER BY name ASC LIMIT $1 OFFSET $2"
+            ).bind(limit).bind(offset).fetch_all(pool).await;
+        }
+        (Some("community"), Some(cat)) => {
+            return sqlx::query_as::<_, MarketplaceSkillRow>(
+                "SELECT * FROM marketplace.skills WHERE source = 'community' AND category = $1 ORDER BY name ASC LIMIT $2 OFFSET $3"
+            ).bind(cat).bind(limit).bind(offset).fetch_all(pool).await;
+        }
+        (Some("community"), None) => {
+            return sqlx::query_as::<_, MarketplaceSkillRow>(
+                "SELECT * FROM marketplace.skills WHERE source = 'community' ORDER BY name ASC LIMIT $1 OFFSET $2"
+            ).bind(limit).bind(offset).fetch_all(pool).await;
+        }
+        (Some("marketplace"), Some(cat)) => {
+            return sqlx::query_as::<_, MarketplaceSkillRow>(
+                "SELECT * FROM marketplace.skills WHERE source != 'community' AND category = $1 ORDER BY download_count DESC LIMIT $2 OFFSET $3"
+            ).bind(cat).bind(limit).bind(offset).fetch_all(pool).await;
+        }
+        (Some("marketplace"), None) => {
+            return sqlx::query_as::<_, MarketplaceSkillRow>(
+                "SELECT * FROM marketplace.skills WHERE source != 'community' ORDER BY download_count DESC LIMIT $1 OFFSET $2"
+            ).bind(limit).bind(offset).fetch_all(pool).await;
+        }
+        _ => {}
+    }
+
     if let Some(cat) = category {
         sqlx::query_as::<_, MarketplaceSkillRow>(
             "SELECT * FROM marketplace.skills WHERE category = $1 ORDER BY download_count DESC LIMIT $2 OFFSET $3",

@@ -82,7 +82,7 @@ pub async fn get_mcp_server(pool: &PgPool, id: &str) -> Result<Option<McpServerR
 #[serde(rename_all = "camelCase")]
 pub struct McpConfigRow {
     pub key: String,
-    pub value: serde_json::Value,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

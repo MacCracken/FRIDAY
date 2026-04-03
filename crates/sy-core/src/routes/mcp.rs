@@ -284,12 +284,11 @@ async fn patch_mcp_config(
 async fn load_mcp_config(pool: &sqlx::PgPool) -> serde_json::Map<String, serde_json::Value> {
     let mut config = default_mcp_config();
 
-    // Override with DB values
+    // Override with DB values (stored as text in mcp.config)
     if let Ok(rows) = mcp::get_config(pool).await {
         for row in rows {
-            // DB stores values as text strings — parse them back to JSON
-            let value_str = row.value.as_str().unwrap_or("");
-            let parsed = serde_json::from_str(value_str).unwrap_or(row.value);
+            let parsed: serde_json::Value = serde_json::from_str(&row.value)
+                .unwrap_or(serde_json::Value::String(row.value));
             config.insert(row.key, parsed);
         }
     }

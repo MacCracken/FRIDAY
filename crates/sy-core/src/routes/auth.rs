@@ -194,6 +194,22 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) ->
         jwt_config.access_token_expiry_secs
     };
 
+    // Record login audit event
+    if let Some(pool) = state.db() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let _ = sqlx::query(
+            "INSERT INTO audit.entries (id, tenant_id, event, level, message, user_id, timestamp, metadata)
+             VALUES ($1, 'default', 'auth.login', 'info', 'User logged in', 'admin', $2, '{}'::jsonb)"
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(now)
+        .execute(pool)
+        .await;
+    }
+
     Json(serde_json::json!({
         "accessToken": access_token,
         "refreshToken": refresh_token,

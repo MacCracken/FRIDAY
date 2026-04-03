@@ -19,7 +19,6 @@ pub struct PersonalityRow {
     pub include_archetypes: bool,
     pub is_active: bool,
     pub body: serde_json::Value,
-    pub brain_config: serde_json::Value,
     pub created_at: i64,
     pub updated_at: i64,
     pub model_fallbacks: serde_json::Value,
@@ -28,7 +27,6 @@ pub struct PersonalityRow {
     pub empathy_resonance: bool,
     pub avatar_url: Option<String>,
     pub tenant_id: String,
-    pub version: i32,
 }
 
 /// Skill row from soul.skills table.
@@ -127,7 +125,6 @@ pub async fn update_personality(
     voice: Option<&str>,
     sex: Option<&str>,
     include_archetypes: Option<bool>,
-    brain_config: Option<&serde_json::Value>,
     default_model: Option<&serde_json::Value>,
     tenant_id: &str,
 ) -> Result<Option<PersonalityRow>, sqlx::Error> {
@@ -138,10 +135,9 @@ pub async fn update_personality(
             voice = COALESCE($6, voice),
             sex = COALESCE($7, sex),
             include_archetypes = COALESCE($8, include_archetypes),
-            brain_config = COALESCE($9, brain_config),
-            default_model = COALESCE($10, default_model),
-            updated_at = $11
-         WHERE id = $12 AND tenant_id = $13
+            default_model = COALESCE($9, default_model),
+            updated_at = $10
+         WHERE id = $11 AND tenant_id = $12
          RETURNING *",
     )
     .bind(name)
@@ -152,7 +148,6 @@ pub async fn update_personality(
     .bind(voice)
     .bind(sex)
     .bind(include_archetypes)
-    .bind(brain_config)
     .bind(default_model)
     .bind(now_ms())
     .bind(id)
