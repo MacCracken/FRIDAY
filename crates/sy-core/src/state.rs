@@ -21,6 +21,7 @@ use crate::integrations::linear::LinearClient;
 use crate::integrations::notion::NotionClient;
 use crate::integrations::todoist::TodoistClient;
 use crate::integrations::twitter::TwitterClient;
+use crate::middleware::backpressure::BackpressureState;
 
 /// Type-erased brain manager for use in AppState.
 /// Uses dynamic dispatch so AppState doesn't need generics.
@@ -95,6 +96,8 @@ struct AppStateInner {
     pub db_pool: Option<PgPool>,
     pub started_at: Instant,
     pub version: String,
+    pub allow_remote_access: bool,
+    pub backpressure: BackpressureState,
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
@@ -179,6 +182,10 @@ impl AppState {
                 db_pool: None,
                 started_at: Instant::now(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                allow_remote_access: std::env::var("SECUREYEOMAN_ALLOW_REMOTE_ACCESS")
+                    .ok()
+                    .is_some_and(|v| v == "true" || v == "1"),
+                backpressure: BackpressureState::new(),
                 bridge_tx,
                 brain: None,
                 github_client,
@@ -213,6 +220,21 @@ impl AppState {
 
     pub fn db(&self) -> Option<&PgPool> {
         self.inner.db_pool.as_ref()
+    }
+
+    pub fn allow_remote_access(&self) -> bool {
+        self.inner.allow_remote_access
+    }
+
+    pub fn backpressure(&self) -> &BackpressureState {
+        &self.inner.backpressure
+    }
+
+    /// Override the remote access setting (useful for testing).
+    pub fn with_allow_remote_access(mut self, allow: bool) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).unwrap();
+        inner.allow_remote_access = allow;
+        self
     }
 
     /// Get the brain manager (memory, knowledge, RAG).

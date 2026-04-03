@@ -22,8 +22,11 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::middleware::{enforce_rbac, require_auth};
+use crate::middleware::backpressure::check_backpressure;
 use crate::middleware::body_limit::BodyLimitLayer;
 use crate::middleware::correlation_id::CorrelationIdLayer;
+use crate::middleware::ip_reputation::{IpReputationLayer, IpReputationState};
+use crate::middleware::local_network::check_local_network;
 use crate::middleware::rate_limit::{RateLimitLayer, RateLimitState};
 use crate::middleware::security_headers::SecurityHeadersLayer;
 use crate::proxy::proxy_to_fastify;
@@ -161,14 +164,24 @@ pub fn build_router(state: AppState) -> Router {
     let app = api.fallback(proxy_to_fastify);
 
     // Middleware stack (outermost → innermost execution order):
-    // TraceLayer → CompressionLayer → CorsLayer → RateLimitLayer → BodyLimitLayer →
-    // CorrelationIdLayer → SecurityHeadersLayer → require_auth → enforce_rbac → handler
+    // TraceLayer → CompressionLayer → CorsLayer → LocalNetworkCheck → RateLimitLayer →
+    // BodyLimitLayer → CorrelationIdLayer → SecurityHeadersLayer → require_auth →
+    // enforce_rbac → handler
     app.layer(axum_mw::from_fn(enforce_rbac))
         .layer(axum_mw::from_fn_with_state(state.clone(), require_auth))
         .layer(SecurityHeadersLayer)
         .layer(CorrelationIdLayer)
         .layer(BodyLimitLayer)
         .layer(RateLimitLayer::new(RateLimitState::new()))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            check_backpressure,
+        ))
+        .layer(IpReputationLayer::new(IpReputationState::default()))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            check_local_network,
+        ))
         .layer(build_cors_layer())
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
@@ -184,7 +197,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> AppState {
-        AppState::new(sy_types::CoreConfig::default())
+        AppState::new(sy_types::CoreConfig::default()).with_allow_remote_access(true)
     }
 
     #[tokio::test]

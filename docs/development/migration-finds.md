@@ -306,9 +306,9 @@ These are implemented but functionally no-ops despite not being marked `todo!()`
 | R-2 | ~~**Rate limiting**~~ | P0 | Medium | R-1 | **DONE** (3 tiers, 11 tests) |
 | R-3 | ~~**RBAC enforcement**~~ | P0 | Large | R-1 | **DONE** (15 tests, 5 roles) |
 | R-4 | ~~**Body size limits**~~ | P0 | Small | R-1 | **DONE** (4 tiers, 12 tests) |
-| R-5 | **Backpressure + IP reputation** | P1 | Medium | R-2 |
+| R-5 | ~~**Backpressure + IP reputation**~~ | P1 | Medium | R-2 | **DONE** (IP rep: decay/LRU/8 tests; BP: 3 levels/8 tests) |
 | R-6 | **Ownership guards** | P1 | Large | R-3 |
-| R-7 | **Local network check** | P1 | Small | R-1 |
+| R-7 | ~~**Local network check**~~ | P1 | Small | R-1 | **DONE** (RFC1918+loopback, 14 tests) |
 | R-8 | **Request fingerprinting** | P2 | Medium | R-5 |
 | R-9 | **Fix chat streaming** | P1 | Medium | — |
 | R-10 | **Dashboard endpoint gap-fill** | P1 | Large | R-3 |
