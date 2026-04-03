@@ -11,4 +11,5 @@ pub mod activation;
 pub mod chunker;
 pub mod embedding;
 pub mod manager;
+pub mod pg_vector;
 pub mod vector;

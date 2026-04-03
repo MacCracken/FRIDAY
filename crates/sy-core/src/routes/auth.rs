@@ -261,8 +261,21 @@ async fn refresh(
     .into_response()
 }
 
-async fn logout() -> impl IntoResponse {
-    // TODO: Add JTI to revocation list when DB is available
+async fn logout(
+    State(state): State<AppState>,
+    auth: Option<axum::Extension<crate::auth::middleware::AuthContext>>,
+) -> impl IntoResponse {
+    if let Some(axum::Extension(ctx)) = auth {
+        if let Some(jti) = &ctx.jti {
+            // Revoke with 15-minute expiry (access token TTL)
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64
+                + 900_000; // 15 min
+            state.revoke_token(jti, &ctx.user_id, expires_at).await;
+        }
+    }
     StatusCode::NO_CONTENT
 }
 

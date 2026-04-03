@@ -309,14 +309,14 @@ These are implemented but functionally no-ops despite not being marked `todo!()`
 | R-5 | ~~**Backpressure + IP reputation**~~ | P1 | Medium | R-2 | **DONE** (IP rep: decay/LRU/8 tests; BP: 3 levels/8 tests) |
 | R-6 | ~~**Ownership guards**~~ | P1 | Large | R-3 | **Phase 1 DONE** (trait + utility + 7 tests; handler wiring pending DB migration) |
 | R-7 | ~~**Local network check**~~ | P1 | Small | R-1 | **DONE** (RFC1918+loopback, 14 tests) |
-| R-8 | **Request fingerprinting** | P2 | Medium | R-5 |
+| R-8 | ~~**Request fingerprinting**~~ | P2 | Medium | R-5 | **DONE** (header+UA+timing scoring, IP reputation integration, 5 tests) |
 | R-9 | ~~**Fix chat streaming**~~ | P1 | Medium | — | **DONE** (channel-based true SSE) |
 | R-10 | ~~**Dashboard endpoint gap-fill**~~ | P1 | Large | R-3 | **DONE** (27 endpoints added: soul 4, brain 6, intent 1, risk 6, sandbox 4, model 1, a2a 4, webhook 1) |
 | R-11 | ~~**Response shape alignment**~~ | P1 | Medium | R-10 | **DONE** (metrics +15 fields, chat +6 fields, personality +2 fields) |
 | R-12 | ~~**Integration test harness**~~ | P0 | Medium | R-1 | **DONE** (lib.rs + 8 tests) |
-| R-13 | **API key validation** | P1 | Small | R-3 |
-| R-14 | **Token revocation (JTI)** | P2 | Medium | R-3 |
-| R-15 | **Persistent vector store** | P2 | Medium | — |
+| R-13 | ~~**API key validation**~~ | P1 | Small | R-3 | **DONE** (SHA-256 hash lookup, async, background last_used update) |
+| R-14 | ~~**Token revocation (JTI)**~~ | P2 | Medium | R-3 | **DONE** (cache+DB, logout wired, revocation check in auth) |
+| R-15 | ~~**Persistent vector store**~~ | P2 | Medium | — | **DONE** (PgVectorStore + DynVectorStore enum dispatch, migration SQL) |
 | R-16 | ~~**Version alignment**~~ | P0-immediate | Trivial | — | **DONE** (0.5.0) |
 
 ---

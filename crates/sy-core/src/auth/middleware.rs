@@ -82,6 +82,14 @@ pub async fn require_auth(
         let jwt_config = state.jwt_config();
         match validate_token(jwt_config, token) {
             Ok(claims) if claims.token_type == "access" => {
+                // Check if token has been revoked
+                if state.is_token_revoked(&claims.jti).await {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        axum::Json(json!({"error": "Token has been revoked", "statusCode": 401})),
+                    )
+                        .into_response();
+                }
                 req.extensions_mut().insert(AuthContext {
                     user_id: claims.sub,
                     role: claims.role,
@@ -97,7 +105,7 @@ pub async fn require_auth(
 
     // 4. Try API key
     if let Some(api_key) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok())
-        && let Some(ctx) = state.validate_api_key(api_key)
+        && let Some(ctx) = state.validate_api_key(api_key).await
     {
         req.extensions_mut().insert(ctx);
         return next.run(req).await;

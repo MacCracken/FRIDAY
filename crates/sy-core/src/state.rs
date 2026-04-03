@@ -7,11 +7,12 @@ use sy_types::CoreConfig;
 use tokio::sync::broadcast;
 
 use crate::auth::jwt::JwtConfig;
-use crate::auth::middleware::AuthContext;
+use crate::auth::middleware::{AuthContext, AuthMethod};
 use crate::brain::embedding::{
     EmbeddingProvider, NoopEmbeddingProvider, OllamaEmbeddingProvider, OpenAiEmbeddingProvider,
 };
 use crate::brain::manager::{BrainConfig, BrainManager};
+use crate::brain::pg_vector::{DynVectorStore, PgVectorStore};
 use crate::brain::vector::InMemoryVectorStore;
 use crate::integrations::github::GitHubClient;
 use crate::integrations::gmail::GmailClient;
@@ -22,10 +23,13 @@ use crate::integrations::notion::NotionClient;
 use crate::integrations::todoist::TodoistClient;
 use crate::integrations::twitter::TwitterClient;
 use crate::middleware::backpressure::BackpressureState;
+use crate::middleware::fingerprinting::FingerprintState;
+use crate::middleware::ip_reputation::IpReputationState;
 
 /// Type-erased brain manager for use in AppState.
 /// Uses dynamic dispatch so AppState doesn't need generics.
-pub type DynBrainManager = BrainManager<DynEmbeddingProvider, InMemoryVectorStore>;
+/// Uses DynVectorStore which dispatches to InMemory or Postgres at runtime.
+pub type DynBrainManager = BrainManager<DynEmbeddingProvider, DynVectorStore>;
 
 /// Dynamic dispatch wrapper for embedding providers.
 pub struct DynEmbeddingProvider(Box<dyn EmbeddingProviderDyn>);
@@ -98,6 +102,10 @@ struct AppStateInner {
     pub version: String,
     pub allow_remote_access: bool,
     pub backpressure: BackpressureState,
+    /// In-memory cache of revoked JTIs (avoids DB hit per request).
+    pub revoked_tokens: Arc<dashmap::DashMap<String, Instant>>,
+    pub fingerprint: FingerprintState,
+    pub ip_reputation: Option<IpReputationState>,
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
@@ -186,6 +194,9 @@ impl AppState {
                     .ok()
                     .is_some_and(|v| v == "true" || v == "1"),
                 backpressure: BackpressureState::new(),
+                revoked_tokens: Arc::new(dashmap::DashMap::new()),
+                fingerprint: FingerprintState::new(),
+                ip_reputation: Some(IpReputationState::default()),
                 bridge_tx,
                 brain: None,
                 github_client,
@@ -204,12 +215,17 @@ impl AppState {
     pub fn with_db(mut self, pool: PgPool) -> Self {
         // Initialize brain manager with appropriate embedding provider
         let embedding = Self::create_embedding_provider();
+
+        // Use PgVectorStore when database is available, otherwise InMemory
+        let vector_store =
+            DynVectorStore::Postgres(PgVectorStore::new(pool.clone(), "default".to_string()));
+
         let brain = BrainManager::new(
             pool.clone(),
             "default".to_string(),
             BrainConfig::default(),
             embedding,
-            InMemoryVectorStore::new(),
+            vector_store,
         );
 
         let inner = Arc::get_mut(&mut self.inner).unwrap();
@@ -228,6 +244,47 @@ impl AppState {
 
     pub fn backpressure(&self) -> &BackpressureState {
         &self.inner.backpressure
+    }
+
+    pub fn fingerprint(&self) -> &FingerprintState {
+        &self.inner.fingerprint
+    }
+
+    pub fn ip_reputation(&self) -> Option<&IpReputationState> {
+        self.inner.ip_reputation.as_ref()
+    }
+
+    /// Check if a token JTI has been revoked (cache → DB fallback).
+    pub async fn is_token_revoked(&self, jti: &str) -> bool {
+        // Check in-memory cache first
+        if self.inner.revoked_tokens.contains_key(jti) {
+            return true;
+        }
+
+        // Fallback to DB
+        if let Some(pool) = self.db() {
+            if let Ok(revoked) = crate::db::auth::is_token_revoked(pool, jti).await {
+                if revoked {
+                    // Populate cache
+                    self.inner
+                        .revoked_tokens
+                        .insert(jti.to_string(), Instant::now());
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Revoke a token by JTI (adds to cache + DB).
+    pub async fn revoke_token(&self, jti: &str, user_id: &str, expires_at: i64) {
+        self.inner
+            .revoked_tokens
+            .insert(jti.to_string(), Instant::now());
+        if let Some(pool) = self.db() {
+            let _ = crate::db::auth::revoke_token(pool, jti, user_id, expires_at).await;
+        }
     }
 
     /// Override the remote access setting (useful for testing).
@@ -360,10 +417,39 @@ impl AppState {
             .map(|port| format!("http://127.0.0.1:{port}"))
     }
 
-    /// Validate an API key — stub for Phase 7.1.
-    /// TODO: Implement SHA-256 hash lookup against database.
-    pub fn validate_api_key(&self, _api_key: &str) -> Option<AuthContext> {
-        // Will be implemented when database layer is added
-        None
+    /// Validate an API key by SHA-256 hash lookup against the database.
+    pub async fn validate_api_key(&self, api_key: &str) -> Option<AuthContext> {
+        let pool = self.db()?;
+
+        // SHA-256 hash the incoming key
+        let hash = sy_crypto::sha256(api_key.as_bytes());
+
+        // Look up the hash in the database
+        let row = crate::db::auth::find_api_key_by_hash(pool, &hash)
+            .await
+            .ok()??;
+
+        // Determine role from permissions (default to "service")
+        let role = row
+            .permissions
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("service")
+            .to_string();
+
+        // Update last_used_at in background (don't block auth)
+        let pool_clone = pool.clone();
+        let key_id = row.id.clone();
+        tokio::spawn(async move {
+            let _ = crate::db::auth::touch_api_key(&pool_clone, &key_id).await;
+        });
+
+        Some(AuthContext {
+            user_id: row.name.clone(),
+            role,
+            permissions: vec![],
+            auth_method: AuthMethod::ApiKey,
+            jti: None,
+        })
     }
 }

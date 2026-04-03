@@ -25,6 +25,7 @@ use crate::auth::middleware::{enforce_rbac, require_auth};
 use crate::middleware::backpressure::check_backpressure;
 use crate::middleware::body_limit::BodyLimitLayer;
 use crate::middleware::correlation_id::CorrelationIdLayer;
+use crate::middleware::fingerprinting::check_fingerprint;
 use crate::middleware::ip_reputation::{IpReputationLayer, IpReputationState};
 use crate::middleware::local_network::check_local_network;
 use crate::middleware::rate_limit::{RateLimitLayer, RateLimitState};
@@ -164,12 +165,16 @@ pub fn build_router(state: AppState) -> Router {
     let app = api.fallback(proxy_to_fastify);
 
     // Middleware stack (outermost → innermost execution order):
-    // TraceLayer → CompressionLayer → CorsLayer → LocalNetworkCheck → RateLimitLayer →
-    // BodyLimitLayer → CorrelationIdLayer → SecurityHeadersLayer → require_auth →
-    // enforce_rbac → handler
+    // TraceLayer → CompressionLayer → CorsLayer → LocalNetworkCheck → IpReputation →
+    // Backpressure → RateLimit → BodyLimit → CorrelationId → Fingerprint →
+    // SecurityHeaders → require_auth → enforce_rbac → handler
     app.layer(axum_mw::from_fn(enforce_rbac))
         .layer(axum_mw::from_fn_with_state(state.clone(), require_auth))
         .layer(SecurityHeadersLayer)
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            check_fingerprint,
+        ))
         .layer(CorrelationIdLayer)
         .layer(BodyLimitLayer)
         .layer(RateLimitLayer::new(RateLimitState::new()))

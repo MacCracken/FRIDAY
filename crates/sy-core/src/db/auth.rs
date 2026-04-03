@@ -131,6 +131,32 @@ pub async fn list_api_keys(pool: &PgPool, tenant_id: &str) -> Result<Vec<ApiKeyR
     .await
 }
 
+/// Find an API key by its SHA-256 hash (for validation).
+/// Returns None if not found, expired, or deleted.
+pub async fn find_api_key_by_hash(
+    pool: &PgPool,
+    key_hash: &str,
+) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+    let now = now_ms();
+    sqlx::query_as::<_, ApiKeyRow>(
+        "SELECT * FROM auth.api_keys WHERE key_hash = $1 AND (expires_at IS NULL OR expires_at > $2)",
+    )
+    .bind(key_hash)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Update the last_used_at timestamp for an API key.
+pub async fn touch_api_key(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE auth.api_keys SET last_used_at = $1 WHERE id = $2")
+        .bind(now_ms())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Create an API key.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_api_key(
@@ -761,6 +787,47 @@ pub async fn create_break_glass_session(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+// ── Token Revocation ───────────────────────────────────────────────────
+
+/// Revoke a token by JTI. Idempotent (ON CONFLICT DO NOTHING).
+pub async fn revoke_token(
+    pool: &PgPool,
+    jti: &str,
+    user_id: &str,
+    expires_at: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO auth.revoked_tokens (jti, user_id, revoked_at, expires_at)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (jti) DO NOTHING",
+    )
+    .bind(jti)
+    .bind(user_id)
+    .bind(now_ms())
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Check if a token JTI has been revoked.
+pub async fn is_token_revoked(pool: &PgPool, jti: &str) -> Result<bool, sqlx::Error> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT jti FROM auth.revoked_tokens WHERE jti = $1")
+            .bind(jti)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Clean up expired revocation entries (tokens that have already expired).
+pub async fn cleanup_expired_revocations(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM auth.revoked_tokens WHERE expires_at < $1")
+        .bind(now_ms())
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 fn now_ms() -> i64 {
