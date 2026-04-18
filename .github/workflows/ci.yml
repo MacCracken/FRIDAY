@@ -229,33 +229,31 @@ jobs:
         run: helm template secureyeoman deploy/helm/secureyeoman -f deploy/helm/secureyeoman/values-production.yaml
 
   test-edge:
-    name: Edge Binary Tests (Go)
+    name: Edge Binary Tests (Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version-file: cmd/secureyeoman-edge/go.mod
-          cache-dependency-path: cmd/secureyeoman-edge/go.sum
+          toolchain: "1.89"
 
-      - name: Go unit + smoke tests
-        run: go test -v -count=1 -timeout=120s ./...
-        working-directory: cmd/secureyeoman-edge
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
 
-      - name: Build static binary
-        run: CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=ci-test" -o /tmp/secureyeoman-edge .
-        working-directory: cmd/secureyeoman-edge
+      - name: Build sy-edge binary
+        run: cargo build --release --bin sy-edge
+        working-directory: crates
 
       - name: Binary smoke test
         run: |
-          /tmp/secureyeoman-edge --version | grep ci-test
-          /tmp/secureyeoman-edge status | grep "Node ID"
-          timeout 3 /tmp/secureyeoman-edge start --port 18899 --log-level info 2>&1 || true
-
-      - name: Cross-compile ARM64
-        run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-s -w" -o /dev/null .
-        working-directory: cmd/secureyeoman-edge
+          crates/target/release/sy-edge --version
+          crates/target/release/sy-edge status | grep nodeId
+          timeout 3 crates/target/release/sy-edge start --port 18899 --log-level info 2>&1 || true
 
   container-build:
     name: Docker Build Test

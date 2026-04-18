@@ -15,7 +15,7 @@
 #   Tier 1 (needs PostgreSQL): secureyeoman-$DATE-linux-x64, -linux-arm64, -darwin-arm64, -windows-x64.exe
 #   Tier 2 (SQLite-only):      secureyeoman-$DATE-sqlite-linux-x64, -sqlite-linux-arm64, -sqlite-windows-x64.exe
 #   Tier 2.5 (Agent, soul+AI): secureyeoman-$DATE-agent-linux-x64, -agent-linux-arm64, -agent-darwin-arm64
-#   Tier 3 (Edge/IoT):         secureyeoman-$DATE-edge-linux-x64, -edge-linux-arm64, -edge-linux-armv7
+#   Tier 3 (Edge/IoT):         secureyeoman-$DATE-edge-linux-x64 (Rust sy-edge, native only)
 #
 # Prerequisites: bun >= 1.1, npm (for TypeScript build step)
 #
@@ -153,36 +153,6 @@ compile_binary() {
     --outfile "${OUTFILE}"
 }
 
-# Edge binary: uses the minimal edge/cli.ts entry point which only imports
-# the edge runtime + A2A transport. Bun tree-shakes out all unused modules
-# (brain, soul, spirit, marketplace, dashboard, training, analytics, etc.).
-# Additional externals strip optional heavy deps not used by the edge runtime.
-EDGE_EXTERNAL=(
-  "${BUN_EXTERNAL[@]}"
-  --external "isolated-vm"
-  --external "@qdrant/js-client-rest"
-  --external "faiss-node"
-  --external "@fastify/websocket"
-  --external "fastify"
-  --external "pdfjs-dist"
-  --external "sharp"
-  --external "mammoth"
-  --external "xlsx"
-  --external "csv-parse"
-  --external "nodemailer"
-  --external "ioredis"
-)
-
-compile_edge_binary() {
-  local TARGET="$1"
-  local OUTFILE="$2"
-  bun build --compile --target "${TARGET}" \
-    "${EDGE_EXTERNAL[@]}" \
-    --minify \
-    "${REPO_ROOT}/packages/core/src/edge/cli.ts" \
-    --outfile "${OUTFILE}"
-}
-
 # Agent binary: uses agent/cli.ts entry point which imports soul, AI, auth,
 # security, and A2A. Tree-shakes out brain/RAG, training, analytics, simulation,
 # dashboard, marketplace, and enterprise compliance subsystems.
@@ -206,39 +176,20 @@ compile_agent_binary() {
     --outfile "${OUTFILE}"
 }
 
-# ── Go edge binary cross-compile ──────────────────────────────────────────────
-GO_EDGE_DIR="${REPO_ROOT}/cmd/secureyeoman-edge"
-GO_EDGE_VERSION="${VERSION}"
-
-compile_go_edge() {
-  local GOOS="$1"
-  local GOARCH="$2"
-  local OUTFILE="$3"
-  echo "    → edge-${GOOS}-${GOARCH}"
-  GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-    go build -C "${GO_EDGE_DIR}" \
-    -ldflags "-s -w -X main.Version=${GO_EDGE_VERSION}" \
-    -o "${OUTFILE}" .
+# ── Rust sy-edge binary (native target only) ─────────────────────────────────
+# Cross-compile support (arm64/armv7/riscv64) will return in a follow-up via
+# `cross` or rustup target-specific linkers.
+compile_rust_edge() {
+  local OUTFILE="$1"
+  echo "    → edge-linux-x64 (Rust)"
+  (cd "${REPO_ROOT}/crates" && cargo build --release --bin sy-edge)
+  cp "${REPO_ROOT}/crates/target/release/sy-edge" "${OUTFILE}"
 }
 
-# ── Edge-only mode: skip Tier 1 + 2, build only Go edge ──────────────────────
+# ── Edge-only mode: skip Tier 1 + 2, build only Rust edge ────────────────────
 if [[ "$EDGE_ONLY" == true ]]; then
-  echo "==> Edge-only mode: building Go edge binaries..."
-
-  if [[ "$DEV_MODE" == true ]]; then
-    case "$(uname -s)-$(uname -m)" in
-      Linux-x86_64)   compile_go_edge linux amd64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64" ;;
-      Linux-aarch64)  compile_go_edge linux arm64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-arm64" ;;
-      Darwin-arm64)   compile_go_edge darwin arm64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-darwin-arm64" ;;
-      Darwin-x86_64)  compile_go_edge darwin amd64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-darwin-x64" ;;
-      *) echo "error: unsupported platform" >&2; exit 1 ;;
-    esac
-  else
-    compile_go_edge linux amd64   "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64"
-    compile_go_edge linux arm64   "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-arm64"
-    compile_go_edge linux arm     "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-armv7"
-    compile_go_edge linux riscv64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-riscv64"
-  fi
+  echo "==> Edge-only mode: building Rust sy-edge binary..."
+  compile_rust_edge "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64"
 
   echo ""
   echo "==> Edge build complete. Binaries:"
@@ -309,13 +260,10 @@ else
   compile_agent_binary "${DEV_TARGET}" "${DIST_DIR}/secureyeoman-${DATE_TAG}-agent-${DEV_TARGET#bun-}"
 fi
 
-# ── Tier 3: Edge (Go binary, static, Linux + ARM) ────────────────────────────
+# ── Tier 3: Edge (Rust sy-edge binary, native linux-x64) ─────────────────────
 if [[ "$DEV_MODE" == false ]]; then
-  echo "==> Compiling Tier 3 Go edge binaries (minimal A2A runtime)..."
-  compile_go_edge linux amd64   "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64"
-  compile_go_edge linux arm64   "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-arm64"
-  compile_go_edge linux arm     "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-armv7"
-  compile_go_edge linux riscv64 "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-riscv64"
+  echo "==> Compiling Tier 3 Rust sy-edge binary (minimal A2A runtime)..."
+  compile_rust_edge "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64"
 fi
 
 # ── Checksums ─────────────────────────────────────────────────────────────────

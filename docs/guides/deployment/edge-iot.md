@@ -1,6 +1,6 @@
 # Edge/IoT Binary
 
-Deploy SecureYeoman to edge and IoT devices with `secureyeoman-edge` — a static Go binary at 7.2 MB with zero runtime dependencies. Runs on any Linux target including the 10 MB AGNOS edge container.
+Deploy SecureYeoman to edge and IoT devices with `secureyeoman-edge` — a static Rust binary (`sy-edge`, ~8 MB) with zero runtime dependencies. Runs on any Linux target including the 10 MB AGNOS edge container.
 
 ---
 
@@ -12,7 +12,7 @@ Deploy SecureYeoman to edge and IoT devices with `secureyeoman-edge` — a stati
 curl -fsSL https://get.secureyeoman.dev | bash -s -- --edge
 ```
 
-This downloads the correct binary for your architecture (amd64, arm64, or armv7) and places it in `/usr/local/bin/`.
+This downloads the correct binary for your architecture (currently linux-x64) and places it in `/usr/local/bin/`.
 
 ### Build from source
 
@@ -20,10 +20,10 @@ This downloads the correct binary for your architecture (amd64, arm64, or armv7)
 git clone https://github.com/maccracken/secureyeoman.git
 cd secureyeoman
 ./scripts/build-binary.sh --edge
-# Outputs: dist/secureyeoman-edge-linux-{amd64,arm64,armv7}
+# Outputs: dist/secureyeoman-<date>-edge-linux-x64
 ```
 
-Cross-compilation uses `CGO_ENABLED=0` for fully static binaries.
+Cross-compilation for arm64/armv7/riscv64 will return in a follow-up; the native-arch Rust build is statically linked.
 
 ---
 

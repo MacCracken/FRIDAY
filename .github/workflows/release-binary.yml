@@ -109,10 +109,13 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup Go (for edge binary)
-        uses: actions/setup-go@v5
+      - name: Setup Rust (for sy-edge binary)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          go-version-file: cmd/secureyeoman-edge/go.mod
+          toolchain: "1.89"
+
+      - name: Install protoc
+        run: sudo apt-get install -y --no-install-recommends protobuf-compiler
 
       - name: Install dependencies
         run: npm ci
@@ -158,10 +161,7 @@ jobs:
             dist/secureyeoman-${DT}-agent-linux-x64 \
             dist/secureyeoman-${DT}-agent-linux-arm64 \
             dist/secureyeoman-${DT}-agent-darwin-arm64 \
-            dist/secureyeoman-${DT}-edge-linux-x64 \
-            dist/secureyeoman-${DT}-edge-linux-arm64 \
-            dist/secureyeoman-${DT}-edge-linux-armv7 \
-            dist/secureyeoman-${DT}-edge-linux-riscv64; do
+            dist/secureyeoman-${DT}-edge-linux-x64; do
             if [ -f "$binary" ]; then
               cosign sign-blob --yes "$binary" --output-signature "${binary}.sig" --output-certificate "${binary}.cert"
               echo "==> Signed: $binary"
@@ -183,9 +183,6 @@ jobs:
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-arm64
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-darwin-arm64
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-armv7
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-riscv64
 
       - name: Upload Linux binaries + migrations (for container job)
         uses: actions/upload-artifact@v4
@@ -311,14 +308,11 @@ jobs:
             echo "| \`secureyeoman-${DT}-agent-linux-arm64\` | Linux ARM64 | $(file_size dist/secureyeoman-${DT}-agent-linux-arm64) |"
             echo "| \`secureyeoman-${DT}-agent-darwin-arm64\` | macOS ARM64 | $(file_size dist/secureyeoman-${DT}-agent-darwin-arm64) |"
             echo ""
-            echo "#### Tier 3 — Edge/IoT (minimal A2A, static Go binary)"
+            echo "#### Tier 3 — Edge/IoT (minimal A2A, static Rust binary)"
             echo ""
             echo "| Binary | Platform | Size |"
             echo "|--------|----------|------|"
             echo "| \`secureyeoman-${DT}-edge-linux-x64\` | Linux x86_64 | $(file_size dist/secureyeoman-${DT}-edge-linux-x64) |"
-            echo "| \`secureyeoman-${DT}-edge-linux-arm64\` | Linux ARM64 (RPi 4, etc.) | $(file_size dist/secureyeoman-${DT}-edge-linux-arm64) |"
-            echo "| \`secureyeoman-${DT}-edge-linux-armv7\` | Linux ARMv7 (older ARM) | $(file_size dist/secureyeoman-${DT}-edge-linux-armv7) |"
-            echo "| \`secureyeoman-${DT}-edge-linux-riscv64\` | Linux RISC-V 64 | $(file_size dist/secureyeoman-${DT}-edge-linux-riscv64) |"
             echo ""
             echo "</details>"
             echo ""
@@ -381,9 +375,6 @@ jobs:
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-arm64
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-darwin-arm64
             dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-armv7
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-riscv64
             dist/SHA256SUMS
             dist/secureyeoman-sbom.cdx.json
             dist/*.sig

@@ -14,6 +14,8 @@ All notable changes to SecureYeoman are documented in this file.
 
 Final pre-tag cleanup across config, workspace layout, binary size, and dashboard UX.
 
+- **Go edge retired** — Deleted `cmd/secureyeoman-edge/` (legacy Go `secureyeoman-edge` binary). CI `test-edge` now builds and smoke-tests the Rust `sy-edge` bin target of `sy-core`. Release pipeline drops `setup-go` and ships edge as `secureyeoman-<date>-edge-linux-x64` (Rust, native). Cross-compile to arm64/armv7/riscv64 deferred to a follow-up (needs `cross` or rustup target linkers).
+
 - **TOML configuration (Phase 7.2)** — `CoreConfig::load()` reads a layered config: built-in defaults → `secureyeoman.toml` → env var overrides. Search order: `$SECUREYEOMAN_CONFIG`, `./secureyeoman.toml`, `/etc/secureyeoman/config.toml`, `$HOME/.secureyeoman/config.toml`. Snake_case keys (`database_url`, `cert_path`) and camelCase accepted via serde aliases. `secureyeoman.example.toml` shipped at repo root.
 - **Flat single-crate workspace (Phase 10)** — `sy-types`, `sy-crypto`, `sy-hwprobe`, `sy-tee`, `sy-privacy`, `sy-audit`, `sy-sandbox` merged into `sy-core` as sibling modules (`crate::types`, `crate::crypto`, `crate::hwprobe`, `crate::tee`, `crate::privacy`, `crate::audit`, `crate::sandbox`). Workspace went from 9 crates to 1.
 - **`sy-edge` unified (Phase 9, folded into 10)** — `sy-edge` is now a `[[bin]]` target of `sy-core` at `src/bin/sy-edge/`. Same Cargo package, same codebase.
