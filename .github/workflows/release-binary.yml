@@ -3,11 +3,13 @@ name: Release Binary
 on:
   push:
     tags:
-      - '[0-9][0-9][0-9][0-9].[0-9]*'   # e.g. 2026.3.8
+      - '[0-9]+.[0-9]+.[0-9]+'                    # SemVer: 0.5.0, 1.0.0
+      - '[0-9]+.[0-9]+.[0-9]+-*'                  # SemVer pre-release: 1.0.0-rc.1
+      - '[0-9][0-9][0-9][0-9].[0-9]*'             # Legacy CalVer: 2026.3.8 (historical re-tag)
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 2026.3.8). Creates tag + release.'
+        description: 'Version to release (e.g., 0.5.0 or 1.0.0-rc.1). Creates tag + release.'
         required: true
         type: string
       prerelease:
@@ -80,17 +82,11 @@ jobs:
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
 
-          # CalVer → compact date tag: YYYY.M.D → YYYYMMDD, YYYY.M.D-N → YYYYMMDDN
-          BASE="${VER%%-*}"
-          PATCH=""
-          [[ "$VER" == *-* ]] && PATCH="${VER##*-}"
-          YEAR="${BASE%%.*}"
-          REST="${BASE#*.}"
-          MONTH="${REST%%.*}"
-          DAY="${REST#*.}"
-          DATE_TAG=$(printf '%s%02d%02d%s' "$YEAR" "$MONTH" "$DAY" "$PATCH")
-          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "==> Version: ${VER} → date tag: ${DATE_TAG}"
+          # SemVer era: artifact filenames embed the version as-is
+          # (0.5.0, 0.5.1, 1.0.0-rc.1, …). CalVer tags (YYYY.M.D) are
+          # historical — any re-tag of a legacy version is still one string.
+          echo "date_tag=${VER}" >> "$GITHUB_OUTPUT"
+          echo "==> Version / tag: ${VER}"
 
       - name: Create tag (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'

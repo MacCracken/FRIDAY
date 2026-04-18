@@ -1,6 +1,6 @@
 # Architectural Sovereignty & Agentic Governance
 
-**White Paper** | March 2026 | SecureYeoman v2026.3.13
+**White Paper** | April 2026 | SecureYeoman v0.5.0
 
 Mitigating the Risks of Autonomous AI in Enterprise Environments. How SecureYeoman's three-pillar security model enables governed autonomy — full agent capability without cloud dependency or compliance exposure.
 
@@ -105,4 +105,4 @@ The choice is no longer between AI Productivity and Corporate Security. SecureYe
 
 ---
 
-SecureYeoman v2026.3.13 | 37 ADRs | AGPL-3.0 + Commercial License
+SecureYeoman v0.5.0 | 40 ADRs | AGPL-3.0 + Commercial License

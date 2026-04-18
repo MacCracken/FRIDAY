@@ -2,20 +2,20 @@
 # build-binary.sh — Bun compile pipeline for SecureYeoman single-binary distribution
 #
 # Usage:
-#   VERSION=2026.3.18 bash scripts/build-binary.sh           # full production build (all platforms)
-#   VERSION=2026.3.18 bash scripts/build-binary.sh --dev     # dev build: current platform only, skip Tier 2/3 + checksums
-#   VERSION=2026.3.18 bash scripts/build-binary.sh --edge    # edge build only: minimal A2A runtime
-#   VERSION=2026.3.18 bash scripts/build-binary.sh --agent   # agent build only: soul + AI agent runtime
+#   VERSION=0.5.0 bash scripts/build-binary.sh           # full production build (all platforms)
+#   VERSION=0.5.0 bash scripts/build-binary.sh --dev     # dev build: current platform only, skip Tier 2/3 + checksums
+#   VERSION=0.5.0 bash scripts/build-binary.sh --edge    # edge build only: minimal A2A runtime
+#   VERSION=0.5.0 bash scripts/build-binary.sh --agent   # agent build only: soul + AI agent runtime
 #
-# Binary naming: secureyeoman-$DATE-$TYPE-$PLATFORM (CalVer YYYYMMDD or YYYYMMDDN for patches)
-#   e.g. VERSION=2026.3.18   → secureyeoman-20260318-linux-x64
-#        VERSION=2026.3.18-1 → secureyeoman-202603181-linux-x64
+# Binary naming: secureyeoman-$VERSION-$TYPE-$PLATFORM (SemVer from 0.5.0+)
+#   e.g. VERSION=0.5.0       → secureyeoman-0.5.0-linux-x64
+#        VERSION=1.0.0-rc.1  → secureyeoman-1.0.0-rc.1-linux-x64
 #
 # Produces:
-#   Tier 1 (needs PostgreSQL): secureyeoman-$DATE-linux-x64, -linux-arm64, -darwin-arm64, -windows-x64.exe
-#   Tier 2 (SQLite-only):      secureyeoman-$DATE-sqlite-linux-x64, -sqlite-linux-arm64, -sqlite-windows-x64.exe
-#   Tier 2.5 (Agent, soul+AI): secureyeoman-$DATE-agent-linux-x64, -agent-linux-arm64, -agent-darwin-arm64
-#   Tier 3 (Edge/IoT):         secureyeoman-$DATE-edge-linux-x64 (Rust sy-edge, native only)
+#   Tier 1 (needs PostgreSQL): secureyeoman-$VERSION-linux-x64, -linux-arm64, -darwin-arm64, -windows-x64.exe
+#   Tier 2 (SQLite-only):      secureyeoman-$VERSION-sqlite-linux-x64, -sqlite-linux-arm64, -sqlite-windows-x64.exe
+#   Tier 2.5 (Agent, soul+AI): secureyeoman-$VERSION-agent-linux-x64, -agent-linux-arm64, -agent-darwin-arm64
+#   Tier 3 (Edge/IoT):         secureyeoman-$VERSION-edge-linux-x64 (Rust sy-edge, native only)
 #
 # Prerequisites: bun >= 1.1, npm (for TypeScript build step)
 #
@@ -64,23 +64,6 @@ for arg in "$@"; do
   esac
 done
 
-# ── CalVer → compact date tag ─────────────────────────────────────────────────
-# Transforms YYYY.M.D → YYYYMMDD, YYYY.M.D-N → YYYYMMDDN (zero-padded month/day).
-# Used for binary filenames: secureyeoman-$DATE_TAG-$TYPE-$PLATFORM
-calver_to_compact() {
-  local ver="$1"
-  local base="${ver%%-*}"           # strip patch suffix if present
-  local patch=""
-  [[ "$ver" == *-* ]] && patch="${ver##*-}"
-
-  local year="${base%%.*}"
-  local rest="${base#*.}"
-  local month="${rest%%.*}"
-  local day="${rest#*.}"
-
-  printf '%s%02d%02d%s' "$year" "$month" "$day" "$patch"
-}
-
 # VERSION env var is required for release builds, falls back to VERSION file for dev.
 if [[ -z "${VERSION:-}" ]]; then
   VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION"
@@ -91,8 +74,11 @@ if [[ -z "${VERSION:-}" ]]; then
     exit 1
   fi
 fi
-DATE_TAG="$(calver_to_compact "${VERSION}")"
-echo "==> Version: ${VERSION} → binary date tag: ${DATE_TAG}"
+# SemVer era: artifact filenames embed the version directly
+# (secureyeoman-0.5.0-linux-x64, secureyeoman-0.5.1-edge-linux-x64, …).
+# The DATE_TAG name is kept for back-compat with the rest of this script.
+DATE_TAG="${VERSION}"
+echo "==> Version: ${VERSION}"
 
 # ── Detect current platform for --dev mode ───────────────────────────────────
 if [[ "$DEV_MODE" == true ]]; then

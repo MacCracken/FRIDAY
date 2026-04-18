@@ -64,7 +64,7 @@ Anthropic, OpenAI, Gemini, Ollama, DeepSeek, OpenCode, Mistral, LM Studio, Local
 
 ### Flexible Deployment
 - Single binary + Docker + K8s Helm
-- Edge/IoT binary (Go, 7.2 MB) for constrained devices
+- Edge/IoT binary (Rust `sy-edge`, ~8 MB) for constrained devices
 - Local / LAN / Public TLS modes
 - Multi-user workspaces + SSO
 - Voice I/O — 14 TTS + 10 STT providers

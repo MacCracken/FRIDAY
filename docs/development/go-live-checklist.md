@@ -58,10 +58,10 @@
 ## 6. Distribution
 
 - [ ] **GitHub repos transferred** — `secureyeoman` and `secureyeoman-community-repo` transferred to `yeoman.maccracken` org
-- [ ] **GHCR images published** — `ghcr.io/yeoman.maccracken/secureyeoman:latest` and tagged with CalVer
+- [ ] **GHCR images published** — `ghcr.io/yeoman.maccracken/secureyeoman:latest` and tagged with SemVer (e.g. `0.5.0`)
 - [ ] **Install script** — `curl -fsSL https://secureyeoman.ai/install | bash` works from clean machine
-- [ ] **Edge binary published** — `secureyeoman-edge-linux-{amd64,arm64,armv7,riscv64}` on GitHub Releases
-- [ ] **Agent binary published** — `secureyeoman-agent-linux-{x64,arm64}`, `darwin-arm64` on GitHub Releases
+- [ ] **Edge binary published** — `secureyeoman-<version>-edge-linux-x64` on GitHub Releases (Rust `sy-edge`; arm64/armv7/riscv64 cross-compile deferred)
+- [ ] **Agent binary published** — `secureyeoman-<version>-agent-{linux-x64,linux-arm64,darwin-arm64}` on GitHub Releases
 - [ ] **CI/CD pipeline** — `ci.yml` and `release-binary.yml` workflows passing on new org
 
 ## 7. Website (secureyeoman.ai)

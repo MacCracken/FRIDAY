@@ -4,8 +4,9 @@
 
 | Version    | Supported          | Security Updates |
 |------------|--------------------|------------------|
-| 2026.3.x   | :white_check_mark: | Yes              |
-| 2026.2.x   | :white_check_mark: | Yes              |
+| 0.5.x      | :white_check_mark: | Yes              |
+| 2026.3.x   | :white_check_mark: | Yes (legacy CalVer, TS runtime — through 2026-Q3) |
+| 2026.2.x   | :x:                | No (EOL)         |
 
 ## Reporting a Vulnerability
 

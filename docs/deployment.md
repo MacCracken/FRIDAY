@@ -182,7 +182,7 @@ Pre-built multi-arch images (linux/amd64, linux/arm64) are published to GHCR on 
 
 ```bash
 docker pull ghcr.io/maccracken/secureyeoman:latest
-docker pull ghcr.io/maccracken/secureyeoman:2026.3.9  # pinned version
+docker pull ghcr.io/maccracken/secureyeoman:0.5.0  # pinned version
 ```
 
 Three Dockerfiles are provided:

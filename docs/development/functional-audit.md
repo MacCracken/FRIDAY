@@ -137,7 +137,7 @@ Capabilities no other framework in this competitive set offers:
 - **Training pipeline** — distillation + LoRA fine-tuning + pre-training from scratch + LLM-as-Judge + federated learning
 - **Voice & Speech platform** — 14 TTS providers, 10 STT providers, voice profiles, streaming, Orpheus/Piper/faster-whisper
 - **Shruti DAW integration** — 10 MCP tools for audio production, voice-to-DAW bridge with intent parsing, HTTP client (20 methods)
-- **Multi-tier deployment** — 4 deployment tiers: Prime (full PostgreSQL, ~123 MB), Lite (SQLite, edge/embedded), Agent (delegated auth/knowledge/audit, fleet scaling), Edge/IoT (Go, 7.2 MB, constrained devices) — no competitor offers this range
+- **Multi-tier deployment** — 4 deployment tiers: Prime (Rust `sy-core`, ~19 MB), Lite (SQLite, edge/embedded), Agent (delegated auth/knowledge/audit, fleet scaling), Edge/IoT (Rust `sy-edge`, ~8 MB, constrained devices) — no competitor offers this range
 - **Firecracker microVM sandbox** — KVM-isolated execution (score 90), rootfs builder, jailer, vsock, snapshots, TAP network isolation — strongest sandbox in the competitive set
 - **GPU-aware privacy routing** — GpuProbe + LocalModelRegistry + PrivacyRouter with per-personality routing policy (unique — no competitor offers per-personality cloud/local routing decisions)
 - **AGNOS bridge** — Bidirectional tool bridge with profile-based exposure for edge device fleet management

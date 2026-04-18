@@ -203,10 +203,6 @@ The update process downloads the new binary, verifies its SHA-256 checksum, and 
 
 ---
 
-## TypeScript Edge Runtime
+## Legacy TypeScript Edge Runtime
 
-For environments where Node.js is available, a TypeScript `EdgeRuntime` exists at `packages/core/src/edge/`. It provides the same minimal footprint (config, logging, auth, A2A, task execution, health) while skipping brain, soul, marketplace, dashboard, and training subsystems. Targets less than 128 MB RAM and under 5-second boot.
-
-```bash
-secureyeoman edge start --port 18891 --parent-url https://hub.example.com
-```
+A TypeScript `EdgeRuntime` still lives at `packages/core/src/edge/` from the Node-based era, but it is **not** the shipping edge for 0.5.0+ — the Rust `sy-edge` binary (this page's subject) replaces it. The TS runtime is retained only for the few TS packages that still import it during the migration and will be removed once the last caller is ported.

@@ -1,12 +1,12 @@
 # SecureYeoman
 
-> Sovereign AI agent platform — self-hosted, enterprise-hardened, answerable only to you. 13 AI providers, RBAC/SSO/SAML/WebAuthn, 7 sandboxing modes (Landlock/seccomp/V8 isolate/WASM/gVisor/Firecracker microVM), GPU-aware privacy routing, cryptographic audit trails, multi-agent orchestration (swarms, teams, DAG workflows, A2A protocol), 485 MCP tools, full ML lifecycle, simulation engine. 4 deployment tiers: Prime (PostgreSQL, ~123 MB), Lite (SQLite), Agent (fleet), Edge/IoT (Go, 7.2 MB). ~22,000 tests. AGPL-3.0 + Commercial.
+> Sovereign AI agent platform — self-hosted, enterprise-hardened, answerable only to you. 13 AI providers, RBAC/SSO/SAML/WebAuthn, 7 sandboxing modes (Landlock/seccomp/V8 isolate/WASM/gVisor/Firecracker microVM), GPU-aware privacy routing, cryptographic audit trails, multi-agent orchestration (swarms, teams, DAG workflows, A2A protocol), 485 MCP tools, full ML lifecycle, simulation engine. 4 deployment tiers: Prime (PostgreSQL, ~19 MB `sy-core` Rust), Lite (SQLite), Agent (fleet), Edge/IoT (Rust `sy-edge`, ~8 MB). ~22,000 tests. AGPL-3.0 + Commercial.
 
-- Version: 2026.3.18
-- 39 ADRs, 68 guides, ~22,000 tests
+- Version: 0.5.0
+- 40 ADRs, 68 guides, ~22,000 tests
 - 38 platform integrations, 485 MCP tools, 56 CLI commands
 - 5 code forge adapters (Delta, GitHub, GitLab, Bitbucket, Gitea)
-- 4 deployment tiers: Prime, Lite (SQLite), Agent (fleet), Edge/IoT (Go, 7.2 MB)
+- 4 deployment tiers: Prime, Lite (SQLite), Agent (fleet), Edge/IoT (Rust `sy-edge`, ~8 MB)
 
 ## Documentation
 
@@ -53,7 +53,7 @@
 
 ### Deployment
 - [Kubernetes](https://github.com/MacCracken/secureyeoman/blob/main/docs/guides/deployment/kubernetes-deployment.md): Helm chart deployment
-- [Edge/IoT](https://github.com/MacCracken/secureyeoman/blob/main/docs/guides/deployment/edge-iot.md): Go binary for constrained devices
+- [Edge/IoT](https://github.com/MacCracken/secureyeoman/blob/main/docs/guides/deployment/edge-iot.md): Rust `sy-edge` binary for constrained devices
 - [CI/CD Integration](https://github.com/MacCracken/secureyeoman/blob/main/docs/guides/integrations/cicd-integration.md): GitHub Actions, Jenkins, GitLab CI
 
 ### Other

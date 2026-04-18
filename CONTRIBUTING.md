@@ -349,15 +349,15 @@ Skills will be rejected if they:
 
 ## Versioning
 
-SecureYeoman uses **calendar versioning** (`YYYY.M.D`). The version is the release date — e.g., `2026.2.17` for February 17, 2026.
+SecureYeoman uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`) starting from `0.5.0` — the Rust-native release. Pre-0.5 CalVer releases (`YYYY.M.D`) are retained as historical tags for the TypeScript beta era.
 
-To bump the version across all packages:
+To bump the version across all packages and the Rust workspace:
 
 ```bash
-npm run version:set -- 2026.3.1
+npm run version:set -- 0.5.1
 ```
 
-The core server reads its version from `package.json` at runtime, so only `package.json` files need updating.
+The Rust workspace version in `crates/Cargo.toml` is the source of truth; the script also syncs it into the seven `package.json` files (root + six `packages/*`).
 
 ## Documentation
 

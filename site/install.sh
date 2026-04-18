@@ -4,20 +4,24 @@
 # Usage:
 #   curl -fsSL https://secureyeoman.ai/install | bash
 #   curl -fsSL https://secureyeoman.ai/install | bash -s -- --dir /usr/local/bin
+#   curl -fsSL https://secureyeoman.ai/install | bash -s -- --edge
 #
 # Options:
 #   --dir <path>    Installation directory (default: /usr/local/bin)
 #   --version <v>  Specific version to install (default: latest)
+#   --edge          Install the minimal edge binary (sy-edge, Linux x64 only)
 
 set -e
 
 INSTALL_DIR="/usr/local/bin"
 VERSION=""
+TIER="core"  # core | edge
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
+    --edge) TIER="edge"; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -39,12 +43,6 @@ case "$_UNAME_S" in
     ;;
 esac
 
-if [[ "$OS" == "windows" ]]; then
-  BINARY_NAME="secureyeoman-windows-${ARCH}.exe"
-else
-  BINARY_NAME="secureyeoman-${OS}-${ARCH}"
-fi
-
 # Get latest version if not specified
 if [[ -z "$VERSION" ]]; then
   VERSION=$(curl -sf https://api.github.com/repos/MacCracken/secureyeoman/releases/latest \
@@ -55,8 +53,24 @@ if [[ -z "$VERSION" ]]; then
   fi
 fi
 
+# Binary naming: secureyeoman-<VERSION>-[edge-]<os>-<arch>[.exe]
+# (SemVer era — CalVer date-tag prefix retired at 0.5.0)
+if [[ "$TIER" == "edge" ]]; then
+  if [[ "$OS" != "linux" || "$ARCH" != "x64" ]]; then
+    echo "--edge currently supports linux-x64 only (cross-compile for arm64/armv7/riscv64 is planned)."
+    exit 1
+  fi
+  BINARY_NAME="secureyeoman-${VERSION}-edge-linux-x64"
+elif [[ "$OS" == "windows" ]]; then
+  BINARY_NAME="secureyeoman-${VERSION}-windows-${ARCH}.exe"
+else
+  BINARY_NAME="secureyeoman-${VERSION}-${OS}-${ARCH}"
+fi
+
 URL="https://github.com/MacCracken/secureyeoman/releases/download/${VERSION}/${BINARY_NAME}"
-if [[ "$OS" == "windows" ]]; then
+if [[ "$TIER" == "edge" ]]; then
+  DEST="${INSTALL_DIR}/secureyeoman-edge"
+elif [[ "$OS" == "windows" ]]; then
   DEST="${INSTALL_DIR}/secureyeoman.exe"
 else
   DEST="${INSTALL_DIR}/secureyeoman"

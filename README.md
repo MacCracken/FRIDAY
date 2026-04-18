@@ -47,10 +47,10 @@ cp .env.example .env
 npm install && npm run dev
 ```
 
-**Option E — Edge/IoT binary (Go, 7.2 MB):**
+**Option E — Edge/IoT binary (Rust `sy-edge`, ~8 MB):**
 ```bash
 curl -fsSL https://secureyeoman.ai/install | bash -s -- --edge
-secureyeoman-edge start --parent-url http://your-server:18789
+secureyeoman-edge start --parent http://your-server:18789
 ```
 
 Then open http://localhost:18789 and complete the onboarding wizard.
@@ -85,7 +85,7 @@ A **sovereign AI agent platform** that runs entirely on your infrastructure. Mul
 | **Enterprise** | Multi-tenancy (PostgreSQL RLS), multi-region HA, DLP, supply chain security (SBOM, SLSA, signed releases), OpenTelemetry, Prometheus/Grafana, SCIM 2.0 provisioning, access review campaigns, per-tenant quotas, compliance SoA generator |
 | **Simulation** | Tick-driven engine (realtime/accelerated/turn-based), emotion & mood model (Russell's circumplex), spatial & proximity engine (3D zones, proximity triggers), autoresearch experiment runner |
 | **Knowledge** | Document ingestion (PDF, HTML, MD, URL, GitHub Wiki), RAG with hybrid FTS+vector search, cognitive memory (ACT-R, Hebbian learning) |
-| **Deployment** | Single binary (~123 MB), Docker, Kubernetes Helm chart, Edge/IoT binary (Go, 7.2 MB); Linux x64/arm64, macOS arm64, Windows x64 |
+| **Deployment** | Single binary (~19 MB `sy-core`, Rust), Docker, Kubernetes Helm chart, Edge/IoT binary (Rust `sy-edge`, ~8 MB); Linux x64 (arm64/armv7/riscv64 cross-compile deferred) |
 
 See the [Feature Reference](docs/features.md) for the complete breakdown.
 
