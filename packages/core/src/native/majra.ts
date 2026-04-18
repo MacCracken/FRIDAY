@@ -64,29 +64,78 @@ export function hashedMessagesPublished(): number {
 export function hashedUnsubscribe(_topic: string): void {}
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
+// Pure-TS fixed-window limiter (the NAPI majra binding is gone; the TS edge of
+// the code still routes rate-limit decisions through this module, so it has to
+// actually limit). Rust sy-core has its own native limiter.
+
+interface RateRule {
+  windowMs: number;
+  maxRequests: number;
+}
+
+interface RateBucket {
+  count: number;
+  windowStart: number;
+  lastAccess: number;
+}
+
+const rateRules = new Map<string, RateRule>();
+const rateBuckets = new Map<string, Map<string, RateBucket>>();
 
 export function ratelimitRegister(
-  _ruleName: string,
-  _windowMs: number,
-  _maxRequests: number
-): void {}
+  ruleName: string,
+  windowMs: number,
+  maxRequests: number
+): void {
+  rateRules.set(ruleName, { windowMs, maxRequests });
+  // Re-registering a rule clears its buckets — per-instance limiters expect a
+  // fresh state in their constructor, and without clearing, bucket state leaks
+  // across consecutive `new RateLimiter()` calls (e.g. between tests).
+  rateBuckets.set(ruleName, new Map());
+}
 
-export function ratelimitCheck(_ruleName: string, _key: string): { allowed: boolean } {
+export function ratelimitCheck(ruleName: string, key: string): { allowed: boolean } {
+  const rule = rateRules.get(ruleName);
+  if (!rule) return { allowed: true };
+  const buckets = rateBuckets.get(ruleName)!;
+  const now = Date.now();
+  let bucket = buckets.get(key);
+  if (!bucket || now - bucket.windowStart >= rule.windowMs) {
+    bucket = { count: 0, windowStart: now, lastAccess: now };
+    buckets.set(key, bucket);
+  }
+  bucket.lastAccess = now;
+  if (bucket.count >= rule.maxRequests) return { allowed: false };
+  bucket.count++;
   return { allowed: true };
 }
 
-export function ratelimitResetKey(_ruleName: string, _key: string): void {}
+export function ratelimitResetKey(ruleName: string, key: string): void {
+  rateBuckets.get(ruleName)?.delete(key);
+}
 
-export function ratelimitEvict(_ruleName: string, _maxIdleMs: number): number {
-  return 0;
+export function ratelimitEvict(ruleName: string, maxIdleMs: number): number {
+  const buckets = rateBuckets.get(ruleName);
+  if (!buckets) return 0;
+  const now = Date.now();
+  let evicted = 0;
+  for (const [key, bucket] of buckets) {
+    if (now - bucket.lastAccess >= maxIdleMs) {
+      buckets.delete(key);
+      evicted++;
+    }
+  }
+  return evicted;
 }
 
 export function ratelimitStats(_ruleName: string): string | null {
   return null;
 }
 
-export function ratelimitRemove(_ruleName: string): boolean {
-  return false;
+export function ratelimitRemove(ruleName: string): boolean {
+  const existed = rateRules.delete(ruleName);
+  rateBuckets.delete(ruleName);
+  return existed;
 }
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────

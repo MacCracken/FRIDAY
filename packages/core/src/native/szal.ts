@@ -89,19 +89,29 @@ export function evaluateCondition(expr: string, context: Record<string, unknown>
     );
   }
 
-  // Equality / inequality
+  // Equality / inequality — handle both loose (==, !=) and strict (===, !==)
   const neqIdx = e.indexOf('!=');
   if (neqIdx !== -1) {
+    const rhsStart = e[neqIdx + 2] === '=' ? neqIdx + 3 : neqIdx + 2;
     const left = resolvePath(e.slice(0, neqIdx).trim(), context);
-    const right = parseValue(e.slice(neqIdx + 2).trim(), context);
+    const right = parseValue(e.slice(rhsStart).trim(), context);
     return left !== right;
   }
   const eqIdx = e.indexOf('==');
   if (eqIdx !== -1) {
+    const rhsStart = e[eqIdx + 2] === '=' ? eqIdx + 3 : eqIdx + 2;
     const left = resolvePath(e.slice(0, eqIdx).trim(), context);
-    const right = parseValue(e.slice(eqIdx + 2).trim(), context);
+    const right = parseValue(e.slice(rhsStart).trim(), context);
     return left === right;
   }
+
+  // Literals first — so bare 'true'/'false'/'null'/'0'/'1' don't fall through
+  // to path resolution (which would look up context['true'] and find undefined).
+  if (e === 'true') return true;
+  if (e === 'false') return false;
+  if (e === 'null' || e === 'undefined') return false;
+  const asNum = Number(e);
+  if (!isNaN(asNum) && e !== '') return Boolean(asNum);
 
   // Bare truthy path
   const val = resolvePath(e, context);
@@ -151,7 +161,9 @@ function parseValue(token: string, context: Record<string, unknown>): unknown {
 export function resolveTemplate(template: string, context: Record<string, unknown>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, path: string) => {
     const val = resolvePath(path.trim(), context);
-    return val != null ? String(val) : '';
+    if (val == null) return '';
+    if (typeof val === 'object') return JSON.stringify(val);
+    return String(val);
   });
 }
 

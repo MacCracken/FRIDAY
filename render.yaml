@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: secureyeoman
+    runtime: image
+    image:
+      url: ghcr.io/maccracken/secureyeoman:latest
+    envVars:
+      - key: PORT
+        value: '18789'
+      - key: DATABASE_HOST
+        fromDatabase:
+          name: secureyeoman-db
+          property: host
+      - key: DATABASE_USER
+        fromDatabase:
+          name: secureyeoman-db
+          property: user
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: secureyeoman-db
+          property: database
+      - key: SECUREYEOMAN_DB_PASSWORD
+        fromDatabase:
+          name: secureyeoman-db
+          property: password
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: secureyeoman-db
+          property: port
+      - key: SECUREYEOMAN_ADMIN_PASSWORD
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+    healthCheckPath: /health
+    disk:
+      name: secureyeoman-data
+      mountPath: /home/secureyeoman/.secureyeoman
+      sizeGB: 10
+
+databases:
+  - name: secureyeoman-db
+    engine: postgres
+    version: '16'
+    ipAllowList: []
+    postgresMajorVersion: '16'

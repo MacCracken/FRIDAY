@@ -1,0 +1,87 @@
+{
+  "spec": {
+    "name": "secureyeoman",
+    "region": "nyc",
+    "services": [
+      {
+        "name": "secureyeoman",
+        "image": {
+          "registry_type": "GHCR",
+          "registry": "maccracken",
+          "repository": "secureyeoman",
+          "tag": "latest"
+        },
+        "instance_count": 1,
+        "instance_size_slug": "basic-s",
+        "http_port": 18789,
+        "health_check": {
+          "http_path": "/health",
+          "initial_delay_seconds": 15,
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "success_threshold": 1,
+          "failure_threshold": 3
+        },
+        "envs": [
+          {
+            "key": "PORT",
+            "value": "18789"
+          },
+          {
+            "key": "DATABASE_HOST",
+            "scope": "RUN_TIME",
+            "value": "${secureyeoman-db.HOSTNAME}"
+          },
+          {
+            "key": "DATABASE_USER",
+            "scope": "RUN_TIME",
+            "value": "${secureyeoman-db.USERNAME}"
+          },
+          {
+            "key": "DATABASE_NAME",
+            "scope": "RUN_TIME",
+            "value": "${secureyeoman-db.DATABASE}"
+          },
+          {
+            "key": "SECUREYEOMAN_DB_PASSWORD",
+            "scope": "RUN_TIME",
+            "value": "${secureyeoman-db.PASSWORD}"
+          },
+          {
+            "key": "DATABASE_PORT",
+            "scope": "RUN_TIME",
+            "value": "${secureyeoman-db.PORT}"
+          },
+          {
+            "key": "SECUREYEOMAN_ADMIN_PASSWORD",
+            "scope": "RUN_TIME",
+            "type": "SECRET",
+            "value": ""
+          },
+          {
+            "key": "ANTHROPIC_API_KEY",
+            "scope": "RUN_TIME",
+            "type": "SECRET",
+            "value": ""
+          },
+          {
+            "key": "OPENAI_API_KEY",
+            "scope": "RUN_TIME",
+            "type": "SECRET",
+            "value": ""
+          }
+        ]
+      }
+    ],
+    "databases": [
+      {
+        "name": "secureyeoman-db",
+        "engine": "PG",
+        "version": "16",
+        "size": "db-s-1vcpu-1gb",
+        "num_nodes": 1,
+        "production": false
+      }
+    ]
+  }
+}

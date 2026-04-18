@@ -1,0 +1,48 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "node packages/core/dist/index.js",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  },
+  "services": [
+    {
+      "name": "secureyeoman",
+      "image": "ghcr.io/maccracken/secureyeoman:latest",
+      "networking": {
+        "servicePort": 18789
+      },
+      "volumes": [
+        {
+          "mount": "/var/lib/postgresql/data",
+          "name": "pgdata"
+        },
+        {
+          "mount": "/home/secureyeoman/.secureyeoman",
+          "name": "userdata"
+        }
+      ],
+      "variables": {
+        "PORT": "18789",
+        "SECUREYEOMAN_ADMIN_PASSWORD": {
+          "description": "Admin password for the SecureYeoman dashboard",
+          "required": true
+        },
+        "ANTHROPIC_API_KEY": {
+          "description": "Anthropic API key for Claude models (optional)",
+          "required": false
+        },
+        "OPENAI_API_KEY": {
+          "description": "OpenAI API key (optional)",
+          "required": false
+        }
+      }
+    }
+  ]
+}

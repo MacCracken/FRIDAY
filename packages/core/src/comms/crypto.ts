@@ -1,22 +1,93 @@
 /**
  * Agent Crypto — E2E encryption for agent-to-agent communication.
  *
- * Uses sy-crypto (native Rust via NAPI) for all cryptographic operations:
  * X25519 for key exchange, Ed25519 for signing, HKDF for key derivation,
- * and AES-256-GCM for symmetric encryption.
- *
- * Falls back to node:crypto when the native module is unavailable.
+ * AES-256-GCM for symmetric encryption — all via node:crypto. The native
+ * sy-crypto NAPI bridge was retired in the Rust-native era (Rust sy-core has
+ * its own crypto module); this TS class remains for packages that still import
+ * it during the migration.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { native, nativeAvailable } from '../native/index.js';
+import {
+  createPrivateKey,
+  createPublicKey,
+  diffieHellman,
+  sign,
+  verify,
+  hkdfSync,
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
+  generateKeyPairSync,
+  type KeyObject,
+} from 'node:crypto';
 import type { MessagePayload } from './types.js';
 
 export interface EncryptedPayload {
   ephemeralPublicKey: string;
   nonce: string;
   ciphertext: string;
+}
+
+// Raw X25519 private key (32 bytes) → PKCS#8 DER KeyObject.
+// PKCS#8 for X25519 is a fixed 16-byte prefix + the 32-byte key.
+const X25519_PKCS8_PREFIX = Buffer.from(
+  '302e020100300506032b656e04220420',
+  'hex'
+);
+// Same shape for Ed25519, different OID.
+const ED25519_PKCS8_PREFIX = Buffer.from(
+  '302e020100300506032b657004220420',
+  'hex'
+);
+
+function rawToX25519PrivateKey(raw: Buffer): KeyObject {
+  return createPrivateKey({
+    key: Buffer.concat([X25519_PKCS8_PREFIX, raw]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+}
+
+function rawToEd25519PrivateKey(raw: Buffer): KeyObject {
+  return createPrivateKey({
+    key: Buffer.concat([ED25519_PKCS8_PREFIX, raw]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+}
+
+function extractRawPublicFromSpki(spki: Buffer): Buffer {
+  // SPKI for X25519/Ed25519 is a 12-byte prefix + 32-byte public key.
+  return spki.subarray(spki.length - 32);
+}
+
+function rawToX25519PublicKey(raw: Buffer): KeyObject {
+  // X25519 SPKI prefix (12 bytes): 302a300506032b656e032100
+  const spkiPrefix = Buffer.from('302a300506032b656e032100', 'hex');
+  return createPublicKey({
+    key: Buffer.concat([spkiPrefix, raw]),
+    format: 'der',
+    type: 'spki',
+  });
+}
+
+function rawToEd25519PublicKey(raw: Buffer): KeyObject {
+  // Ed25519 SPKI prefix (12 bytes): 302a300506032b6570032100
+  const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+  return createPublicKey({
+    key: Buffer.concat([spkiPrefix, raw]),
+    format: 'der',
+    type: 'spki',
+  });
+}
+
+function derivePublicRaw(privateKey: KeyObject): Buffer {
+  const publicKey = createPublicKey(privateKey);
+  const spki = publicKey.export({ format: 'der', type: 'spki' });
+  return extractRawPublicFromSpki(Buffer.from(spki));
 }
 
 export class AgentCrypto {
@@ -26,13 +97,6 @@ export class AgentCrypto {
   public readonly signingPublicKey: string;
 
   constructor(keyStorePath?: string) {
-    if (!nativeAvailable || !native) {
-      throw new Error(
-        'AgentCrypto requires the native sy-crypto module. ' +
-          'Ensure the native addon is built and SECUREYEOMAN_NO_NATIVE is not set.'
-      );
-    }
-
     if (keyStorePath && existsSync(keyStorePath)) {
       let stored: { x25519Private: string; ed25519Private: string };
       try {
@@ -48,119 +112,121 @@ export class AgentCrypto {
       }
       this.x25519PrivateKey = Buffer.from(stored.x25519Private, 'base64');
       this.ed25519PrivateKey = Buffer.from(stored.ed25519Private, 'base64');
-    } else {
-      // Generate keypairs via sy-crypto
-      const x25519Pair = native.x25519Keypair();
-      const ed25519Pair = native.ed25519Keypair();
-      this.x25519PrivateKey = Buffer.from(x25519Pair.privateKey);
-      this.ed25519PrivateKey = Buffer.from(ed25519Pair.privateKey);
-
-      if (keyStorePath) {
-        mkdirSync(dirname(keyStorePath), { recursive: true });
-        const toStore = {
-          x25519Private: this.x25519PrivateKey.toString('base64'),
-          ed25519Private: this.ed25519PrivateKey.toString('base64'),
-        };
-        writeFileSync(keyStorePath, JSON.stringify(toStore), { mode: 0o600 });
-      }
-
-      // Extract public keys from the generated pairs
-      this.publicKey = Buffer.from(x25519Pair.publicKey).toString('base64');
-      this.signingPublicKey = Buffer.from(ed25519Pair.publicKey).toString('base64');
+      this.publicKey = derivePublicRaw(rawToX25519PrivateKey(this.x25519PrivateKey)).toString(
+        'base64'
+      );
+      this.signingPublicKey = derivePublicRaw(
+        rawToEd25519PrivateKey(this.ed25519PrivateKey)
+      ).toString('base64');
       return;
     }
 
-    // Derive public keys from stored private keys
-    // For X25519, do a DH with the basepoint to get public key
-    // For Ed25519, the public key is the last 32 bytes of the 64-byte private key
-    // Re-generate pairs and use the public keys
-    const x25519Pair = native.x25519Keypair();
-    const ed25519Pair = native.ed25519Keypair();
+    const x25519 = generateKeyPairSync('x25519');
+    const ed25519 = generateKeyPairSync('ed25519');
+    this.x25519PrivateKey = extractRawPublicFromSpki(
+      Buffer.from(x25519.privateKey.export({ format: 'der', type: 'pkcs8' }))
+    );
+    this.ed25519PrivateKey = extractRawPublicFromSpki(
+      Buffer.from(ed25519.privateKey.export({ format: 'der', type: 'pkcs8' }))
+    );
+    this.publicKey = derivePublicRaw(x25519.privateKey).toString('base64');
+    this.signingPublicKey = derivePublicRaw(ed25519.privateKey).toString('base64');
 
-    // Store path had keys — we need to derive public keys from private.
-    // Since sy-crypto raw keys don't have a "derive public from private" API,
-    // regenerate and store the public keys alongside the private keys.
-    // For backward compat with existing key stores, re-save with public keys.
-    this.publicKey = Buffer.from(x25519Pair.publicKey).toString('base64');
-    this.signingPublicKey = Buffer.from(ed25519Pair.publicKey).toString('base64');
-
-    // On first load of legacy keys, re-generate fresh keypairs and persist
-    this.x25519PrivateKey = Buffer.from(x25519Pair.privateKey);
-    this.ed25519PrivateKey = Buffer.from(ed25519Pair.privateKey);
     if (keyStorePath) {
-      const toStore = {
-        x25519Private: this.x25519PrivateKey.toString('base64'),
-        ed25519Private: this.ed25519PrivateKey.toString('base64'),
-      };
-      writeFileSync(keyStorePath, JSON.stringify(toStore), { mode: 0o600 });
+      mkdirSync(dirname(keyStorePath), { recursive: true });
+      writeFileSync(
+        keyStorePath,
+        JSON.stringify({
+          x25519Private: this.x25519PrivateKey.toString('base64'),
+          ed25519Private: this.ed25519PrivateKey.toString('base64'),
+        }),
+        { mode: 0o600 }
+      );
     }
   }
 
   encrypt(payload: MessagePayload, recipientPublicKey: string): EncryptedPayload {
-    // 1. Generate ephemeral X25519 keypair
-    const ephemeral = native!.x25519Keypair();
+    const ephemeral = generateKeyPairSync('x25519');
+    const ephemeralRawPublic = derivePublicRaw(ephemeral.privateKey);
+    const recipientKey = rawToX25519PublicKey(Buffer.from(recipientPublicKey, 'base64'));
 
-    // 2. Derive shared secret via ECDH
-    const sharedSecret = native!.x25519DiffieHellman(
-      Buffer.from(ephemeral.privateKey),
-      Buffer.from(recipientPublicKey, 'base64')
+    const sharedSecret = diffieHellman({
+      privateKey: ephemeral.privateKey,
+      publicKey: recipientKey,
+    });
+
+    const nonce = randomBytes(12);
+    const derivedKey = Buffer.from(
+      hkdfSync(
+        'sha256',
+        sharedSecret,
+        nonce,
+        Buffer.from('secureyeoman-agent-comms'),
+        32
+      )
     );
 
-    // 3. Derive encryption key via HKDF
-    const nonce = native!.randomBytes(12);
-    const derivedKey = native!.hkdfSha256(
-      sharedSecret,
-      Buffer.from(nonce),
-      Buffer.from('secureyeoman-agent-comms'),
-      32
-    );
-
-    // 4. Encrypt with AES-256-GCM
+    const cipher = createCipheriv('aes-256-gcm', derivedKey, nonce);
     const plaintext = Buffer.from(JSON.stringify(payload));
-    const ciphertext = native!.aes256GcmEncrypt(plaintext, derivedKey, Buffer.from(nonce));
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    // Ciphertext format: encrypted || authTag (16 bytes)
+    const ciphertext = Buffer.concat([encrypted, authTag]);
 
-    // 5. Return ephemeral public key + nonce + ciphertext
     return {
-      ephemeralPublicKey: Buffer.from(ephemeral.publicKey).toString('base64'),
-      nonce: Buffer.from(nonce).toString('base64'),
-      ciphertext: Buffer.from(ciphertext).toString('base64'),
+      ephemeralPublicKey: ephemeralRawPublic.toString('base64'),
+      nonce: nonce.toString('base64'),
+      ciphertext: ciphertext.toString('base64'),
     };
   }
 
   decrypt(encrypted: EncryptedPayload): MessagePayload {
-    // 1. Derive shared secret via ECDH
-    const sharedSecret = native!.x25519DiffieHellman(
-      this.x25519PrivateKey,
+    const ephemeralPublic = rawToX25519PublicKey(
       Buffer.from(encrypted.ephemeralPublicKey, 'base64')
     );
+    const privateKey = rawToX25519PrivateKey(this.x25519PrivateKey);
 
-    // 2. Derive decryption key via HKDF
+    const sharedSecret = diffieHellman({
+      privateKey,
+      publicKey: ephemeralPublic,
+    });
+
     const nonce = Buffer.from(encrypted.nonce, 'base64');
-    const derivedKey = native!.hkdfSha256(
-      sharedSecret,
-      nonce,
-      Buffer.from('secureyeoman-agent-comms'),
-      32
+    const derivedKey = Buffer.from(
+      hkdfSync(
+        'sha256',
+        sharedSecret,
+        nonce,
+        Buffer.from('secureyeoman-agent-comms'),
+        32
+      )
     );
 
-    // 3. Decrypt with AES-256-GCM
     const ciphertextBuf = Buffer.from(encrypted.ciphertext, 'base64');
-    const decrypted = native!.aes256GcmDecrypt(ciphertextBuf, derivedKey, nonce);
+    const authTag = ciphertextBuf.subarray(ciphertextBuf.length - 16);
+    const ciphertext = ciphertextBuf.subarray(0, ciphertextBuf.length - 16);
 
-    return JSON.parse(Buffer.from(decrypted).toString('utf8')) as MessagePayload;
+    const decipher = createDecipheriv('aes-256-gcm', derivedKey, nonce);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+
+    return JSON.parse(decrypted.toString('utf8')) as MessagePayload;
   }
 
   signData(data: Buffer): string {
-    const signature = native!.ed25519Sign(data, this.ed25519PrivateKey);
-    return Buffer.from(signature).toString('base64');
+    const privateKey = rawToEd25519PrivateKey(this.ed25519PrivateKey);
+    const signature = sign(null, data, privateKey);
+    return signature.toString('base64');
   }
 
   verifySignature(data: Buffer, signature: string, signingPublicKey: string): boolean {
-    return native!.ed25519Verify(
-      data,
-      Buffer.from(signature, 'base64'),
-      Buffer.from(signingPublicKey, 'base64')
-    );
+    try {
+      const publicKey = rawToEd25519PublicKey(Buffer.from(signingPublicKey, 'base64'));
+      const sigBuf = Buffer.from(signature, 'base64');
+      return verify(null, data, publicKey, sigBuf);
+    } catch {
+      return false;
+    }
   }
 }
 
