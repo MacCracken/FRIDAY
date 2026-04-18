@@ -10,7 +10,7 @@ use sy_core::server::build_router;
 use sy_core::state::AppState;
 
 fn backpressure_app() -> (axum::Router, AppState) {
-    let state = AppState::new(sy_types::CoreConfig::default()).with_allow_remote_access(true);
+    let state = AppState::new(sy_core::types::CoreConfig::default()).with_allow_remote_access(true);
     let app = build_router(state.clone());
     (app, state)
 }

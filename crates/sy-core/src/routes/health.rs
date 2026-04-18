@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::extract::State;
-use sy_types::HealthResponse;
+// HealthResponse is available at crate::types::HealthResponse if callers need it.
 
 use crate::state::AppState;
 
@@ -51,7 +51,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> AppState {
-        AppState::new(sy_types::CoreConfig::default())
+        AppState::new(crate::types::CoreConfig::default())
     }
 
     #[tokio::test]

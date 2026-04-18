@@ -211,7 +211,7 @@ async fn approve_quarantine(
 // ── Dashboard Sandbox Endpoints ────────────────────────────────────────
 
 async fn sandbox_capabilities() -> impl IntoResponse {
-    let caps = sy_sandbox::detect_capabilities();
+    let caps = crate::sandbox::detect_capabilities();
     Json(serde_json::json!({
         "seccomp": caps.seccomp_available,
         "landlock": caps.landlock_available,
@@ -221,7 +221,7 @@ async fn sandbox_capabilities() -> impl IntoResponse {
 }
 
 async fn sandbox_health() -> impl IntoResponse {
-    let caps = sy_sandbox::detect_capabilities();
+    let caps = crate::sandbox::detect_capabilities();
     Json(serde_json::json!({
         "status": "ok",
         "seccomp": caps.seccomp_available,

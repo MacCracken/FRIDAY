@@ -1,8 +1,4 @@
 //! SecureYeoman Core Server — axum-based REST/WS API.
-//!
-//! Phase 7 migration: replaces the Bun/Fastify TypeScript server with a Rust
-//! binary. During migration, unimplemented routes are forwarded to the existing
-//! Fastify server via a built-in reverse proxy.
 
 use std::net::SocketAddr;
 
@@ -22,37 +18,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .init();
 
-    let mut config = sy_types::CoreConfig::default();
-    // Override from environment (matches docker-compose env vars)
-    if let Ok(host) = std::env::var("SECUREYEOMAN_HOST") {
-        config.host = host;
-    }
-    let port_explicit = std::env::var("SECUREYEOMAN_PORT")
-        .ok()
-        .or_else(|| std::env::var("PORT").ok());
-    if let Some(ref port_str) = port_explicit {
-        if let Ok(p) = port_str.parse() {
-            config.port = p;
-        }
-    }
-    // Default to 18789 when no port explicitly set (default config is 3001)
-    if port_explicit.is_none() && config.port == 3001 {
-        config.port = 18789;
-    }
+    // Load defaults → TOML file (if present) → env var overrides
+    let config = sy_core::types::CoreConfig::load(None)?;
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
 
+    let db_url = config.database_url.clone();
     let mut app_state = state::AppState::new(config);
 
     // Connect to database — retry a few times for embedded PG startup
+    let connect = || async {
+        match db_url.as_deref() {
+            Some(url) => db::pool::create_pool_from_url(url).await,
+            None => db::pool::create_pool().await,
+        }
+    };
     let pool_result = {
-        let mut result = db::pool::create_pool().await;
+        let mut result = connect().await;
         for attempt in 1..=5 {
             if result.is_ok() {
                 break;
             }
             info!("Database not ready, retrying ({attempt}/5)...");
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            result = db::pool::create_pool().await;
+            result = connect().await;
         }
         result
     };

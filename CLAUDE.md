@@ -13,7 +13,7 @@
 ## Monorepo Structure
 
 ```
-crates/       — Rust workspace (sy-crypto, sy-hwprobe, sy-tee, sy-privacy, sy-audit, sy-sandbox, sy-edge, sy-napi)
+crates/       — Rust workspace (single crate `sy-core` with two binaries: `sy-core` and `sy-edge`)
 packages/
   core/       — Backend (TypeScript, being phased out → Rust via AGNOS crates)
   dashboard/  — React frontend
@@ -28,7 +28,7 @@ docs/
 
 ## Migration Direction
 
-TypeScript is being phased out in favor of Rust via AGNOS ecosystem crates. SY is converging with the AGNOS system. 8 Rust crates already in `crates/`. New features should prefer Rust when feasible. See roadmap for the 9-phase migration plan.
+TypeScript is being phased out in favor of Rust via AGNOS ecosystem crates. SY is converging with the AGNOS system. The `sy-core` crate is a flat monolith (Phase 10 complete) containing crypto, audit, privacy, sandbox, tee, hwprobe, types, and the edge runtime as sibling modules. It ships two binaries: `sy-core` (server) and `sy-edge` (fleet runtime). New features should prefer Rust.
 
 ## Development Process
 

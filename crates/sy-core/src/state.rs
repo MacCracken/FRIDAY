@@ -3,7 +3,7 @@
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Instant;
-use sy_types::CoreConfig;
+use crate::types::CoreConfig;
 use tokio::sync::broadcast;
 
 use crate::auth::jwt::JwtConfig;
@@ -409,20 +409,12 @@ impl AppState {
         self.inner.bridge_tx.send(event).unwrap_or(0)
     }
 
-    /// Fastify fallback URL for the reverse proxy (during migration).
-    pub fn fastify_url(&self) -> Option<String> {
-        self.inner
-            .config
-            .fastify_fallback_port
-            .map(|port| format!("http://127.0.0.1:{port}"))
-    }
-
     /// Validate an API key by SHA-256 hash lookup against the database.
     pub async fn validate_api_key(&self, api_key: &str) -> Option<AuthContext> {
         let pool = self.db()?;
 
         // SHA-256 hash the incoming key
-        let hash = sy_crypto::sha256(api_key.as_bytes());
+        let hash = crate::crypto::sha256(api_key.as_bytes());
 
         // Look up the hash in the database
         let row = crate::db::auth::find_api_key_by_hash(pool, &hash)

@@ -89,11 +89,12 @@ impl AuditChain {
 
         // Compute entry hash using sorted JSON (JSONB stability)
         let sorted_json = serde_json::to_string(&entry_data).unwrap_or_default();
-        let entry_hash = sy_crypto::sha256(sorted_json.as_bytes());
+        let entry_hash = crate::crypto::sha256(sorted_json.as_bytes());
 
         // Compute signature: HMAC-SHA256(entryHash:previousHash, signingKey)
         let sig_input = format!("{}:{}", entry_hash, self.last_hash);
-        let signature = sy_crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
+        let signature =
+            crate::crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
 
         let entry = AuditEntry {
             id,
@@ -139,9 +140,9 @@ impl AuditChain {
             // Verify signature
             let sig_input = format!("{}:{}", entry_hash, prev_hash);
             let expected_sig =
-                sy_crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
+                crate::crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
 
-            if !sy_crypto::secure_compare(
+            if !crate::crypto::secure_compare(
                 entry.integrity.signature.as_bytes(),
                 expected_sig.as_bytes(),
             ) {
@@ -209,12 +210,12 @@ impl AuditChain {
         }
 
         let json = serde_json::to_string(&data).unwrap_or_default();
-        sy_crypto::sha256(json.as_bytes())
+        crate::crypto::sha256(json.as_bytes())
     }
 }
 
 fn generate_id() -> String {
-    let bytes = sy_crypto::random_bytes(16);
+    let bytes = crate::crypto::random_bytes(16);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

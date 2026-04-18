@@ -15,7 +15,7 @@ const TEST_JWT_SECRET: &str = "dev-jwt-secret-change-in-production!!";
 
 /// Build a test AppState with no database and remote access allowed.
 pub fn test_state() -> AppState {
-    AppState::new(sy_types::CoreConfig::default()).with_allow_remote_access(true)
+    AppState::new(sy_core::types::CoreConfig::default()).with_allow_remote_access(true)
 }
 
 /// Build the full router for integration testing (no database, remote access allowed).

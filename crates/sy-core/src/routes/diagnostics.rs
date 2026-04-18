@@ -100,7 +100,7 @@ async fn ping_integrations(State(state): State<AppState>) -> impl IntoResponse {
 /// Uses sy-hwprobe (ai-hwaccel) when available, otherwise returns empty.
 async fn gpu_status() -> impl IntoResponse {
     // Probe via sy-hwprobe (ai-hwaccel)
-    let hw_devices = sy_hwprobe::probe_all();
+    let hw_devices = crate::hwprobe::probe_all();
     let devices: Vec<serde_json::Value> = hw_devices
         .iter()
         .map(|d| serde_json::to_value(d).unwrap_or_default())
@@ -108,7 +108,7 @@ async fn gpu_status() -> impl IntoResponse {
 
     let total_vram: f64 = devices
         .iter()
-        .filter_map(|d| d.get("vramMb").and_then(|v| v.as_f64()))
+        .filter_map(|d: &serde_json::Value| d.get("vramMb").and_then(|v| v.as_f64()))
         .sum();
     let available = !devices.is_empty();
 

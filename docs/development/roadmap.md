@@ -10,14 +10,17 @@
 
 See **[Rust Testing Matrix](rust-testing-matrix.md)** for coverage targets, hardware test plan, and per-platform verification checklist.
 
-- `sy-crypto` — AES-256-GCM, X25519, Ed25519, HMAC-SHA256, HKDF (98% coverage)
-- `sy-hwprobe` — thin wrapper around `ai-hwaccel` (crates.io), converts to SY types for TS layer
-- `sy-tee` — Model weight sealing with TPM2/keyring keys (88% coverage)
-- `sy-privacy` — DLP PII regex scanning, compiled Rust DFA (98% coverage)
-- `sy-audit` — HMAC-SHA256 linked tamper-evident audit chain (100% coverage)
-- `sy-sandbox` — seccomp-bpf, Landlock, cgroup v2 detection (91% coverage)
-- `sy-edge` — Standalone edge binary, 6.9 MB, 22 API endpoints (56% coverage)
-- `sy-napi` — napi-rs bridge exposing all crates to Node.js
+Phase 10 flatten complete — all domain libraries live inside `sy-core` as modules, and the workspace is a single crate with two binary targets.
+
+- `crate::crypto` — AES-256-GCM, X25519, Ed25519, HMAC-SHA256, HKDF
+- `crate::hwprobe` — thin wrapper around `ai-hwaccel` (crates.io), camelCase JSON for the dashboard API
+- `crate::tee` — Model weight sealing with TPM2/keyring keys
+- `crate::privacy` — DLP PII regex scanning, compiled Rust DFA
+- `crate::audit` — HMAC-SHA256 linked tamper-evident audit chain
+- `crate::sandbox` — seccomp-bpf, Landlock, cgroup v2 detection
+- `crate::types` — Shared wire types (config, health response, common API shapes)
+- Binary `sy-core` (26.8 MB) — HTTP gateway, DB, auth, orchestration, integrations
+- Binary `sy-edge` (10.6 MB) — fleet runtime, shares the same codebase (Phase 9/10 unification). `--features edge` stripping of dashboard/integrations is the next optimization pass.
 
 ### Shared Ecosystem Crates — Future
 
@@ -31,7 +34,7 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 | `sy-privacy-core` | `crates/sy-privacy` | DLP classification engine needed by Agnostic agents or Ifran routing | SY, Agnostic, Ifran |
 | `sy-sandbox-core` | `crates/sy-sandbox` | Landlock/seccomp policy engine shared with AGNOS runtime | SY, AGNOS, Agnosticos |
 
-**Not candidates** (too SY-specific): `sy-edge` (SY binary), `sy-napi` (SY Node bridge), `sy-hwprobe` (already delegates to `ai-hwaccel`).
+**Not candidates** (too SY-specific): `sy-edge` (SY binary), `sy-hwprobe` (already delegates to `ai-hwaccel`).
 
 ---
 
@@ -161,7 +164,7 @@ Current site demonstrates depth but overwhelms. Redesign for the 1.0.0 launch.
 
 ### Ecosystem Crate Status
 
-*All ecosystem crates integrated via sy-napi with TypeScript wrappers and JS fallbacks.*
+*All ecosystem crates called directly from sy-core — zero serialization overhead.*
 
 | Crate | Version | Integration |
 |-------|---------|-------------|

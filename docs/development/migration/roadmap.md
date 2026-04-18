@@ -1,25 +1,27 @@
 # SecureYeoman — TypeScript to Rust Migration Roadmap
 
-> **Goal**: Migrate SY's core engine from TypeScript/Bun to Rust, consuming AGNOS shared crates directly. TypeScript remains as UI/plugin/scripting layer. Target: ~12MB binary (down from 124MB), sub-millisecond agent lifecycle, zero GC pauses.
+> **Goal**: Migrate SY's core engine from TypeScript/Bun to Rust, consuming AGNOS shared crates directly. Dashboard stays React behind the Rust API.
 >
 > **Principle**: Don't rewrite — replace. Each subsystem maps to an existing AGNOS crate that's already tested, benchmarked, and production-ready. The migration is wiring, not invention.
 >
-> **Completed**: Phases 0 (foundation), 1 (bhava), 2 (agnosai), 3 (hoosh), 5 (security), 6 (dhvani) — see [Changelog](../../../CHANGELOG.md).
+> **Completed**: Phases 0 (foundation), 1 (bhava), 2 (agnosai), 3 (hoosh), 5 (security), 6 (dhvani), and 7 (core engine — 971+ routes, 89 modules, sy-core is the sole application binary, Node.js removed). See [Changelog](../../../CHANGELOG.md) and [Migration Findings](../migration-finds.md).
 
 ---
 
 ## Current State
 
-| Layer | Tech | LOC | Status |
-|-------|------|-----|--------|
-| **Core engine** | TypeScript/Bun | 20,683 | Migration target |
-| **MCP server** | TypeScript | 46,015 | Migration target |
-| **Shared types** | TypeScript (Zod) | 11,602 | → Rust types with serde |
-| **Dashboard** | React/Vite | 169,516 | Stays (UI layer) |
-| **Desktop shell** | Tauri v2 | — | Stays (wraps Rust core) |
-| **Mobile shell** | Capacitor v6 | — | Stays or → Tauri mobile |
-| **Rust crates** | 8 crates + bhava + agnosai + dhvani | 6,183+ | Foundation for migration |
-| **Edge binary** | Rust | 2,895 | Already migrated (was Go) |
+| Layer | Tech | Status |
+|-------|------|--------|
+| **Core engine** | Rust (`sy-core`, axum) | Migrated — 971+ routes, 89 modules, 26.5 MB binary |
+| **MCP server** | Rust (second `sy-core` instance on :3001) | Migrated |
+| **Shared types** | Rust (`sy-types`, serde) | Migrated |
+| **Ecosystem crates** | Rust (bhava 2.0, agnosai, dhvani, szal, bote, majra) | Called directly from `sy-core`, no NAPI bridge |
+| **Dashboard** | React/Vite | Stays behind Rust API |
+| **Desktop shell** | Tauri v2 | Stays (wraps `sy-core`) |
+| **Mobile shell** | Capacitor v8 | Stays |
+| **Rust workspace** | 1 crate (`sy-core`, two binary targets) | Flatten complete (Phase 10, 2026-04-18) |
+| **Edge binary** | `sy-edge` bin target in `sy-core` (10.6 MB; `--features edge` slimming TBD) | Shares codebase with `sy-core` |
+| **Legacy `packages/core/`** | TypeScript stub | Kept for one more release cycle, then deleted |
 
 ---
 
@@ -29,17 +31,15 @@
 
 2. **Crate-by-crate**: Each SY subsystem maps to an AGNOS crate or existing sy-* crate. Replace the TS module with a Rust dep. Test parity at each step.
 
-3. **Bridge shrinks over time**: sy-napi starts as the primary bridge (Rust ↔ Node). As more subsystems move to Rust, the bridge surface shrinks until the TS layer is optional.
+3. **Bridge was removed in Phase 7**: `sy-napi` (the Rust↔Node NAPI bridge) is deleted. All ecosystem crates are called directly from `sy-core` — zero serialization overhead.
 
-4. **No big bang**: SY keeps working at every stage. The Bun runtime and TS code runs alongside Rust via napi. Subsystems migrate one at a time.
+4. **No big bang**: SY kept working at every stage. Subsystems migrated one at a time under the NAPI bridge until Phase 7 removed Node.js from the runtime.
 
 ---
 
-## Phase 1 — Remaining Item
+## Phase 1 — Complete
 
-| # | Item | Notes |
-|---|------|-------|
-| 9 | Expose NAPI capabilities to dashboard/frontend | Dashboard needs API endpoints or socket events for: EQ profile, reasoning strategy, mood state, action tendency, compatibility scores |
+Dashboard reads personality state (EQ profile, reasoning strategy, mood, action tendency, compatibility scores) through the bhava-backed soul/spirit REST endpoints exposed by `sy-core`. No NAPI surface — bhava is a direct crate dep.
 
 ---
 
@@ -62,17 +62,15 @@
 
 ## Phase 7 — Core Engine (Rust binary replaces Bun)
 
-**Done (7.0-7.5+)**: axum gateway with **505 routes across 74 modules** — full CRUD for all core domains, SSE streaming, WebSocket, 12 integration proxy adapters, auth (OAuth/SSO/SAML/WebAuthn), training, security, simulation, and 60+ sub-domain modules. JWT+RBAC auth, sqlx DB layer, reverse proxy fallback to Fastify.
+**Done (7.0-7.7 + repair phases R-1..R-16)**: axum gateway with **971+ routes across 89 modules** — full CRUD for all core domains, true SSE streaming, WebSocket, 8 typed integration clients, auth (JWT/API key/mTLS, OAuth/SSO/SAML/WebAuthn), training, security (13-layer middleware incl. rate limiting, RBAC, body limits, IP reputation, backpressure, ownership guards, local network check, fingerprinting), sqlx DB layer, pgvector, JTI token revocation, persistent vector store. Node.js removed; `sy-core` is the sole application binary (26.5 MB). See [Migration Findings](../migration-finds.md) for the 16-phase repair log.
 
 **Remaining:**
 
 | # | Item | Notes |
 |---|------|-------|
-| 2 | Migrate config to TOML (AGNOS convention) | Drop JS config parsing |
-| 3 | Build `secureyeoman` Rust binary | Single binary: agent engine + API + MCP |
-| 5 | sy-napi becomes optional (only for TS plugin runtime) | Bridge shrinks to plugin boundary |
+| 2 | Migrate config to TOML (AGNOS convention) | Replace env-var-only config with optional `secureyeoman.toml`; keep env vars as overrides |
 
-**Result**: SY is a single Rust binary (~12MB). Bun/Node is optional — only needed if TS plugins are loaded.
+**Result so far**: SY is a single Rust binary (26.5 MB). Target of <15 MB requires Phase 10 flatten + release optimization (LTO, strip, panic=abort).
 
 ---
 
@@ -90,23 +88,27 @@
 
 ---
 
-## Phase 9 — Edge Consolidation
+## Phase 9 — Edge Consolidation ✅
 
-**sy-edge is already Rust (6.9MB).** After Phase 7, the main SY binary and edge binary share the same crate foundation:
+Folded into Phase 10. `sy-edge` is now a `[[bin]]` target of the flattened `sy-core` crate — same Cargo package, same codebase. `--features edge` stripping of dashboard/integrations is an open optimization item (see Phase 10 remaining).
 
-| # | Item | Notes |
-|---|------|-------|
-| 1 | Unify sy-edge with main SY binary | Feature-gated: `--edge` mode strips dashboard/integrations |
-| 2 | SY Edge → SY with `edge` profile | One binary, one codebase, two deployment modes |
-| 3 | Edge participates in daimon fleet | Full fleet citizen, not a separate product |
-
-**Result**: SY Edge is no longer a separate project — it's a build profile of the main binary.
+Edge participation in the daimon fleet is deferred to post-flatten.
 
 ---
 
-## Phase 10 — Flatten
+## Phase 10 — Flatten ✅
 
-Collapse workspace into single flat crate. Merge sy-crypto, sy-hwprobe, sy-tee, sy-privacy, sy-audit, sy-sandbox, sy-types, sy-edge into sy-core as modules. Remove sy-napi (no longer needed — server is Rust). Single `Cargo.toml`, single `src/`, single binary. Same pattern as agnosai and ifran.
+Workspace collapsed from 9 crates into a single `sy-core` crate on 2026-04-18:
+
+- `sy-types`, `sy-audit`, `sy-privacy`, `sy-sandbox`, `sy-tee`, `sy-crypto`, `sy-hwprobe` → sibling modules at `sy-core/src/{types,audit,privacy,sandbox,tee,crypto,hwprobe}/`
+- `sy-edge` → second binary target at `sy-core/src/bin/sy-edge/` (shares all crypto/hwprobe code with `sy-core`)
+- Workspace `Cargo.toml` now lists a single member; all domain deps consolidated under `sy-core/Cargo.toml`
+- 377 tests pass (155 migrated from the deleted crates' inline test modules)
+
+**Remaining optimization** (not required for flatten):
+
+- `--features edge` build of `sy-core` that strips dashboard/integrations to shrink the sy-edge binary back toward 7 MB (current 10.6 MB because it links the full gateway code)
+- `[profile.release] lto = "fat"`, `panic = "abort"`, `codegen-units = 1` pass to push `sy-core` under the 15 MB target
 
 **Final architecture:**
 - **sy-core** — Rust backend engine (flat crate, crates.io). All business logic, API, DB, auth, integrations. Reusable.
@@ -114,15 +116,15 @@ Collapse workspace into single flat crate. Merge sy-crypto, sy-hwprobe, sy-tee, 
 
 ---
 
-## Binary Size Estimates
+## Binary Size Trajectory
 
 | Phase | Binary | Size | Runtime |
 |-------|--------|------|---------|
-| **Current** | Bun + TS bundle | ~124MB | Bun VM + GC |
-| **Phase 0-2** | Bun + Rust (napi) | ~90MB | Hybrid (less TS work) |
-| **Phase 3-6** | Bun + mostly Rust | ~50MB | Bun for gateway only |
-| **Phase 7** | Pure Rust | ~12-15MB | Native, zero overhead |
-| **Phase 9** | Rust (edge mode) | ~7-8MB | Minimal, fleet-ready |
+| Baseline | Bun + TS bundle | ~124 MB | Bun VM + GC |
+| Phases 0-6 (NAPI bridge) | Bun + Rust (napi) → Bun + mostly Rust | ~90 → ~50 MB | Hybrid |
+| **Phase 7 (current)** | **Pure Rust `sy-core`** | **26.5 MB** | Native, zero overhead |
+| Phase 10 goal | Flat `sy-core` with LTO + strip | <15 MB | Native, fleet-ready |
+| Phase 10 edge build | `sy-core --features edge` | ~7-8 MB | Minimal, fleet-ready |
 
 ---
 
@@ -154,40 +156,33 @@ secureyeoman (Rust binary, ~12MB)
 
 ```
 Phase 1 (bhava)     ✅
-    ↓
 Phase 2 (agnosai)   ✅
-    ↓
 Phase 3 (hoosh)     ✅
-    ↓
 Phase 5 (security)  ✅
-    ↓
-Phase 4 (daimon)    ← brain becomes thin client, removes vector store deps
-    ↓
 Phase 6 (dhvani)    ✅
+Phase 7   (core)    ✅ (971+ routes, 89 modules)
+Phase 7.2 (config)  ✅ (TOML + env overrides, secureyeoman.example.toml)
+Phase 10  (flatten) ✅ (workspace 9 → 1 crate; sy-edge is a bin target of sy-core)
     ↓
-Phase 7 (core)      ✅ (505 routes, 74 modules — config + CLI remaining)
-    ↓
-Phase 9 (edge)      ← unify main + edge into one binary
-    ↓
-Phase 10 (flatten)  ← single flat crate, semver 1.0.0
+Phase 4   (daimon)  ← optional: brain → daimon thin client (deferred; native brain works)
+Optimization pass   ← --features edge + LTO fat + panic=abort to push sy-core under 15 MB
 ```
 
-**Phase 8 (dashboard)**: Runs in parallel, stays React, no urgency.
+**Phase 8 (dashboard)**: Stays React behind the Rust API. Complete as-is.
 
 ---
 
 ## Success Criteria
 
-- [ ] Binary size < 15MB (down from 124MB)
-- [ ] Agent creation < 0.1ms (down from ~200ms)
-- [ ] Zero GC pauses during operation
-- [ ] All 180+ MCP tools functional
-- [ ] All 12 integration adapters functional in Rust (✅ proxy routes done, access mode enforcement pending)
-- [ ] Dashboard connects to Rust API without changes
-- [ ] sy-edge is a build profile, not a separate binary
-- [ ] T.Ron speaks with personality-driven voice
-- [ ] Benchmark suite proves parity or improvement on every migrated subsystem
+- [ ] Binary size < 15 MB (currently 26.8 MB — LTO fat + panic=abort + `--features edge` for stripping)
+- [x] Zero GC pauses during operation (no runtime GC)
+- [x] Dashboard connects to Rust API without changes
+- [x] `sy-edge` is a bin target of `sy-core`, not a separate crate
+- [ ] Agent creation latency budget met (benchmark pass pending)
+- [ ] All integration adapters functional in Rust (8 typed clients done; remaining platforms via proxy)
+- [ ] T.Ron speaks with personality-driven voice (dhvani + bhava mood→prosody wired; manual verify pending)
+- [ ] Benchmark suite proves parity/improvement on every migrated subsystem
 
 ---
 
-*Last Updated: 2026-03-30 — Phases 0-3, 5-7 complete (core engine: 210 routes, config + CLI remaining)*
+*Last updated: 2026-04-18 — Phase 7, 7.2, 9, and 10 all complete. Remaining: Phase 4 (daimon; optional), binary size optimization, benchmark pass.*

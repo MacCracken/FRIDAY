@@ -81,7 +81,7 @@ impl Scheduler {
 
         let id = format!(
             "task-{}",
-            sy_crypto::random_bytes(8)
+            sy_core::crypto::random_bytes(8)
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()

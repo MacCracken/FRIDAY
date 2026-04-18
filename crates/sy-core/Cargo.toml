@@ -14,14 +14,33 @@ path = "src/lib.rs"
 name = "sy-core"
 path = "src/main.rs"
 
+[[bin]]
+name = "sy-edge"
+path = "src/bin/sy-edge/main.rs"
+
 [dependencies]
-sy-types = { path = "../sy-types" }
-sy-crypto = { path = "../sy-crypto" }
-sy-privacy = { path = "../sy-privacy" }
-sy-audit = { path = "../sy-audit" }
-sy-sandbox = { path = "../sy-sandbox" }
-sy-tee = { path = "../sy-tee" }
-sy-hwprobe = { path = "../sy-hwprobe" }
+# Regex engine for DLP/PII scanning (privacy module)
+regex = "1"
+
+# Cryptographic primitives (formerly sy-crypto crate)
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+md-5 = "0.10"
+rand = "0.8"
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+# Hardware accelerator detection (formerly sy-hwprobe crate)
+ai-hwaccel = { version = "1.0", default-features = true }
+
+# sy-edge runtime deps (edge binary target)
+clap = { version = "4", features = ["derive"] }
+gethostname = "1"
+sysinfo = "0.35"
 
 # Ecosystem crates (previously accessed via NAPI bridge)
 bhava = { version = "2.0.0", features = ["presets", "psychology", "sociology", "physiology", "microbiology", "neuroscience", "instinct"] }
@@ -32,6 +51,7 @@ agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
 majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
 
 axum = { version = "0.8", features = ["json", "ws"] }
+toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -55,3 +75,4 @@ dashmap = "6"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 bytes = "1"
+tempfile = "3"

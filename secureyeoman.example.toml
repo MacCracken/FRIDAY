@@ -1,0 +1,35 @@
+# SecureYeoman configuration (optional).
+#
+# Search order: $SECUREYEOMAN_CONFIG, ./secureyeoman.toml,
+# /etc/secureyeoman/config.toml, $HOME/.secureyeoman/config.toml.
+# Environment variables override any TOML values — see fields below.
+#
+# Every field is optional; unset fields fall back to built-in defaults.
+
+# Bind address. Env: SECUREYEOMAN_HOST
+host = "127.0.0.1"
+
+# HTTP port. Env: SECUREYEOMAN_PORT or PORT
+port = 18789
+
+# PostgreSQL connection string. Env: DATABASE_URL
+# When unset, sy-core composes a URL from DATABASE_HOST/USER/NAME/POSTGRES_PASSWORD.
+# database_url = "postgres://secureyeoman:secret@localhost:5432/secureyeoman"
+
+# Deployment environment — affects logging, cookie flags, dev-only endpoints.
+# Env: SECUREYEOMAN_ENVIRONMENT
+environment = "development"
+
+[tls]
+# When true, sy-core serves HTTPS directly (otherwise TLS is terminated by Caddy).
+enabled = false
+# cert_path = "/etc/secureyeoman/tls/fullchain.pem"
+# key_path  = "/etc/secureyeoman/tls/privkey.pem"
+# ca_path   = "/etc/secureyeoman/tls/ca.pem"
+
+[cors]
+enabled = true
+# Origins allowed to call the API. Leave empty to derive from SECUREYEOMAN_CORS_ORIGINS env.
+allowed_origins = []
+# Example:
+# allowed_origins = ["https://dashboard.example.com", "http://localhost:5173"]

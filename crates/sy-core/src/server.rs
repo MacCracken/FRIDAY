@@ -1,20 +1,10 @@
-//! Server router — builds the axum Router with middleware and routes.
-//!
-//! Middleware order mirrors the 16 Fastify hooks from server.ts:
-//! 1. Tracing (tower-http TraceLayer)
-//! 2. Compression (tower-http CompressionLayer)
-//! 3. Correlation ID
-//! 4. Security headers
-//! 5. CORS (tower-http CorsLayer)
-//!
-//! Stubs for Phase 7.1: backpressure, fingerprinting, IP reputation,
-//! body limits, rate limiting, auth, RBAC.
-//!
-//! Unimplemented routes fall through to the Fastify reverse proxy.
+//! Server router — builds the axum Router with the 13-layer middleware stack
+//! and all route modules.
 
 use axum::Router;
-use axum::http::{HeaderName, HeaderValue, Method as HttpMethod};
+use axum::http::{HeaderName, HeaderValue, Method as HttpMethod, StatusCode};
 use axum::middleware as axum_mw;
+use axum::response::IntoResponse;
 use axum::routing::get;
 
 use tower_http::compression::CompressionLayer;
@@ -30,7 +20,6 @@ use crate::middleware::ip_reputation::{IpReputationLayer, IpReputationState};
 use crate::middleware::local_network::check_local_network;
 use crate::middleware::rate_limit::{RateLimitLayer, RateLimitState};
 use crate::middleware::security_headers::SecurityHeadersLayer;
-use crate::proxy::proxy_to_fastify;
 use crate::routes::health;
 use crate::state::AppState;
 
@@ -65,6 +54,15 @@ fn build_cors_layer() -> CorsLayer {
             HeaderName::from_static("x-correlation-id"),
         ])
         .allow_credentials(true)
+}
+
+/// Fallback handler for unmatched routes. Returns a 404 JSON error.
+async fn not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        [("content-type", "application/json")],
+        r#"{"error":"Not Found","statusCode":404}"#,
+    )
 }
 
 /// Build the full axum router with middleware stack.
@@ -161,8 +159,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::routes::multimodal::router())
         .merge(crate::routes::policy_as_code::router());
 
-    // Fallback: proxy everything else to Fastify
-    let app = api.fallback(proxy_to_fastify);
+    // Unmatched routes → 404 JSON (no legacy proxy fallback).
+    let app = api.fallback(not_found);
 
     // Middleware stack (outermost → innermost execution order):
     // TraceLayer → CompressionLayer → CorsLayer → LocalNetworkCheck → IpReputation →
@@ -202,7 +200,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> AppState {
-        AppState::new(sy_types::CoreConfig::default()).with_allow_remote_access(true)
+        AppState::new(crate::types::CoreConfig::default()).with_allow_remote_access(true)
     }
 
     #[tokio::test]

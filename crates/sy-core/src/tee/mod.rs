@@ -61,9 +61,9 @@ impl TeeEncryptionManager {
     /// Seal (encrypt) model weights. Returns sealed bytes.
     pub fn seal(&mut self, plaintext: &[u8], key_source: KeySource) -> Result<Vec<u8>, String> {
         let key = self.derive_key(key_source)?;
-        let iv = sy_crypto::random_bytes(IV_LEN);
+        let iv = crate::crypto::random_bytes(IV_LEN);
 
-        let encrypted = sy_crypto::aes_256_gcm_encrypt(plaintext, &key, &iv)?;
+        let encrypted = crate::crypto::aes_256_gcm_encrypt(plaintext, &key, &iv)?;
 
         // aes_gcm returns ciphertext + auth_tag concatenated
         let ct_len = encrypted.len() - AUTH_TAG_LEN;
@@ -113,7 +113,7 @@ impl TeeEncryptionManager {
         combined.extend_from_slice(ciphertext);
         combined.extend_from_slice(auth_tag);
 
-        sy_crypto::aes_256_gcm_decrypt(&combined, &key, iv)
+        crate::crypto::aes_256_gcm_decrypt(&combined, &key, iv)
     }
 
     /// Check if data starts with SEALED_V1 magic.
