@@ -6,9 +6,33 @@ All notable changes to SecureYeoman are documented in this file.
 
 ---
 
-## [0.5.0] — 2026-04-02
+## [0.5.0] — 2026-04-18
 
-*The Rust-native release. Node.js removed from the runtime. sy-core is the sole application binary.*
+*The Rust-native release. Node.js removed from the runtime. `sy-core` is the sole application binary, packaged as a flat single-crate workspace with TOML config and a dedicated edge bin target.*
+
+### Migration Wrap-Up (2026-04-18)
+
+Final pre-tag cleanup across config, workspace layout, binary size, and dashboard UX.
+
+- **TOML configuration (Phase 7.2)** — `CoreConfig::load()` reads a layered config: built-in defaults → `secureyeoman.toml` → env var overrides. Search order: `$SECUREYEOMAN_CONFIG`, `./secureyeoman.toml`, `/etc/secureyeoman/config.toml`, `$HOME/.secureyeoman/config.toml`. Snake_case keys (`database_url`, `cert_path`) and camelCase accepted via serde aliases. `secureyeoman.example.toml` shipped at repo root.
+- **Flat single-crate workspace (Phase 10)** — `sy-types`, `sy-crypto`, `sy-hwprobe`, `sy-tee`, `sy-privacy`, `sy-audit`, `sy-sandbox` merged into `sy-core` as sibling modules (`crate::types`, `crate::crypto`, `crate::hwprobe`, `crate::tee`, `crate::privacy`, `crate::audit`, `crate::sandbox`). Workspace went from 9 crates to 1.
+- **`sy-edge` unified (Phase 9, folded into 10)** — `sy-edge` is now a `[[bin]]` target of `sy-core` at `src/bin/sy-edge/`. Same Cargo package, same codebase.
+- **Binary-size pass** — `[profile.release]` now uses `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true`. `sy-core`: **26.77 MB → 18.97 MB (−29%)**. `sy-edge`: **10.65 MB → 8.32 MB (−22%)**. Build time ~5 minutes for the full release profile (was ~1 min with thin LTO).
+- **Dead code removed** — `crates/sy-core/src/proxy.rs` deleted. `CoreConfig.fastify_fallback_port`, `AppState::fastify_url()`, and the `proxy_to_fastify` fallback handler gone; unmatched routes return a plain JSON 404 via a `not_found` handler. Also dropped the orphan 12 MB `libsy_napi.node`, the `build:napi` script, and the broken `dev` script.
+- **Pre-existing warnings cleared** — 5 unused-import/unused-variable/unneeded-mut warnings across `state.rs`, `routes/gateway.rs`, `db/seed.rs`, `routes/analytics.rs`, `routes/marketplace.rs`. `cargo check --all-targets` is silent.
+- **Test suite** — 48 integration tests (auth_flow, backpressure, body_limit, health, local_network, rate_limit, rbac) + 329 unit tests = **377 passing**, zero failures, zero warnings.
+- **Docker rebuild** — `Dockerfile.dev` crate-manifest COPY block rewritten for the flat workspace; image builds succeed on the single-crate layout.
+
+### Dashboard UX Repairs (2026-04-18)
+
+- **Sidebar Chat correctly mutes** when no provider key is configured. Two underlying bugs fixed:
+  1. `GET /api/v1/model/info` used to 500 when `model_config.configs` table was missing, which left the dashboard's sidebar query in "unknown state" and kept Chat clickable. Handler now gracefully falls through to provider-probe defaults.
+  2. The cached `/model/info` response was not invalidated when secrets changed. `PUT/DELETE /api/v1/secrets/{name}` now call `invalidate_model_info_cache()`, and the cache TTL is shortened from 30 s → 10 s. Adding or removing an API key flips the sidebar Chat state within one dashboard poll.
+- **Personality avatars** — `FRIDAY` and `T.Ron` seed entries now set `avatar_url = '/avatars/friday.png'` and `'/avatars/t_ron.png'`. These defaults were dropped during the Rust seed port and are now restored. Fresh installs get the avatars out of the box; existing installs can backfill with a one-shot `UPDATE`.
+
+### Test Fixes
+
+- **Health-check unit tests** (`routes::health::tests::health_returns_ok`, `server::tests::health_endpoint_works`) previously asserted `"ok"` but the handler correctly returns `"degraded"` when `test_state()` has no DB attached. Assertions updated to `"degraded"` with `checks.database == false`.
 
 ### Architecture — Pure Rust
 

@@ -501,4 +501,4 @@ See [dependency-watch.md](dependency-watch.md) for tracked third-party dependenc
 
 ---
 
-*Last updated: 2026-04-02. See [Changelog](../../CHANGELOG.md) for full history of completed work.*
+*Last updated: 2026-04-18. See [Changelog](../../CHANGELOG.md) for full history of completed work.*
