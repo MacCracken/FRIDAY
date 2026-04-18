@@ -87,11 +87,6 @@ async fn seed_personalities(pool: &PgPool) {
 }
 
 async fn seed_agent_profiles(pool: &PgPool) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
     let profiles = [
         (
             "researcher",

@@ -18,23 +18,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 
 WORKDIR /build
 
-# Copy workspace manifests for layer caching
+# Copy workspace + crate manifests for layer caching (Phase 10: flat single-crate workspace)
 COPY crates/Cargo.toml crates/Cargo.toml
-COPY crates/sy-crypto/Cargo.toml crates/sy-crypto/Cargo.toml
-COPY crates/sy-hwprobe/Cargo.toml crates/sy-hwprobe/Cargo.toml
-COPY crates/sy-tee/Cargo.toml crates/sy-tee/Cargo.toml
-COPY crates/sy-privacy/Cargo.toml crates/sy-privacy/Cargo.toml
-COPY crates/sy-audit/Cargo.toml crates/sy-audit/Cargo.toml
-COPY crates/sy-sandbox/Cargo.toml crates/sy-sandbox/Cargo.toml
-COPY crates/sy-edge/Cargo.toml crates/sy-edge/Cargo.toml
-COPY crates/sy-types/Cargo.toml crates/sy-types/Cargo.toml
 COPY crates/sy-core/Cargo.toml crates/sy-core/Cargo.toml
 
-# Create stub lib.rs files for dependency caching
-RUN for d in sy-crypto sy-hwprobe sy-tee sy-privacy sy-audit sy-sandbox sy-edge sy-types; do \
-      mkdir -p crates/$d/src && echo "" > crates/$d/src/lib.rs; \
-    done && \
-    mkdir -p crates/sy-core/src && echo "fn main() {}" > crates/sy-core/src/main.rs
+# Stub out source files so `cargo build` can resolve + fetch deps before real source is copied.
+# sy-core has two binary targets (sy-core, sy-edge) — stub both.
+RUN mkdir -p crates/sy-core/src crates/sy-core/src/bin/sy-edge \
+ && echo "" > crates/sy-core/src/lib.rs \
+ && echo "fn main() {}" > crates/sy-core/src/main.rs \
+ && echo "fn main() {}" > crates/sy-core/src/bin/sy-edge/main.rs
 
 # Pre-fetch and compile dependencies (cached layer)
 RUN cd crates && cargo build --release -p sy-core 2>/dev/null || true
@@ -42,8 +35,8 @@ RUN cd crates && cargo build --release -p sy-core 2>/dev/null || true
 # Copy actual source
 COPY crates/ crates/
 
-# Build sy-core binary
-RUN cd crates && cargo build --release -p sy-core && \
+# Build sy-core binary (the server — sy-edge is not shipped in this image)
+RUN cd crates && cargo build --release --bin sy-core && \
     cp target/release/sy-core /build/sy-core
 
 # ---- dashboard builder ----

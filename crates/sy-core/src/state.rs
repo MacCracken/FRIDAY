@@ -13,7 +13,6 @@ use crate::brain::embedding::{
 };
 use crate::brain::manager::{BrainConfig, BrainManager};
 use crate::brain::pg_vector::{DynVectorStore, PgVectorStore};
-use crate::brain::vector::InMemoryVectorStore;
 use crate::integrations::github::GitHubClient;
 use crate::integrations::gmail::GmailClient;
 use crate::integrations::google_calendar::GoogleCalendarClient;

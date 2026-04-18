@@ -50,7 +50,7 @@ async fn gateway_proxy(Json(body): Json<GatewayProxyRequest>) -> impl IntoRespon
         || model.contains("anthropic")
         || (anthropic_key.is_some() && openai_key.is_none());
 
-    let mut req = if is_anthropic {
+    let req = if is_anthropic {
         // Call Anthropic Messages API directly
         let key = match &anthropic_key {
             Some(k) => k.clone(),

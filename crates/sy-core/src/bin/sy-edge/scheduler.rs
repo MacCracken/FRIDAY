@@ -9,6 +9,13 @@ use tokio::task::JoinHandle;
 
 const MIN_INTERVAL_SECS: u64 = 10;
 
+fn random_hex_suffix() -> [u8; 8] {
+    use rand::RngCore;
+    let mut bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTask {
     pub id: String,
@@ -81,7 +88,7 @@ impl Scheduler {
 
         let id = format!(
             "task-{}",
-            sy_core::crypto::random_bytes(8)
+            random_hex_suffix()
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()

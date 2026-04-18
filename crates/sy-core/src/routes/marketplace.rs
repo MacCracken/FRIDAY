@@ -643,10 +643,6 @@ async fn community_sync(
                             .and_then(|s| s.as_str())
                             .unwrap_or("parallel");
                         let roles = data.get("roles").cloned().unwrap_or(serde_json::json!([]));
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as i64;
 
                         let existing: Option<(String,)> = sqlx::query_as(
                             "SELECT id FROM agents.swarm_templates WHERE name = $1 AND is_builtin = false"

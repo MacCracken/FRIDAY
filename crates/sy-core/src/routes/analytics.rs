@@ -21,7 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/costs/breakdown", get(costs_breakdown))
 }
 
-async fn system_metrics(State(state): State<AppState>) -> impl IntoResponse {
+async fn system_metrics() -> impl IntoResponse {
     // Read real system metrics where possible
     let mut memory_used_mb = 0u64;
     let mut memory_limit_mb = 0u64;

@@ -43,20 +43,17 @@ Dashboard reads personality state (EQ profile, reasoning strategy, mood, action 
 
 ---
 
-## Phase 4 — Knowledge & Memory (daimon APIs replace brain)
+## Phase 4 — Knowledge & Memory (daimon APIs replace brain) — **Obsolete**
 
-**SY modules**: `packages/core/src/brain/` (memory, knowledge, vector store, RAG)
-**Replaces with**: daimon REST API (vector store, RAG, memory endpoints already exist)
+**Original intent**: delegate SY's brain (memory, knowledge, vector store, RAG) to daimon's REST API.
 
-| # | Item | Notes |
-|---|------|-------|
-| 1 | Replace vector store integration with daimon `/v1/vectors/*` API | Insert, search, collections |
-| 2 | Replace RAG pipeline with daimon `/v1/rag/*` API | Ingest, query, stats |
-| 3 | Replace memory store with daimon `/v1/agents/:id/memory` API | Per-agent memory |
-| 4 | Replace knowledge base with daimon `/v1/knowledge/*` API | Search, index, stats |
-| 5 | Replace audit trails with sy-audit + daimon audit chain | Already Rust, just extend |
+**Why it's obsolete** (verified 2026-04-18 against daimon tag 0.6.0 source):
 
-**Result**: SY's brain becomes a thin client over daimon. The intelligence stays, the infrastructure delegates.
+- Daimon 0.6.0 is the **final Rust version**. At v0.7.0 daimon was rewritten end-to-end in Cyrius (9,724 LOC Rust → 4,141 LOC Cyrius), and the current ecosystem is pure Cyrius.
+- Daimon 0.6.0's RAG is intentionally lightweight: `simple_embed()` hashes tokens into a fixed vocabulary (not real embeddings), pipeline is in-memory only, and the query path does pure cosine similarity. SY's native brain already has real embedding providers (OpenAI / Ollama / AGNOS gateway), pgvector persistence, hybrid semantic+FTS retrieval with RRF merge, and ACT-R activation scoring.
+- Daimon 0.6.0 exposes `/v1/rag/ingest`, `/v1/rag/query`, `/v1/mcp/*`, `/v1/edge/*`, `/v1/scheduler/*`, `/v1/agents`, but **not** the `/v1/vectors/*`, `/v1/agents/:id/memory`, or `/v1/knowledge/*` surfaces this phase assumed.
+
+Net: replacing SY's brain with daimon would be a capability regression, and daimon itself has left the Rust path. The phase is removed from the migration plan. SY's native brain (bhava + pgvector + hybrid retrieval) stays.
 
 ---
 
@@ -162,10 +159,11 @@ Phase 5 (security)  ✅
 Phase 6 (dhvani)    ✅
 Phase 7   (core)    ✅ (971+ routes, 89 modules)
 Phase 7.2 (config)  ✅ (TOML + env overrides, secureyeoman.example.toml)
+Phase 9   (edge)    ✅ (folded into Phase 10)
 Phase 10  (flatten) ✅ (workspace 9 → 1 crate; sy-edge is a bin target of sy-core)
-    ↓
-Phase 4   (daimon)  ← optional: brain → daimon thin client (deferred; native brain works)
-Optimization pass   ← --features edge + LTO fat + panic=abort to push sy-core under 15 MB
+Phase 4   (daimon)  ✕ obsolete (daimon v0.7.0+ rewrote in Cyrius; native brain is richer)
+
+Only open item: binary-size optimization pass (LTO fat + panic=abort + `--features edge`).
 ```
 
 **Phase 8 (dashboard)**: Stays React behind the Rust API. Complete as-is.
