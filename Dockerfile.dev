@@ -92,8 +92,8 @@ ENV COMMUNITY_REPO_PATH=/usr/share/secureyeoman/community-repo
 COPY --from=rust-builder /build/sy-core /usr/local/bin/secureyeoman
 RUN chmod +x /usr/local/bin/secureyeoman
 
-# SQL migration files (if they exist — ignore if not present)
-COPY dist/migration[s]/ /usr/local/bin/migrations/
+# SQL migration files — copied from source so fresh checkouts (CI) don't require a prior build
+COPY packages/core/src/storage/migrations/*.sql /usr/local/bin/migrations/
 
 # Dashboard SPA (served by sy-core via static file serving)
 COPY --from=dashboard-builder /app/packages/dashboard/dist /usr/share/secureyeoman/dashboard/

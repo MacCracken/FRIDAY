@@ -491,7 +491,9 @@ export function useChatStream(options?: UseChatStreamOptions): UseChatStreamRetu
                   thinkingContent: doneEvent.thinkingContent,
                   brainContext: doneEvent.brainContext,
                   creationEvents:
-                    (doneEvent.creationEvents ?? []).length > 0 ? doneEvent.creationEvents : undefined,
+                    (doneEvent.creationEvents ?? []).length > 0
+                      ? doneEvent.creationEvents
+                      : undefined,
                   toolCalls: completedToolCalls.length > 0 ? [...completedToolCalls] : undefined,
                 },
               ]);
