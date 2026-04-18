@@ -44,6 +44,9 @@ crates/**/target/
 
 # Lock files
 *.lock
+# …but Rust binary crates should commit Cargo.lock for reproducible builds
+# (prevents surprise MSRV bumps from transitive-dep patch releases in CI).
+!crates/Cargo.lock
 
 # Test coverage
 coverage/
