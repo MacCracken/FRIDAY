@@ -350,8 +350,14 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
     let has_openai = available.contains_key("openai");
     let has_anthropic = available.contains_key("anthropic");
 
-    let result = match model_db::get_model_info(pool, "default").await {
-        Ok(Some(row)) => {
+    // Missing model_config tables (pre-migration state) must not 500 — the
+    // dashboard relies on this endpoint to decide whether Chat is enabled.
+    // Treat any DB lookup failure as "no persisted config" and fall through
+    // to the provider-probe defaults.
+    let persisted = model_db::get_model_info(pool, "default").await.ok().flatten();
+
+    let result = match persisted {
+        Some(row) => {
             let provider = row.provider.clone();
             let model_name = row.model_name.clone();
             serde_json::json!({
@@ -362,7 +368,7 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                 "available": available,
             })
         }
-        Ok(None) => {
+        None => {
             let default_provider = if has_hoosh {
                 "hoosh"
             } else if has_openai {
@@ -379,13 +385,6 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                 },
                 "available": available,
             })
-        }
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
         }
     };
 
