@@ -239,7 +239,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89"
+          toolchain: "1.91"
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -269,4 +269,4 @@ jobs:
 
       - name: Sanity check (dev)
         run: |
-          docker run --rm --entrypoint node secureyeoman:dev-test -e "console.log('dev-image-ok')" | grep dev-image-ok
+          docker run --rm --entrypoint ls secureyeoman:dev-test -l /usr/local/bin/secureyeoman | grep -E "secureyeoman$"

@@ -33,15 +33,9 @@ export interface EncryptedPayload {
 
 // Raw X25519 private key (32 bytes) → PKCS#8 DER KeyObject.
 // PKCS#8 for X25519 is a fixed 16-byte prefix + the 32-byte key.
-const X25519_PKCS8_PREFIX = Buffer.from(
-  '302e020100300506032b656e04220420',
-  'hex'
-);
+const X25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
 // Same shape for Ed25519, different OID.
-const ED25519_PKCS8_PREFIX = Buffer.from(
-  '302e020100300506032b657004220420',
-  'hex'
-);
+const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
 function rawToX25519PrivateKey(raw: Buffer): KeyObject {
   return createPrivateKey({
@@ -157,13 +151,7 @@ export class AgentCrypto {
 
     const nonce = randomBytes(12);
     const derivedKey = Buffer.from(
-      hkdfSync(
-        'sha256',
-        sharedSecret,
-        nonce,
-        Buffer.from('secureyeoman-agent-comms'),
-        32
-      )
+      hkdfSync('sha256', sharedSecret, nonce, Buffer.from('secureyeoman-agent-comms'), 32)
     );
 
     const cipher = createCipheriv('aes-256-gcm', derivedKey, nonce);
@@ -193,13 +181,7 @@ export class AgentCrypto {
 
     const nonce = Buffer.from(encrypted.nonce, 'base64');
     const derivedKey = Buffer.from(
-      hkdfSync(
-        'sha256',
-        sharedSecret,
-        nonce,
-        Buffer.from('secureyeoman-agent-comms'),
-        32
-      )
+      hkdfSync('sha256', sharedSecret, nonce, Buffer.from('secureyeoman-agent-comms'), 32)
     );
 
     const ciphertextBuf = Buffer.from(encrypted.ciphertext, 'base64');

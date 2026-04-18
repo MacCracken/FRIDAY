@@ -112,7 +112,7 @@ jobs:
       - name: Setup Rust (for sy-edge binary)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89"
+          toolchain: "1.91"
 
       - name: Install protoc
         run: sudo apt-get install -y --no-install-recommends protobuf-compiler

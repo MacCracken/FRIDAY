@@ -82,11 +82,7 @@ interface RateBucket {
 const rateRules = new Map<string, RateRule>();
 const rateBuckets = new Map<string, Map<string, RateBucket>>();
 
-export function ratelimitRegister(
-  ruleName: string,
-  windowMs: number,
-  maxRequests: number
-): void {
+export function ratelimitRegister(ruleName: string, windowMs: number, maxRequests: number): void {
   rateRules.set(ruleName, { windowMs, maxRequests });
   // Re-registering a rule clears its buckets — per-instance limiters expect a
   // fresh state in their constructor, and without clearing, bucket state leaks

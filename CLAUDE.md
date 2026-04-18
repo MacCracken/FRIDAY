@@ -7,7 +7,7 @@
 - **Type**: Hybrid Rust + TypeScript monorepo (migrating TS → Rust via AGNOS ecosystem crates)
 - **License**: AGPL-3.0-only
 - **Node**: >=22.0.0
-- **Rust**: Edition 2024, rust-version 1.89
+- **Rust**: Edition 2024, rust-version 1.91
 - **Version**: SemVer `MAJOR.MINOR.PATCH` starting from 0.5.0 (Rust-native era). Previous CalVer releases are historical
 
 ## Monorepo Structure
