@@ -27,7 +27,14 @@ static MODEL_INFO_CACHE: LazyLock<Mutex<ModelInfoCache>> = LazyLock::new(|| {
     })
 });
 
-const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Drop the cached /model/info response so the next request re-probes providers.
+/// Call this whenever a provider credential changes (add/remove secret).
+pub async fn invalidate_model_info_cache() {
+    let mut cache = MODEL_INFO_CACHE.lock().await;
+    cache.data = None;
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()

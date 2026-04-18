@@ -167,6 +167,8 @@ async fn set_secret(
             // Also set as env var so the running process picks it up immediately
             // SAFETY: single-threaded init; no concurrent env reads during set
             unsafe { std::env::set_var(&name, &body.value) };
+            // Drop cached /model/info so sidebar sees the new provider within one poll.
+            crate::routes::models::invalidate_model_info_cache().await;
             (
                 StatusCode::OK,
                 Json(serde_json::json!({"saved": true, "name": name})),
@@ -198,5 +200,7 @@ async fn delete_secret(
 
     // SAFETY: single-threaded cleanup; no concurrent env reads during remove
     unsafe { std::env::remove_var(&name) };
+    // Drop cached /model/info so sidebar can mute Chat within one poll.
+    crate::routes::models::invalidate_model_info_cache().await;
     StatusCode::NO_CONTENT.into_response()
 }
