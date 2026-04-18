@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @secureyeoman/shared && npm run build -w @secureyeoman/mcp && npm run build -w @secureyeoman/core -w @secureyeoman/dashboard",
-    "dev": "npm run dev --workspace=@secureyeoman/core",
+    "dev": "docker compose --env-file .env.dev up",
     "dev:dashboard": "npm run dev --workspace=@secureyeoman/dashboard",
     "dev:mcp": "npm run dev --workspace=@secureyeoman/mcp",
     "test": "npm run test --workspaces --if-present",
@@ -29,7 +29,6 @@
     "stats:set": "bash scripts/update-stats.sh set",
     "stats:get": "bash scripts/update-stats.sh get",
     "build:rust": "cargo build --manifest-path crates/Cargo.toml --release",
-    "build:napi": "cd crates/sy-napi && napi build --release --platform --js false --dts false --output ../../packages/core/native/sy-napi",
     "build:edge-rust": "cargo build --manifest-path crates/Cargo.toml --release -p sy-edge",
     "build:binary": "bash scripts/build-binary.sh",
     "build:binary:dev": "bash scripts/build-binary.sh --dev",

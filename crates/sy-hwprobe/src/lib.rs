@@ -1,7 +1,7 @@
 //! SecureYeoman Hardware Accelerator Detection
 //!
 //! Thin wrapper around [`ai_hwaccel`] that converts its type system to the
-//! SY `AcceleratorDevice` format consumed by the TypeScript layer via sy-napi.
+//! SY `AcceleratorDevice` format (camelCase JSON for the dashboard API).
 //!
 //! All detection is delegated to ai-hwaccel. This crate exists to:
 //! 1. Convert `AcceleratorProfile` → `AcceleratorDevice` (camelCase JSON for TS)
