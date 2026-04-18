@@ -442,6 +442,42 @@ Items below are planned but demand-gated or lower priority. Grouped by theme. Im
 
 ---
 
+## DOOM Agent Interface (cyrius-doom integration)
+
+Spatial threat visualization and agent navigation via the DOOM engine. An agent can "step through a portal" into a spatially-rendered environment generated from infrastructure data.
+
+**Concept:** WAD files are spatial data containers. Network topology IS a map. Generate WADs from infrastructure data — the agent navigates threats spatially instead of reading JSON reports.
+
+**Mapping:**
+
+| DOOM Concept | Security Concept |
+|-------------|-----------------|
+| Sectors | Network zones / VLANs |
+| Linedefs | Firewall rules / ACLs |
+| Things (monsters) | Threat actors / CVEs / unpatched services |
+| Things (items) | Assets / services / endpoints |
+| Doors (locked) | Access-controlled boundaries (need keycard = token) |
+| Keys | Access tokens / credentials / certificates |
+| Automap | Network topology overview |
+| Player | The agent navigating the environment |
+| Health | System health score |
+| Ammo | Remediation budget / available patches |
+
+**Requirements:**
+- [ ] WAD generator from infrastructure topology (zones → sectors, rules → linedefs, assets → things)
+- [ ] cyrius-doom headless mode (already exists: `--ppm` screenshots, spatial query functions)
+- [ ] Agent integration: daimon agent type that receives WAD, navigates spatially, reports findings
+- [ ] Threat level → DOOM difficulty mapping (I'm Too Young to Die → Nightmare = green → critical)
+- [ ] Real-time WAD regeneration as infrastructure state changes (live topology updates)
+
+**Dependencies:** cyrius-doom (v0.24.0+), daimon (1.1.0+), hoosh (LLM reasoning about spatial environment)
+
+**Why this works:** The agent doesn't need a framebuffer. It needs the spatial data structure (BSP tree) and the query functions (point-in-subsector, line-of-sight, nearest-threat). cyrius-doom already has all of these. The renderer is optional — the spatial logic is the interface. Screenshots via `--ppm` for human review when needed.
+
+**Status:** Concept. Post-2.0. After Cyrius port of SY core completes.
+
+---
+
 ## Dependency Watch
 
 See [dependency-watch.md](dependency-watch.md) for tracked third-party dependencies with known issues requiring upstream resolution.
