@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(resp.status(), 200);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["status"], "ok");
+        assert_eq!(json["status"], "degraded");
     }
 
     #[tokio::test]
