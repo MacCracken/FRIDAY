@@ -241,7 +241,8 @@ smoke_test() {
   # ── 1. --version ──────────────────────────────────────────────────────────
   local ver_out ver_rc=0
   ver_out="$(env "${SMOKE_SECRETS[@]}" "${binary}" --version 2>&1)" || ver_rc=$?
-  if [ "${ver_rc}" -eq 0 ] && printf '%s' "${ver_out}" | grep -qi 'secureyeoman'; then
+  # Accept "secureyeoman..." (Bun-compiled Tier 1/2/2.5 binaries) or "sy-..." (Rust sy-edge and future Rust bins)
+  if [ "${ver_rc}" -eq 0 ] && printf '%s' "${ver_out}" | grep -qiE 'secureyeoman|sy-'; then
     pass "--version        →  ${ver_out}"
   else
     fail "--version        exit=${ver_rc}  output: ${ver_out}"

@@ -55,12 +55,15 @@ Reported during 0.5.0 release prep: marketplace items disappeared from the runni
 
 > **Note on scope:** this is a *marketplace* issue, not a community one. Marketplace is the DB-seeded, curated content source. Community is a repo sync from `secureyeoman-community-repo`, pulled dynamically — it does not need seeding, so "missing community content" would be a sync-health issue tracked separately.
 
+**Confirmed root cause** (verified against a clean `docker compose down -v` + `build --no-cache` + `up` on 2026-04-18): the three SQL migrations in `packages/core/src/storage/migrations/` create the `marketplace.skills` table but contain **no seed `INSERT`s**. The personality + agent seeds fire (FRIDAY, T.Ron, 9 built-in agent profiles), but no first-party marketplace rows are ever written. All `INSERT INTO marketplace.skills` calls in the Rust `sy-core` are in dynamic code paths (`routes/marketplace.rs` user-install flow, `db/marketplace.rs` programmatic helpers) — nothing runs at boot. The TS package had a marketplace seed module that wasn't ported during the Rust migration.
+
+Note on schema: `marketplace.skills` is a unified table for both content sources, distinguished by a `source` column (`'marketplace'` | `'community'` | `'local'`). Community rows are populated by the repo-sync path and are working; only `source='marketplace'` rows are missing.
+
 Items to work through:
 
-- [ ] **Audit the marketplace seed path** — Where does each subsystem's marketplace content come from in the Rust `sy-core` seed (which table, which SQL/migration)? How does it hydrate on first boot vs. upgrade?
-- [ ] **Find the regression** — Git bisect the seeding behavior back to the last-known-good state (before the Rust migration repairs, if necessary). Most likely: (a) the Rust seed module doesn't port the marketplace items the TS version used to write, (b) a migration dropped/renamed a column the dashboard still queries, or (c) the dashboard now points at the wrong endpoint.
-- [ ] **Parity test** — Add a smoke test asserting marketplace content is non-empty on a fresh boot against an empty database. Today nothing catches a silent seed failure.
-- [ ] **Spot-check adjacent marketplace-bearing subsystems** — Skills, personalities, workflows. Each has its own marketplace seed; if one dropped items, others may have silent drift too.
+- [ ] **Port the marketplace seed** — Extract the canonical list of first-party marketplace items from the TS `packages/core/src/marketplace/` seed module and wire it into a Rust `sy-core` seed function called on first boot (or as `004_marketplace_seed.sql` migration, whichever matches the project's seeding convention).
+- [ ] **Parity smoke test** — Assert `SELECT COUNT(*) FROM marketplace.skills WHERE source='marketplace'` is non-zero after a fresh boot with an empty volume. Without this, a future seed regression would again go unnoticed.
+- [ ] **Spot-check adjacent subsystems for the same pattern** — Skills, personalities, workflows. Personalities (FRIDAY/T.Ron) and agents (9 built-in profiles) seed correctly; verify workflows and any other marketplace-aware subsystem.
 
 ### Test-coverage gap
 
