@@ -442,21 +442,11 @@ smoke_test_edge() {
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# CalVer → compact date tag (same logic as build-binary.sh)
+# Resolve DATE_TAG from VERSION env or VERSION file.
+# SemVer era (0.5.0+): the artifact-name prefix is the version string verbatim.
+# The variable is still named DATE_TAG for internal back-compat with the rest
+# of this script.
 # ---------------------------------------------------------------------------
-calver_to_compact() {
-  local ver="$1"
-  local base="${ver%%-*}"
-  local patch=""
-  [[ "$ver" == *-* ]] && patch="${ver##*-}"
-  local year="${base%%.*}"
-  local rest="${base#*.}"
-  local month="${rest%%.*}"
-  local day="${rest#*.}"
-  printf '%s%02d%02d%s' "$year" "$month" "$day" "$patch"
-}
-
-# Resolve DATE_TAG from VERSION env or VERSION file
 if [ -z "${VERSION:-}" ]; then
   VERSION_FILE="${REPO_ROOT}/VERSION"
   if [ -f "${VERSION_FILE}" ]; then
@@ -464,18 +454,20 @@ if [ -z "${VERSION:-}" ]; then
   fi
 fi
 if [ -n "${VERSION:-}" ]; then
-  DATE_TAG="$(calver_to_compact "${VERSION}")"
+  DATE_TAG="${VERSION}"
 else
-  # Fallback: detect from existing binaries in dist/
+  # Fallback: detect from existing binaries in dist/. Accepts SemVer-style
+  # prefixes like 0.5.0 or 1.0.0-rc.1 (everything between "secureyeoman-" and
+  # "-linux-x64" that isn't an already-suffixed tier name).
   DATE_TAG="$(ls "${DIST_DIR}"/secureyeoman-*-linux-x64 2>/dev/null \
-    | head -1 | sed 's|.*/secureyeoman-\([0-9]*\)-.*|\1|')" || true
+    | head -1 | sed 's|.*/secureyeoman-\(.*\)-linux-x64$|\1|')" || true
 fi
 
 if [ -z "${DATE_TAG:-}" ]; then
-  echo -e "${RED}ERROR: Cannot determine date tag. Set VERSION env or ensure VERSION file exists.${RESET}" >&2
+  echo -e "${RED}ERROR: Cannot determine version. Set VERSION env or ensure VERSION file exists.${RESET}" >&2
   exit 1
 fi
-echo -e "${DIM}Date tag: ${DATE_TAG}${RESET}"
+echo -e "${DIM}Version: ${DATE_TAG}${RESET}"
 
 # Main
 # ---------------------------------------------------------------------------
@@ -489,7 +481,7 @@ echo -e "${BOLD}SecureYeoman Binary Smoke Test${RESET}"
 echo -e "${DIM}Tier 1 (PostgreSQL-backed): ${DATE_TAG}-linux-x64  -linux-arm64  -darwin-arm64  -windows-x64${RESET}"
 echo -e "${DIM}Tier 2 (SQLite, full platform):   ${DATE_TAG}-sqlite-linux-x64  -sqlite-linux-arm64  -sqlite-windows-x64${RESET}"
 echo -e "${DIM}Tier 2.5 (Agent):           ${DATE_TAG}-agent-linux-x64  -agent-linux-arm64  -agent-darwin-arm64${RESET}"
-echo -e "${DIM}Tier 3 (Edge/IoT):          ${DATE_TAG}-edge-linux-x64  -edge-linux-arm64  -edge-linux-armv7  -edge-linux-riscv64${RESET}"
+echo -e "${DIM}Tier 3 (Edge/IoT):          ${DATE_TAG}-edge-linux-x64 (Rust sy-edge; arm64/armv7/riscv64 cross-compile deferred)${RESET}"
 if [ "${PG_AVAILABLE}" = "true" ]; then
   echo -e "${DIM}PostgreSQL: ${PG_HOST}:${PG_PORT} (user=${PG_USER})${RESET}"
 else
@@ -525,11 +517,10 @@ do
 done
 
 echo -e "\n${BOLD}── Tier 3 ──${RESET}"
+# Rust sy-edge currently builds linux-x64 only; arm64/armv7/riscv64 cross-compile
+# is deferred to a follow-up (needs `cross` or rustup target linkers).
 for b in \
-  "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64" \
-  "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-arm64" \
-  "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-armv7" \
-  "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-riscv64"
+  "${DIST_DIR}/secureyeoman-${DATE_TAG}-edge-linux-x64"
 do
   smoke_test "${b}"
 done
