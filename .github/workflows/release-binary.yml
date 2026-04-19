@@ -3,9 +3,8 @@ name: Release Binary
 on:
   push:
     tags:
-      - '[0-9]+.[0-9]+.[0-9]+'                    # SemVer: 0.5.0, 1.0.0
-      - '[0-9]+.[0-9]+.[0-9]+-*'                  # SemVer pre-release: 1.0.0-rc.1
-      - '[0-9][0-9][0-9][0-9].[0-9]*'             # Legacy CalVer: 2026.3.8 (historical re-tag)
+      - '[0-9]+.[0-9]+.[0-9]+'      # SemVer: 0.5.0, 1.0.0
+      - '[0-9]+.[0-9]+.[0-9]+-*'    # SemVer pre-release: 1.0.0-rc.1
   workflow_dispatch:
     inputs:
       version:
@@ -64,7 +63,6 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
-      date_tag: ${{ steps.version.outputs.date_tag }}
 
     steps:
       - name: Checkout
@@ -81,11 +79,6 @@ jobs:
             VER="${{ github.ref_name }}"
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
-
-          # SemVer era: artifact filenames embed the version as-is
-          # (0.5.0, 0.5.1, 1.0.0-rc.1, …). CalVer tags (YYYY.M.D) are
-          # historical — any re-tag of a legacy version is still one string.
-          echo "date_tag=${VER}" >> "$GITHUB_OUTPUT"
           echo "==> Version / tag: ${VER}"
 
       - name: Create tag (workflow_dispatch only)
@@ -145,7 +138,7 @@ jobs:
 
       - name: Sign binaries with cosign (keyless)
         run: |
-          DT="${{ steps.version.outputs.date_tag }}"
+          DT="${{ steps.version.outputs.version }}"
           for binary in \
             dist/secureyeoman-${DT}-linux-x64 \
             dist/secureyeoman-${DT}-linux-arm64 \
@@ -168,25 +161,25 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-darwin-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-windows-x64.exe
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-windows-x64.exe
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-darwin-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-darwin-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-windows-x64.exe
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-windows-x64.exe
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-darwin-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-edge-linux-x64
 
       - name: Upload Linux binaries + migrations (for container job)
         uses: actions/upload-artifact@v4
         with:
           name: linux-binaries
           path: |
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-arm64
             dist/migrations/
           retention-days: 1
 
@@ -194,7 +187,7 @@ jobs:
         id: notes
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          DT="${{ steps.version.outputs.date_tag }}"
+          DT="${{ steps.version.outputs.version }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
 
@@ -277,7 +270,7 @@ jobs:
 
             # ── Binaries ──
             echo "<details>"
-            echo "<summary><strong>All binaries</strong> (naming: <code>secureyeoman-YYYYMMDD-type-platform</code>)</summary>"
+            echo "<summary><strong>All binaries</strong> (naming: <code>secureyeoman-\${VERSION}-type-platform</code>)</summary>"
             echo ""
             echo "#### Tier 1 — Full (PostgreSQL)"
             echo ""
@@ -360,17 +353,17 @@ jobs:
           body: ${{ steps.notes.outputs.notes }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
           files: |
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-darwin-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-windows-x64.exe
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-sqlite-windows-x64.exe
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-x64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-linux-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-agent-darwin-arm64
-            dist/secureyeoman-${{ steps.version.outputs.date_tag }}-edge-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-darwin-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-windows-x64.exe
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-sqlite-windows-x64.exe
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-linux-x64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-linux-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-agent-darwin-arm64
+            dist/secureyeoman-${{ steps.version.outputs.version }}-edge-linux-x64
             dist/SHA256SUMS
             dist/secureyeoman-sbom.cdx.json
             dist/*.sig
@@ -405,7 +398,7 @@ jobs:
       - name: Prepare build context
         run: |
           mkdir -p binaries/migrations
-          cp "artifact/secureyeoman-${{ needs.build.outputs.date_tag }}-${{ matrix.platform }}" binaries/secureyeoman
+          cp "artifact/secureyeoman-${{ needs.build.outputs.version }}-${{ matrix.platform }}" binaries/secureyeoman
           cp -r artifact/migrations/* binaries/migrations/
           chmod +x binaries/secureyeoman
           ls -lh binaries/
