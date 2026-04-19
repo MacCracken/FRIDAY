@@ -671,7 +671,7 @@ function StandardEditorPage() {
     if (!isPending || activeToolCalls.length === 0) return;
 
     setAiPlan((prev) => {
-      const existingIds = new Set(prev?.steps.map((s) => s.id) ?? []);
+      const existingIds = new Set((prev?.steps ?? []).map((s) => s.id));
       const newSteps: PlanStep[] = [];
       for (const tc of activeToolCalls) {
         const stepId = `tool-${tc.toolName}`;

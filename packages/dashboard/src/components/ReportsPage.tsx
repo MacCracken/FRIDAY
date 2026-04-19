@@ -102,7 +102,7 @@ export function ReportsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {data?.reports.map((report) => (
+          {(data?.reports ?? []).map((report) => (
             <div key={report.id} className="card p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <FileText className="w-5 h-5 text-primary" />

@@ -305,7 +305,7 @@ function AssessmentsSection() {
       )}
 
       <div className="space-y-2">
-        {data?.items.map((a) => (
+        {(data?.items ?? []).map((a) => (
           <div key={a.id} className="card bg-base-100 border border-border shadow-sm">
             <div
               className="card-body cursor-pointer select-none"
@@ -569,7 +569,7 @@ function FindingsSection() {
       )}
 
       <div className="space-y-2">
-        {data?.items.map((f) => (
+        {(data?.items ?? []).map((f) => (
           <FindingRow
             key={f.id}
             finding={f}

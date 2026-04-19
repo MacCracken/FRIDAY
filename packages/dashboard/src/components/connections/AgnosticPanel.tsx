@@ -283,7 +283,7 @@ export default function AgnosticPanel() {
           </div>
         </div>
         <div className="space-y-1.5">
-          {presets?.presets.map((preset) => (
+          {(presets?.presets ?? []).map((preset) => (
             <PresetCard key={preset.name} preset={preset} onSubmit={handleSubmit} />
           ))}
           {presets?.presets.length === 0 && (
@@ -314,7 +314,7 @@ export default function AgnosticPanel() {
           </select>
         </div>
         <div className="space-y-1">
-          {crews?.crews.map((crew) => {
+          {(crews?.crews ?? []).map((crew) => {
             const Icon = STATUS_ICONS[crew.status] ?? Clock;
             const color = STATUS_COLORS[crew.status] ?? 'text-muted-foreground';
             return (

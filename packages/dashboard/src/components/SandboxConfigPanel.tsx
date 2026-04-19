@@ -113,18 +113,18 @@ export default function SandboxConfigPanel() {
         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           Available Technologies
         </h4>
-        {capabilities?.technologies.map((tech) => (
+        {(capabilities?.technologies ?? []).map((tech) => (
           <div
             key={tech.technology}
             className={`flex items-center justify-between p-2 rounded-lg border ${
-              tech.technology === capabilities.activeTechnology
+              tech.technology === capabilities?.activeTechnology
                 ? 'border-primary/30 bg-primary/5'
                 : tech.available
                   ? 'border-border bg-card hover:bg-muted/50 cursor-pointer'
                   : 'border-border bg-card opacity-50'
             }`}
             onClick={() => {
-              if (tech.available && tech.technology !== capabilities.activeTechnology) {
+              if (tech.available && tech.technology !== capabilities?.activeTechnology) {
                 void switchTechnology(tech.technology);
               }
             }}

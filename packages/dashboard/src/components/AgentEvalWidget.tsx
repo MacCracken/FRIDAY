@@ -83,7 +83,7 @@ export function AgentEvalWidget() {
           }}
         >
           <option value="">All suites</option>
-          {suites?.items.map((s) => (
+          {(suites?.items ?? []).map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -121,7 +121,7 @@ export function AgentEvalWidget() {
             </tr>
           </thead>
           <tbody>
-            {runs?.items.map((run) => (
+            {(runs?.items ?? []).map((run) => (
               <tr
                 key={run.id}
                 className="cursor-pointer border-b hover:bg-gray-50 dark:hover:bg-gray-800"

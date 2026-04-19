@@ -38,6 +38,54 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 
 ---
 
+## 0.5.1 — P(-1) Scaffold Hardening
+
+**Priority**: P(-1) — Blocks any new features after 0.5.0 ships. Run the hardening loop from [CLAUDE.md §P(-1)](../../CLAUDE.md) end to end before opening new work. Items below are the specific findings accumulated during the 0.5.0 release sprint; they are the input to the loop, not a substitute for it.
+
+### Defensive-guard audit (dashboard)
+
+A runtime crash in `SandboxConfigPanel` during 0.5.0 release prep traced to the `obj?.field.map(…)` pattern: the `?.` short-circuits on `obj` but `.field.map` runs unguarded when `obj` is defined and `field` is `undefined`. Ten sites were patched by hand. Remaining work:
+
+- [ ] **Enforce the guard pattern** — Add an ESLint rule flagging `\?\.[A-Za-z_][A-Za-z_0-9]*\.map\(` or adopt `@typescript-eslint/no-unsafe-optional-chaining` so new crashes of this shape fail CI. Without the rule, regressions will keep landing.
+- [ ] **Type-narrowing-via-side-effect audit** — TypeScript narrowed `capabilities?.technologies.map(…)` such that `capabilities` was treated as non-`undefined` *inside* the map body. Scan for other places where a chained guard on one level masks a needed guard at another.
+
+### Marketplace seeding regression
+
+Reported during 0.5.0 release prep: marketplace items disappeared from the running instance. Likely a seed drift during the TS→Rust migration.
+
+> **Note on scope:** this is a *marketplace* issue, not a community one. Marketplace is the DB-seeded, curated content source. Community is a repo sync from `secureyeoman-community-repo`, pulled dynamically — it does not need seeding, so "missing community content" would be a sync-health issue tracked separately.
+
+Items to work through:
+
+- [ ] **Audit the marketplace seed path** — Where does each subsystem's marketplace content come from in the Rust `sy-core` seed (which table, which SQL/migration)? How does it hydrate on first boot vs. upgrade?
+- [ ] **Find the regression** — Git bisect the seeding behavior back to the last-known-good state (before the Rust migration repairs, if necessary). Most likely: (a) the Rust seed module doesn't port the marketplace items the TS version used to write, (b) a migration dropped/renamed a column the dashboard still queries, or (c) the dashboard now points at the wrong endpoint.
+- [ ] **Parity test** — Add a smoke test asserting marketplace content is non-empty on a fresh boot against an empty database. Today nothing catches a silent seed failure.
+- [ ] **Spot-check adjacent marketplace-bearing subsystems** — Skills, personalities, workflows. Each has its own marketplace seed; if one dropped items, others may have silent drift too.
+
+### Test-coverage gap
+
+Every dashboard component test mocks fully-populated happy-path data. No test in the suite calls `mockResolvedValue(undefined)`, `mockResolvedValue({})`, or `mockRejectedValue(…)`. The SandboxConfigPanel crash was invisible because tests never exercise a `useQuery` returning `data: undefined` or a response shape drift.
+
+- [ ] **Negative-path test harness** — Add a shared test helper that renders each `useQuery`-bearing component once with `data: undefined` before the first resolve. Any component that needs a loading/empty fallback will fail the harness if missing.
+- [ ] **API contract tests** — 0.5.0 ships a Rust backend with a TypeScript dashboard. No test verifies the two agree on wire shape. A cheap first pass: JSON-schema snapshot of each REST response, validated against both Rust-emitted payloads and TS-consumed mocks.
+
+### Dependency cleanup
+
+- [ ] **zod 4 migration** — Root `overrides` pin `zod: 3.25.76` because zod 4's inference OOMs `tsc` even at 18 GB heap. Revisit once upstream type-perf work lands. Consumers currently forced to v3: `@anthropic-ai/sdk@0.90`, `openai@6.34`, `@modelcontextprotocol/sdk@1.29`, `eslint-plugin-react-hooks@7.1`. See the [dependency watch](./dependency-watch.md) entry.
+- [ ] **Mermaid XSS residual** — Three moderate audit findings all trace to `@excalidraw/mermaid-to-excalidraw` hard-pinning `mermaid: 10.9.3` (vulnerable to GHSA-7rqq-prvp-x9jh). Tracked in `dependency-watch.md`. Re-check when excalidraw/mermaid-to-excalidraw releases.
+- [ ] **typescript-eslint `projectService: true`** — Current config uses `parserOptions.project: [...]` array (loads full TS programs for type-aware lint). `projectService` reuses the TS language service and uses materially less memory. Would let `lint`/`typecheck` scripts drop back toward default heap.
+
+### Rust platform expansion
+
+- [ ] **`sy-edge` cross-compile** — 0.5.0 ships `secureyeoman-<version>-edge-linux-x64` only. arm64/armv7/riscv64 targets were in the CalVer Go build pipeline and deferred when the Go edge was retired. Options: add `cross` to the release workflow (simplest, Docker-based), or rustup target installs plus per-target linkers (faster, more setup).
+
+### Release pipeline cleanup
+
+- [ ] **`DT=` local vars in `release-binary.yml`** — The sign-blob and release-notes steps still set `DT="${{ steps.version.outputs.version }}"` for inline use. Works, but redundant since the CalVer→compact transform is gone. Cosmetic.
+- [ ] **Orphan TS edge runtime** — `packages/core/src/edge/` is a Bun-compiled edge runtime replaced by Rust `sy-edge`. The `compile_edge_binary` function in `build-binary.sh` that called it was already removed. The directory itself is a delete candidate once we confirm no TS package still imports from it.
+
+---
+
 ## Phase XX: QA & Manual Testing (Ongoing)
 
 **Priority**: P3 — Ongoing. Continuous verification of features that lack automated integration coverage. Items move to Changelog when confirmed working; new regressions are added here as discovered.
