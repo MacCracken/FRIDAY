@@ -16,11 +16,11 @@
     "test:e2e": "npx vitest run --project core:e2e",
     "test:e2e:fe": "npx playwright test --config packages/dashboard/playwright.config.ts",
     "bench": "npm run bench --workspace=@secureyeoman/core",
-    "lint": "NODE_OPTIONS='--max-old-space-size=8192' eslint packages/",
-    "lint:fix": "NODE_OPTIONS='--max-old-space-size=8192' eslint packages/ --fix",
+    "lint": "NODE_OPTIONS='--max-old-space-size=16384' eslint packages/",
+    "lint:fix": "NODE_OPTIONS='--max-old-space-size=16384' eslint packages/ --fix",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json}\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx,json}\"",
-    "typecheck": "NODE_OPTIONS='--max-old-space-size=8192' tsc --noEmit && NODE_OPTIONS='--max-old-space-size=8192' tsc --noEmit -p packages/dashboard/tsconfig.json",
+    "typecheck": "NODE_OPTIONS='--max-old-space-size=16384' tsc --noEmit && NODE_OPTIONS='--max-old-space-size=16384' tsc --noEmit -p packages/dashboard/tsconfig.json",
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist",
     "security:audit": "npm audit --audit-level=moderate",
     "release-notes": "npx tsx scripts/generate-release-notes.ts",
@@ -86,6 +86,7 @@
     "dompurify": "3.4.0"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-musl": "^4.59.0"
+    "@rollup/rollup-linux-x64-musl": "^4.59.0",
+    "@rolldown/binding-linux-x64-musl": "1.0.0-rc.15"
   }
 }
