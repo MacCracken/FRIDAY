@@ -20,7 +20,6 @@ pub fn probe_all() -> Vec<AcceleratorDevice> {
     let registry = AcceleratorRegistry::detect();
     let mut devices: Vec<AcceleratorDevice> = registry
         .available()
-        .iter()
         .filter(|p| p.accelerator.family() != AcceleratorFamily::Cpu)
         .enumerate()
         .map(|(i, p)| profile_to_device(p, i as u32))
@@ -46,7 +45,6 @@ pub fn probe_family(family: &str) -> Vec<AcceleratorDevice> {
     let registry = AcceleratorRegistry::detect();
     let mut devices: Vec<AcceleratorDevice> = registry
         .by_family(af)
-        .iter()
         .filter(|p| p.available)
         .enumerate()
         .map(|(i, p)| profile_to_device(p, i as u32))

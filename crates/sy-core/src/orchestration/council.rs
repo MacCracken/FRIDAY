@@ -24,7 +24,7 @@ pub enum DeliberationStrategy {
 }
 
 impl DeliberationStrategy {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_or_default(s: &str) -> Self {
         match s {
             "until_consensus" => Self::UntilConsensus,
             "single_pass" => Self::SinglePass,
@@ -43,7 +43,7 @@ pub enum VotingStrategy {
 }
 
 impl VotingStrategy {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_or_default(s: &str) -> Self {
         match s {
             "majority" => Self::Majority,
             "unanimous" => Self::Unanimous,
@@ -118,8 +118,8 @@ impl<D: AgentDelegate> CouncilExecutor<D> {
         max_rounds: u32,
     ) -> Result<CouncilResult, DelegationError> {
         let members = parse_members(&template.members);
-        let strategy = DeliberationStrategy::from_str(&template.deliberation_strategy);
-        let voting = VotingStrategy::from_str(&template.voting_strategy);
+        let strategy = DeliberationStrategy::parse_or_default(&template.deliberation_strategy);
+        let voting = VotingStrategy::parse_or_default(&template.voting_strategy);
         let facilitator = template
             .facilitator_profile
             .as_deref()
@@ -465,15 +465,15 @@ mod tests {
     #[test]
     fn deliberation_strategy_from_str() {
         assert_eq!(
-            DeliberationStrategy::from_str("until_consensus"),
+            DeliberationStrategy::parse_or_default("until_consensus"),
             DeliberationStrategy::UntilConsensus
         );
         assert_eq!(
-            DeliberationStrategy::from_str("single_pass"),
+            DeliberationStrategy::parse_or_default("single_pass"),
             DeliberationStrategy::SinglePass
         );
         assert_eq!(
-            DeliberationStrategy::from_str("rounds"),
+            DeliberationStrategy::parse_or_default("rounds"),
             DeliberationStrategy::Rounds
         );
     }

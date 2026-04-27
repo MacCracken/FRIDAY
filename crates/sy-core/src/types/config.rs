@@ -131,7 +131,7 @@ impl CoreConfig {
         Ok(toml::from_str(&contents)?)
     }
 
-    /// Apply SY env vars on top of the current config. Used by [`load`]; also
+    /// Apply SY env vars on top of the current config. Used by [`Self::load`]; also
     /// safe to call directly on a `CoreConfig::default()` (matches the old
     /// env-only startup behavior).
     ///
@@ -148,10 +148,10 @@ impl CoreConfig {
         {
             self.port = port;
         }
-        if let Ok(url) = std::env::var("DATABASE_URL") {
-            if !url.is_empty() {
-                self.database_url = Some(url);
-            }
+        if let Ok(url) = std::env::var("DATABASE_URL")
+            && !url.is_empty()
+        {
+            self.database_url = Some(url);
         }
         if let Ok(env) = std::env::var("SECUREYEOMAN_ENVIRONMENT") {
             self.environment = env;
@@ -239,14 +239,14 @@ allowed_origins = ["https://dashboard.example.com"]
         let cfg = CoreConfig::from_toml_file(file.path()).expect("parse");
         assert_eq!(cfg.host, "0.0.0.0");
         assert_eq!(cfg.port, 9000);
-        assert_eq!(
-            cfg.database_url.as_deref(),
-            Some("postgres://localhost/sy")
-        );
+        assert_eq!(cfg.database_url.as_deref(), Some("postgres://localhost/sy"));
         assert_eq!(cfg.environment, "production");
         assert!(cfg.tls.enabled);
         assert_eq!(cfg.tls.cert_path.as_deref(), Some("/tls/fullchain.pem"));
-        assert_eq!(cfg.cors.allowed_origins, vec!["https://dashboard.example.com"]);
+        assert_eq!(
+            cfg.cors.allowed_origins,
+            vec!["https://dashboard.example.com"]
+        );
     }
 
     #[test]

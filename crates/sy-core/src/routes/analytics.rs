@@ -31,7 +31,6 @@ async fn system_metrics() -> impl IntoResponse {
         for line in meminfo.lines() {
             if let Some(val) = line.strip_prefix("MemTotal:") {
                 memory_limit_mb = val
-                    .trim()
                     .split_whitespace()
                     .next()
                     .and_then(|v| v.parse::<u64>().ok())
@@ -40,7 +39,6 @@ async fn system_metrics() -> impl IntoResponse {
             }
             if let Some(val) = line.strip_prefix("MemAvailable:") {
                 let avail = val
-                    .trim()
                     .split_whitespace()
                     .next()
                     .and_then(|v| v.parse::<u64>().ok())

@@ -70,3 +70,10 @@ community-repo/
 # Runtime data directory — personality avatars, TLS certs, vector indices, etc.
 # This lives in ~/.secureyeoman or $SECUREYEOMAN_DATA_DIR at runtime, never in the repo
 data/
+
+# Local Claude Code state — auto-memory, cached transcripts, per-session context.
+# Never commit; these are personal to the maintainer's machine.
+.claude/
+
+# Stray edge-binary build at repo root — built artifacts belong in dist/ or crates/target/
+/secureyeoman-edge

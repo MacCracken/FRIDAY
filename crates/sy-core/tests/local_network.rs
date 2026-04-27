@@ -10,7 +10,8 @@ use sy_core::state::AppState;
 
 /// Build a test app with local network enforcement enabled.
 fn restricted_app() -> axum::Router {
-    let state = AppState::new(sy_core::types::CoreConfig::default()).with_allow_remote_access(false);
+    let state =
+        AppState::new(sy_core::types::CoreConfig::default()).with_allow_remote_access(false);
     build_router(state)
 }
 

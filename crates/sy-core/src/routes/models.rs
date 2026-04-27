@@ -184,10 +184,10 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
     // Return cached result if still fresh
     {
         let cache = MODEL_INFO_CACHE.lock().await;
-        if let Some(ref data) = cache.data {
-            if cache.fetched_at.elapsed() < MODEL_CACHE_TTL {
-                return Json(data.clone()).into_response();
-            }
+        if let Some(ref data) = cache.data
+            && cache.fetched_at.elapsed() < MODEL_CACHE_TTL
+        {
+            return Json(data.clone()).into_response();
         }
     }
 
@@ -196,19 +196,20 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
     let mut available: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
 
     // Anthropic — fetch models from API
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        if !key.is_empty() {
-            match client
-                .get("https://api.anthropic.com/v1/models")
-                .header("x-api-key", &key)
-                .header("anthropic-version", "2023-06-01")
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(data) = resp.json::<serde_json::Value>().await {
-                        let models: Vec<serde_json::Value> = data
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY")
+        && !key.is_empty()
+    {
+        match client
+            .get("https://api.anthropic.com/v1/models")
+            .header("x-api-key", &key)
+            .header("anthropic-version", "2023-06-01")
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    let models: Vec<serde_json::Value> = data
                             .get("data")
                             .and_then(|d| d.as_array())
                             .map(|arr| {
@@ -222,56 +223,53 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
                                     .collect()
                             })
                             .unwrap_or_default();
-                        if !models.is_empty() {
-                            available.insert("anthropic".into(), serde_json::json!(models));
-                        }
+                    if !models.is_empty() {
+                        available.insert("anthropic".into(), serde_json::json!(models));
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
     }
 
     // OpenAI — fetch models from API
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            match client
-                .get("https://api.openai.com/v1/models")
-                .bearer_auth(&key)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(data) = resp.json::<serde_json::Value>().await {
-                        let models: Vec<serde_json::Value> = data
-                            .get("data")
-                            .and_then(|d| d.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter(|m| {
-                                        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                        id.starts_with("gpt-")
-                                            || id.starts_with("o1")
-                                            || id.starts_with("o3")
-                                    })
-                                    .map(|m| {
-                                        let id = m
-                                            .get("id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown");
-                                        serde_json::json!({"id": id, "name": id})
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        if !models.is_empty() {
-                            available.insert("openai".into(), serde_json::json!(models));
-                        }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY")
+        && !key.is_empty()
+    {
+        match client
+            .get("https://api.openai.com/v1/models")
+            .bearer_auth(&key)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    let models: Vec<serde_json::Value> = data
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter(|m| {
+                                    let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                    id.starts_with("gpt-")
+                                        || id.starts_with("o1")
+                                        || id.starts_with("o3")
+                                })
+                                .map(|m| {
+                                    let id =
+                                        m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    serde_json::json!({"id": id, "name": id})
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !models.is_empty() {
+                        available.insert("openai".into(), serde_json::json!(models));
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
     }
 
@@ -284,26 +282,23 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
         .timeout(std::time::Duration::from_secs(3))
         .send()
         .await
+        && resp.status().is_success()
+        && let Ok(data) = resp.json::<serde_json::Value>().await
     {
-        if resp.status().is_success() {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                let models: Vec<serde_json::Value> = data
-                    .get("models")
-                    .and_then(|m| m.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|m| {
-                                let name =
-                                    m.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                serde_json::json!({"id": name, "name": name})
-                            })
-                            .collect()
+        let models: Vec<serde_json::Value> = data
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|m| {
+                        let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        serde_json::json!({"id": name, "name": name})
                     })
-                    .unwrap_or_default();
-                if !models.is_empty() {
-                    available.insert("ollama".into(), serde_json::json!(models));
-                }
-            }
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !models.is_empty() {
+            available.insert("ollama".into(), serde_json::json!(models));
         }
     }
 
@@ -323,26 +318,23 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
             .timeout(std::time::Duration::from_secs(3))
             .send()
             .await
+            && resp.status().is_success()
+            && let Ok(data) = resp.json::<serde_json::Value>().await
         {
-            if resp.status().is_success() {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    let models: Vec<serde_json::Value> = data
-                        .get("data")
-                        .and_then(|d| d.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|m| {
-                                    let id =
-                                        m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                    serde_json::json!({"id": id, "name": id})
-                                })
-                                .collect()
+            let models: Vec<serde_json::Value> = data
+                .get("data")
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|m| {
+                            let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            serde_json::json!({"id": id, "name": id})
                         })
-                        .unwrap_or_default();
-                    if !models.is_empty() {
-                        available.insert("hoosh".into(), serde_json::json!(models));
-                    }
-                }
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !models.is_empty() {
+                available.insert("hoosh".into(), serde_json::json!(models));
             }
         }
     }
@@ -354,7 +346,10 @@ async fn get_model_info(State(state): State<AppState>) -> impl IntoResponse {
     // dashboard relies on this endpoint to decide whether Chat is enabled.
     // Treat any DB lookup failure as "no persisted config" and fall through
     // to the provider-probe defaults.
-    let persisted = model_db::get_model_info(pool, "default").await.ok().flatten();
+    let persisted = model_db::get_model_info(pool, "default")
+        .await
+        .ok()
+        .flatten();
 
     let result = match persisted {
         Some(row) => {

@@ -116,20 +116,20 @@ impl IpReputationState {
         }
 
         // Check block expiry
-        if let Some(blocked_at) = entry.blocked_at {
-            if now.duration_since(blocked_at) >= self.config.block_duration {
-                entry.blocked = false;
-                entry.blocked_at = None;
-                // Check if decayed score still warrants a block
-                let decayed = self.decay_score(entry.score, entry.last_updated, now);
-                entry.score = decayed;
-                entry.last_updated = now;
-                if decayed >= self.config.threshold {
-                    entry.blocked = true;
-                    entry.blocked_at = Some(now);
-                } else {
-                    return None;
-                }
+        if let Some(blocked_at) = entry.blocked_at
+            && now.duration_since(blocked_at) >= self.config.block_duration
+        {
+            entry.blocked = false;
+            entry.blocked_at = None;
+            // Check if decayed score still warrants a block
+            let decayed = self.decay_score(entry.score, entry.last_updated, now);
+            entry.score = decayed;
+            entry.last_updated = now;
+            if decayed >= self.config.threshold {
+                entry.blocked = true;
+                entry.blocked_at = Some(now);
+            } else {
+                return None;
             }
         }
 
@@ -308,14 +308,13 @@ where
 
 /// Extract client IP from X-Forwarded-For or ConnectInfo.
 fn extract_client_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first_ip) = val.split(',').next() {
-                let trimmed = first_ip.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
+    if let Some(forwarded) = req.headers().get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+        && let Some(first_ip) = val.split(',').next()
+    {
+        let trimmed = first_ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
 

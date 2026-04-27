@@ -2,7 +2,7 @@
 //!
 //! GET /ws/collab/{docId} — WebSocket upgrade with JWT auth via Sec-WebSocket-Protocol.
 //!
-//! docId format: "personality:<uuid>" | "skill:<uuid>"
+//! docId format: `personality:<uuid>` | `skill:<uuid>`
 //!
 //! Protocol: binary messages (Uint8Array CRDT operations).
 //! Clients in the same room receive each other's binary messages (fan-out).

@@ -67,14 +67,13 @@ pub fn is_private_ip(ip: &str) -> bool {
 
 /// Extract client IP from X-Forwarded-For or ConnectInfo.
 fn extract_client_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first_ip) = val.split(',').next() {
-                let trimmed = first_ip.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
+    if let Some(forwarded) = req.headers().get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+        && let Some(first_ip) = val.split(',').next()
+    {
+        let trimmed = first_ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
 

@@ -2,7 +2,7 @@
 //!
 //! Credentials: API key (Bearer token).
 //! Config field: `apiKey`.
-//! Endpoint: https://api.linear.app/graphql
+//! Endpoint: <https://api.linear.app/graphql>
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};

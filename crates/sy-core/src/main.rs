@@ -95,12 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or_default();
 
             for (key, value) in &secrets {
-                if let Some(name) = key.strip_prefix("secret:") {
-                    if !value.is_empty() {
-                        // SAFETY: runs at startup before any concurrent env reads
-                        unsafe { std::env::set_var(name, value) };
-                        info!(secret = name, "loaded persisted secret");
-                    }
+                if let Some(name) = key.strip_prefix("secret:")
+                    && !value.is_empty()
+                {
+                    // SAFETY: runs at startup before any concurrent env reads
+                    unsafe { std::env::set_var(name, value) };
+                    info!(secret = name, "loaded persisted secret");
                 }
             }
             if !secrets.is_empty() {

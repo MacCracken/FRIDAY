@@ -40,7 +40,53 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 
 ## 0.5.1 — P(-1) Scaffold Hardening
 
-**Priority**: P(-1) — Blocks any new features after 0.5.0 ships. Run the hardening loop from [CLAUDE.md §P(-1)](../../CLAUDE.md) end to end before opening new work. Items below are the specific findings accumulated during the 0.5.0 release sprint; they are the input to the loop, not a substitute for it.
+**Priority**: P(-1) — Blocks any new features after 0.5.0 ships. Run the hardening loop from [CLAUDE.md §P(-1)](../../CLAUDE.md) end to end before opening new work. Items below are the specific findings accumulated during the 0.5.0 release sprint and the 2026-04-27 P(-1) checkpoint; they are the input to the loop, not a substitute for it.
+
+### 2026-04-27 P(-1) checkpoint — done in this cycle
+
+These shipped on `main` ahead of the 0.5.1 tag. Tests still green: 462 Rust + 4140 dashboard + 1235 MCP.
+
+- ✅ **Cargo dep refresh** — `cargo update` across 167 packages. Net advisory delta **16 → 1**: ecosystem bumps (`dhvani 1.0→1.1`, `szal 1.0→1.1`, `ai-hwaccel 1.0→1.2`, `agnosai 1.0.2→1.1`, `ifran 1.2→1.3`, `hisab 1.3→1.4`, `hoosh 1.1→1.3`, `mastishk 1.0→1.1`, `majra 1.0.3→1.0.4`) plus stack bumps (`tokio 1.50→1.52`, `axum 0.8.8→0.8.9`, `tokio-tungstenite 0.28→0.29` indirectly, `wasmtime 43.0→43.0.1`, `uuid 1.22→1.23`, `zip 8.4→8.6`). Surviving advisory: **RUSTSEC-2023-0071** (`rsa 0.9.10` Marvin Attack via `sqlx-mysql` — unreachable; we use Postgres only; no upstream fix).
+- ✅ **npm dep refresh** — `jose 6.2.2→6.2.3`, `vitest 4.1.4→4.1.5` in `packages/mcp`. `npm audit` post-install reported "found 0 vulnerabilities", but a follow-up `npm audit` shows the `@excalidraw/mermaid-to-excalidraw` mermaid/uuid chain is still in the tree (4 moderate, all the same upstream-blocked entries tracked in [dependency-watch.md](dependency-watch.md)). No regression vs 0.5.0 — the `npm install` "0 vulnerabilities" line refers only to vulnerabilities introduced by *that install*, not the cumulative tree.
+- ✅ **`ai-hwaccel 1.2` API breakage repaired** — `AcceleratorRegistry::available()` and `::by_family()` now return iterators directly; `crates/sy-core/src/hwprobe/mod.rs` adjusted.
+- ✅ **38 clippy lints cleaned** — bulk via `cargo clippy --fix` (collapsible `if let` chains, `or_insert_with` defaults, `operation has no effect`, `trim before split_whitespace`, immediately-dereferenced refs); manual fixes for 3× `from_str` → `parse_or_default` rename in `orchestration/{council,swarm}.rs` (avoiding `std::str::FromStr` shadowing) and 1× identical-blocks merge in `routes/health.rs`. `cargo clippy --all-features --all-targets -- -D warnings` is now silent.
+- ✅ **5 rustdoc warnings fixed** — `<https://...>` URL wrapping in 3 sites, ``` `<uuid>` ``` HTML escaping in `routes/ws_collab.rs`, intra-doc link `[`load`]` → `[`Self::load`]` in `types/config.rs`. `RUSTDOCFLAGS="-D warnings" cargo doc` clean.
+- ✅ **Pre-existing `cargo fmt` drift fixed** in 4 files (`state.rs`, `routes/models.rs`, `types/config.rs`, `tests/local_network.rs`) plus follow-on drift introduced by `clippy --fix`.
+- ✅ **Repo hygiene** — `.gitignore` now covers `.claude/` (per-machine Claude Code state) and the stray repo-root `secureyeoman-edge` build artifact. Both untracked from the index. Two leaked auto-memory files (`.claude/.../memory/feedback_no_gh.md`, `project_theme_sync.md`) removed from the index. *History rewrite is a separate decision — see P0 below.*
+- ✅ **`crates/deny.toml` added** — `cargo deny check` now passes (`advisories ok, bans ok, licenses ok, sources ok`). License allow list documents AGPL/GPL-3.0-only as compatible with our distribution; permissive families enumerated; `RUSTSEC-2023-0071` ignored with rationale.
+- ✅ **`crates/.cargo/audit.toml` added** — `cargo audit` exits clean with the same RUSTSEC-2023-0071 ignore.
+
+### Remaining P0 — must close before 0.5.1 tag
+
+- [ ] **Delete legacy `packages/core/`** — 113 MB of orphan TS source. No package imports `@secureyeoman/core` (verified). *Active references that block a naive `rm -rf`:*
+  - `Dockerfile.dev:96` and `scripts/build-binary.sh:112` still copy `packages/core/src/storage/migrations/*.sql` into the runtime image / binary. Rust `sy-core` has its own migrations under `crates/sy-core/src/db/migrations/` — relocate the SQL or fold it in, then update the COPY paths.
+  - `scripts/build-binary.sh:138, 161` reference `packages/core/src/cli.ts` and `packages/core/src/agent/cli.ts` for the legacy Bun-compiled paths (lines around them are commented out, but the file still references them). Verify and remove.
+  - `.github/workflows/release-binary.yml:133` uses `packages/core/dist/cli.js` for SBOM generation — port to a Rust equivalent or invoke from the live binary.
+  - `.github/workflows/ci.yml:74` uploads `packages/core/coverage/lcov.info` — remove the step.
+  - `scripts/release.sh:69` and `scripts/set-version.sh:18` enumerate `packages/core/package.json` in the version-set list — drop it.
+  - `scripts/check-code.sh:23` falls back to `packages/core/tsconfig.json` for non-dashboard/non-shared TS files — switch fallback or delete the branch.
+  - After all references are migrated, `git rm -r packages/core` and confirm `npm ci && npm run build && docker compose --env-file .env.dev up` still succeed.
+- [ ] **Decide on git-history rewrite for the leaked files** — `secureyeoman-edge` (7.2 MB binary, commit `e87be08c`), `.claude/projects/.../feedback_no_gh.md` and `project_theme_sync.md` (commit `c414a892`) are out of `HEAD` but still in history. Pre-public-tag is the right time to `git filter-repo` if we're going to. Decision pending; if we do, force-push the rewritten history before any external consumers exist.
+- [ ] **Marketplace seeding regression** (P0, ship-blocker carried over from 0.5.0 prep) — see [Marketplace seeding regression](#marketplace-seeding-regression) below.
+
+### Remaining P1 — finish in 0.5.1 cycle, do not block tag if scoped out
+
+- [ ] **`vi.mock` hoisting in `packages/mcp/src/tools/network-tools.test.ts`** — 8 calls inside `beforeEach` blocks emit Vitest deprecation warnings ("will become an error in a future version"). Tests pass today. Refactor: hoist a single `vi.mock('node:child_process', …)` and `vi.mock('ssh2', …)` to module scope with `vi.fn()` placeholders, set per-test behavior with `vi.mocked(execFile).mockImplementation(…)` in each `beforeEach`. Verify all 1235 MCP tests still pass.
+- [ ] **React-19 `eslint-plugin-react-hooks@7` warnings (68)** — covered by the existing [Defensive-guard audit (dashboard)](#defensive-guard-audit-dashboard) entry; this is the breakdown by rule:
+  - 32× `react-hooks/set-state-in-effect` (cascading-render risk)
+  - 28× `react-hooks/refs` (ref access during render — bypasses re-renders)
+  - 3× `react-hooks/immutability`, 3× `react-hooks/exhaustive-deps`
+  - 2× `react-hooks/purity`, 1× `preserve-manual-memoization`, 1× `incompatible-library`
+  - Hot files: `AgentWorldWidget.tsx` (20), `EditorPage.tsx` (12), `ExcalidrawWidget.tsx` (7), `AdvancedEditorPage.tsx` (4), `PersonalTab.tsx` (4). Refactor to refs-via-callback / state-via-ref-update or move side effects to event handlers per the React 19 guidance the rule cites.
+- [ ] **Major Rust dep bumps deferred during checkpoint** — these need ecosystem coordination:
+  - `bote 0.50 → 0.92` (two duplicate transitive copies of bote already in the lock graph at 0.91/0.92; resolve by bumping our spec)
+  - `shabda 1.0 → 2.0`, `shabdakosh 1.0 → 2.0`, `svara 1.1 → 2.0` (dhvani G2P/TTS family — coordinate with dhvani own bump; current `dhvani 1.1` still pulls 1.x of these via lockfile)
+  - `jni 0.21 → 0.22` (Android FFI; not on a current code path in `sy-core` but appears via wasmtime tree)
+  - `tokio-tungstenite 0.28 → 0.29` blocked while we're on `axum 0.8.x`
+- [ ] **`cargo deny` advisories DB lag** — `deny.toml` ignores `RUSTSEC-2023-0071` but cargo-deny's bundled advisory DB hasn't seen the advisory yet, so it warns `advisory-not-detected`. Cosmetic; revisit when deny refreshes.
+- [ ] **`packages/dashboard/package.json` and `packages/mobile/package.json` vitest spec drift** — root specifies `vitest@^4.1.5`, dashboard spec is `^4.0.18`, mobile is `^3`. Lockfile resolves correctly today; align the specs to avoid surprise on the next install.
+
+---
 
 ### Defensive-guard audit (dashboard)
 

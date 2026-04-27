@@ -1,9 +1,9 @@
 //! Application state shared across all handlers via axum State extractor.
 
+use crate::types::CoreConfig;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Instant;
-use crate::types::CoreConfig;
 use tokio::sync::broadcast;
 
 use crate::auth::jwt::JwtConfig;
@@ -261,16 +261,15 @@ impl AppState {
         }
 
         // Fallback to DB
-        if let Some(pool) = self.db() {
-            if let Ok(revoked) = crate::db::auth::is_token_revoked(pool, jti).await {
-                if revoked {
-                    // Populate cache
-                    self.inner
-                        .revoked_tokens
-                        .insert(jti.to_string(), Instant::now());
-                    return true;
-                }
-            }
+        if let Some(pool) = self.db()
+            && let Ok(revoked) = crate::db::auth::is_token_revoked(pool, jti).await
+            && revoked
+        {
+            // Populate cache
+            self.inner
+                .revoked_tokens
+                .insert(jti.to_string(), Instant::now());
+            return true;
         }
 
         false

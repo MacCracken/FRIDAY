@@ -74,13 +74,13 @@ impl FingerprintState {
     fn record_timing(&self, ip: &str) -> bool {
         let now = Instant::now();
 
-        let mut entry = self.timings.entry(ip.to_string()).or_insert_with(Vec::new);
+        let mut entry = self.timings.entry(ip.to_string()).or_default();
 
         // Evict stale entries
-        if let Some(last) = entry.last() {
-            if now.duration_since(*last).as_secs() > TIMING_EVICT_SECS {
-                entry.clear();
-            }
+        if let Some(last) = entry.last()
+            && now.duration_since(*last).as_secs() > TIMING_EVICT_SECS
+        {
+            entry.clear();
         }
 
         entry.push(now);
@@ -134,10 +134,9 @@ fn compute_bot_score(req: &Request<Body>, ip: &str, state: &FingerprintState) ->
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_lowercase())
+        && BOT_UA_PATTERNS.iter().any(|pattern| ua.contains(pattern))
     {
-        if BOT_UA_PATTERNS.iter().any(|pattern| ua.contains(pattern)) {
-            score += 15;
-        }
+        score += 15;
     }
 
     // Check for metronomic timing
@@ -150,14 +149,13 @@ fn compute_bot_score(req: &Request<Body>, ip: &str, state: &FingerprintState) ->
 
 /// Extract client IP (same logic as rate_limit/local_network).
 fn extract_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first_ip) = val.split(',').next() {
-                let trimmed = first_ip.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
+    if let Some(forwarded) = req.headers().get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+        && let Some(first_ip) = val.split(',').next()
+    {
+        let trimmed = first_ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
 
@@ -187,10 +185,10 @@ pub async fn check_fingerprint(
             rep.record_violation(&ip, 15.0, "bot_detected");
         }
         tracing::debug!(ip = %ip, score, "bot detected by fingerprinting");
-    } else if score >= SUSPICIOUS_THRESHOLD {
-        if let Some(rep) = state.ip_reputation() {
-            rep.record_violation(&ip, 5.0, "suspicious_request");
-        }
+    } else if score >= SUSPICIOUS_THRESHOLD
+        && let Some(rep) = state.ip_reputation()
+    {
+        rep.record_violation(&ip, 5.0, "suspicious_request");
     }
 
     next.run(req).await

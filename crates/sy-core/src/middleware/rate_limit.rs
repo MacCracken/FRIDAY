@@ -227,14 +227,13 @@ where
 /// Extract client IP from X-Forwarded-For or fall back to peer address.
 fn extract_client_ip<B>(req: &Request<B>) -> String {
     // Try X-Forwarded-For first (first IP in the chain)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first_ip) = val.split(',').next() {
-                let trimmed = first_ip.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
+    if let Some(forwarded) = req.headers().get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+        && let Some(first_ip) = val.split(',').next()
+    {
+        let trimmed = first_ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
 

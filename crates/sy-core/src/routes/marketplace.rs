@@ -744,62 +744,62 @@ async fn community_sync(
     let themes_dir = std::path::Path::new(&repo_path).join("themes");
     if themes_dir.exists() {
         for path in find_json_files(&themes_dir) {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let description = data
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("");
-                    let version = data
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("1.0.0");
-                    let author = data
-                        .get("author")
-                        .and_then(|a| {
-                            a.get("name")
-                                .and_then(|n| n.as_str())
-                                .or_else(|| a.as_str())
-                        })
-                        .unwrap_or("Community");
-                    let is_dark = data.get("isDark").and_then(|d| d.as_bool()).unwrap_or(true);
-                    let mut tags = vec!["theme", "community-theme"];
-                    tags.push(if is_dark { "dark" } else { "light" });
-                    let now_t = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as i64;
+            if let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(data) = serde_json::from_str::<serde_json::Value>(&content)
+            {
+                let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                let description = data
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
+                let version = data
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.0.0");
+                let author = data
+                    .get("author")
+                    .and_then(|a| {
+                        a.get("name")
+                            .and_then(|n| n.as_str())
+                            .or_else(|| a.as_str())
+                    })
+                    .unwrap_or("Community");
+                let is_dark = data.get("isDark").and_then(|d| d.as_bool()).unwrap_or(true);
+                let mut tags = vec!["theme", "community-theme"];
+                tags.push(if is_dark { "dark" } else { "light" });
+                let now_t = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
 
-                    let existing: Option<(String,)> = sqlx::query_as(
+                let existing: Option<(String,)> = sqlx::query_as(
                         "SELECT id FROM marketplace.skills WHERE name = $1 AND source = 'community' AND category = 'theme'"
                     ).bind(name).fetch_optional(pool).await.unwrap_or(None);
-                    let is_upd = existing.is_some();
+                let is_upd = existing.is_some();
 
-                    let r = if let Some((eid,)) = existing {
-                        sqlx::query("UPDATE marketplace.skills SET description=$1, version=$2, author=$3, tags=$4, instructions=$5, updated_at=$6 WHERE id=$7")
+                let r = if let Some((eid,)) = existing {
+                    sqlx::query("UPDATE marketplace.skills SET description=$1, version=$2, author=$3, tags=$4, instructions=$5, updated_at=$6 WHERE id=$7")
                             .bind(description).bind(version).bind(author)
                             .bind(serde_json::json!(tags)).bind(&content).bind(now_t).bind(&eid)
                             .execute(pool).await
-                    } else {
-                        sqlx::query("INSERT INTO marketplace.skills (id,name,description,version,author,category,tags,instructions,tools,source,installed,download_count,published_at,updated_at) VALUES ($1,$2,$3,$4,$5,'theme',$6,$7,'[]','community',false,0,$8,$8)")
+                } else {
+                    sqlx::query("INSERT INTO marketplace.skills (id,name,description,version,author,category,tags,instructions,tools,source,installed,download_count,published_at,updated_at) VALUES ($1,$2,$3,$4,$5,'theme',$6,$7,'[]','community',false,0,$8,$8)")
                             .bind(uuid::Uuid::now_v7().to_string()).bind(name).bind(description)
                             .bind(version).bind(author).bind(serde_json::json!(tags)).bind(&content).bind(now_t)
                             .execute(pool).await
-                    };
-                    match r {
-                        Ok(_) => {
-                            if is_upd {
-                                themes_updated += 1;
-                            } else {
-                                themes_added += 1;
-                            }
+                };
+                match r {
+                    Ok(_) => {
+                        if is_upd {
+                            themes_updated += 1;
+                        } else {
+                            themes_added += 1;
                         }
-                        Err(e) => errors.push(format!("theme {name}: {e}")),
                     }
+                    Err(e) => errors.push(format!("theme {name}: {e}")),
                 }
             }
         }

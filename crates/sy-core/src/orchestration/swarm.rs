@@ -20,7 +20,7 @@ pub enum SwarmStrategy {
 }
 
 impl SwarmStrategy {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_or_default(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "sequential" => Self::Sequential,
             "dynamic" => Self::Dynamic,
@@ -76,7 +76,7 @@ impl<D: AgentDelegate> SwarmExecutor<D> {
         token_budget: u32,
     ) -> Result<SwarmResult, DelegationError> {
         let roles = parse_roles(&template.roles);
-        let strategy = SwarmStrategy::from_str(&template.strategy);
+        let strategy = SwarmStrategy::parse_or_default(&template.strategy);
 
         debug!(run_id, strategy = ?strategy, roles = roles.len(), "starting swarm execution");
 
@@ -361,11 +361,20 @@ mod tests {
     #[test]
     fn strategy_from_str() {
         assert_eq!(
-            SwarmStrategy::from_str("sequential"),
+            SwarmStrategy::parse_or_default("sequential"),
             SwarmStrategy::Sequential
         );
-        assert_eq!(SwarmStrategy::from_str("parallel"), SwarmStrategy::Parallel);
-        assert_eq!(SwarmStrategy::from_str("dynamic"), SwarmStrategy::Dynamic);
-        assert_eq!(SwarmStrategy::from_str("unknown"), SwarmStrategy::Parallel);
+        assert_eq!(
+            SwarmStrategy::parse_or_default("parallel"),
+            SwarmStrategy::Parallel
+        );
+        assert_eq!(
+            SwarmStrategy::parse_or_default("dynamic"),
+            SwarmStrategy::Dynamic
+        );
+        assert_eq!(
+            SwarmStrategy::parse_or_default("unknown"),
+            SwarmStrategy::Parallel
+        );
     }
 }

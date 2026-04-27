@@ -15,11 +15,9 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let tls_enabled = std::env::var("TLS_TERMINATED_BY_PROXY")
         .map(|v| v == "true")
         .unwrap_or(false);
-    let external_url = std::env::var("SECUREYEOMAN_EXTERNAL_URL").unwrap_or_default();
-    let network_mode = if !external_url.is_empty() && tls_enabled {
+    // TLS on LAN = treat as secured (same "public" label as a true public deployment).
+    let network_mode = if tls_enabled {
         "public"
-    } else if tls_enabled {
-        "public" // TLS on LAN = treat as secured
     } else if state.config().host == "0.0.0.0" {
         "lan"
     } else {

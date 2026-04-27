@@ -532,8 +532,8 @@ async fn upsert_server(
         let _ = sqlx::query(
             "INSERT INTO mcp.servers (id, name, description, transport, command, args, url, env, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)"
         )
-        .bind(&id).bind(&body.name).bind(&body.description.unwrap_or_default())
-        .bind(&body.transport.unwrap_or_else(|| "stdio".into()))
+        .bind(&id).bind(&body.name).bind(body.description.unwrap_or_default())
+        .bind(body.transport.unwrap_or_else(|| "stdio".into()))
         .bind(&body.command).bind(serde_json::json!(body.args.unwrap_or_default()))
         .bind(&body.url).bind(body.env.unwrap_or(serde_json::json!({})))
         .bind(body.enabled.unwrap_or(true)).bind(now)

@@ -62,7 +62,7 @@ impl EmbeddingProvider for NoopEmbeddingProvider {
 
 /// Configuration for an OpenAI-compatible embedding provider.
 pub struct OpenAiEmbeddingConfig {
-    /// Base URL (e.g., "https://api.openai.com/v1" or "http://127.0.0.1:8088").
+    /// Base URL (e.g., `https://api.openai.com/v1` or `http://127.0.0.1:8088`).
     pub base_url: String,
     /// Model name (e.g., "text-embedding-3-small").
     pub model: String,

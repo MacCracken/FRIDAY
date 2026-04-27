@@ -25,7 +25,7 @@ const MB: usize = 1024 * 1024;
 const AUTH_LIMIT: usize = 16 * KB;
 const CHAT_LIMIT: usize = 512 * KB;
 const UPLOAD_LIMIT: usize = 10 * MB;
-const DEFAULT_LIMIT: usize = 1 * MB;
+const DEFAULT_LIMIT: usize = MB;
 
 #[derive(Clone)]
 pub struct BodyLimitLayer;
@@ -74,21 +74,21 @@ where
 
         let limit = resolve_limit(&path, content_type.as_deref());
 
-        if let Some(len) = content_length {
-            if len > limit {
-                return Box::pin(async move {
-                    Ok((
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        axum::Json(json!({
-                            "error": "Payload too large",
-                            "statusCode": 413,
-                            "maxBytes": limit,
-                            "receivedBytes": len,
-                        })),
-                    )
-                        .into_response())
-                });
-            }
+        if let Some(len) = content_length
+            && len > limit
+        {
+            return Box::pin(async move {
+                Ok((
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    axum::Json(json!({
+                        "error": "Payload too large",
+                        "statusCode": 413,
+                        "maxBytes": limit,
+                        "receivedBytes": len,
+                    })),
+                )
+                    .into_response())
+            });
         }
 
         let mut inner = self.inner.clone();
@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn default_routes_get_1mb_limit() {
-        assert_eq!(resolve_limit("/api/v1/brain/memories", None), 1 * MB);
-        assert_eq!(resolve_limit("/api/v1/workflows", None), 1 * MB);
+        assert_eq!(resolve_limit("/api/v1/brain/memories", None), MB);
+        assert_eq!(resolve_limit("/api/v1/workflows", None), MB);
     }
 
     #[test]

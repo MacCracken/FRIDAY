@@ -239,7 +239,7 @@ async fn chat_stream(
     // Load personality system prompt if personality_id is provided
     let pid = body.personality_id.clone();
     let system_prompt = if let (Some(pool), Some(pid)) = (state.db(), pid.as_deref()) {
-        match crate::db::soul::get_personality(pool, &pid, "default").await {
+        match crate::db::soul::get_personality(pool, pid, "default").await {
             Ok(Some(p)) => {
                 // Build a system prompt from personality data
                 let mut prompt = p.system_prompt.clone();
@@ -247,15 +247,15 @@ async fn chat_stream(
                     prompt = format!("You are {}. {}\n\n{}", p.name, p.description, prompt);
                 }
                 // Inject trait disposition if traits are set
-                if let Some(traits_obj) = p.traits.as_object() {
-                    if !traits_obj.is_empty() {
-                        let trait_lines: Vec<String> = traits_obj
-                            .iter()
-                            .map(|(k, v)| format!("- {}: {}", k, v.as_str().unwrap_or("balanced")))
-                            .collect();
-                        prompt.push_str("\n\n## Personality Traits\n");
-                        prompt.push_str(&trait_lines.join("\n"));
-                    }
+                if let Some(traits_obj) = p.traits.as_object()
+                    && !traits_obj.is_empty()
+                {
+                    let trait_lines: Vec<String> = traits_obj
+                        .iter()
+                        .map(|(k, v)| format!("- {}: {}", k, v.as_str().unwrap_or("balanced")))
+                        .collect();
+                    prompt.push_str("\n\n## Personality Traits\n");
+                    prompt.push_str(&trait_lines.join("\n"));
                 }
                 Some(prompt)
             }
@@ -384,7 +384,7 @@ async fn chat_stream(
             .await
     } else {
         client
-            .post(&format!("{base_url}/v1/chat/completions"))
+            .post(format!("{base_url}/v1/chat/completions"))
             .json(&serde_json::json!({
                 "model": model,
                 "messages": messages,

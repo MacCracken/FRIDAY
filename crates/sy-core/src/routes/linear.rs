@@ -1,7 +1,7 @@
 //! Linear proxy routes — GraphQL API.
 //!
 //! Credentials: API key from integration config `apiKey` field.
-//! All queries forwarded as GraphQL to https://api.linear.app/graphql.
+//! All queries forwarded as GraphQL to <https://api.linear.app/graphql>.
 
 use axum::extract::State;
 use axum::http::StatusCode;
