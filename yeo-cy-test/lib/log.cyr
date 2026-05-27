@@ -1,0 +1,145 @@
+# log.cyr — structured logging wrapper over sakshi
+# Usage: include "lib/log.cyr"
+# Requires: sakshi.cyr, string.cyr, fmt.cyr
+#
+# Provides simple log_debug/info/warn/error/fatal API with
+# level filtering. Delegates to sakshi for output routing
+# (stderr, file, ring buffer, UDP).
+#
+#   log_init(LOG_INFO);
+#   log_info("server started");
+#   log_warn("connection timeout");
+#   log_error("disk full");
+
+# Log levels — severity-ascending (TRACE=0 .. FATAL=5)
+enum LogLevel {
+    LOG_TRACE = 0;
+    LOG_DEBUG = 1;
+    LOG_INFO  = 2;
+    LOG_WARN  = 3;
+    LOG_ERROR = 4;
+    LOG_FATAL = 5;
+}
+
+var _log_level = 2;
+
+# Map log.cyr levels (ascending) to sakshi levels (descending)
+# LOG_TRACE(0) → SK_TRACE(4), LOG_DEBUG(1) → SK_DEBUG(3),
+# LOG_INFO(2) → SK_INFO(2), LOG_WARN(3) → SK_WARN(1),
+# LOG_ERROR(4) → SK_ERROR(0), LOG_FATAL(5) → SK_ERROR(0)
+fn _log_to_sk(level): i64 {
+    if (level == 0) { return 4; }
+    if (level == 1) { return 3; }
+    if (level == 2) { return 2; }
+    if (level == 3) { return 1; }
+    return 0;
+}
+
+# Initialize logging with minimum level. Opt-in entry for the
+# structured-log subsystem; pre-init reads default to stderr at
+# all levels (free, no setup needed). No current downstream
+# caller (audited v5.11.21); revisit at v6.0.0 dead-code sweep
+# if structured-log surface stays unclaimed. See
+# docs/audit/2026-05-11-zero-call-stdlib.md.
+fn log_init(level): i64 {
+    _log_level = level;
+    sakshi_set_level(_log_to_sk(level));
+    return 0;
+}
+
+# Get current log level
+fn log_level(): i64 { return _log_level; }
+
+# Set log level at runtime
+fn log_set_level(level): i64 {
+    _log_level = level;
+    sakshi_set_level(_log_to_sk(level));
+    return 0;
+}
+
+# Check if a level would be logged
+fn log_enabled(level): i64 {
+    if (level >= _log_level) { return 1; }
+    return 0;
+}
+
+# Core log function — delegates to sakshi for output routing
+fn _log_emit(level, msg): i64 {
+    if (level < _log_level) { return 0; }
+    var len = strlen(msg);
+    if (level >= LOG_ERROR) { sakshi_error(msg, len); }
+    elif (level == LOG_WARN) { sakshi_warn(msg, len); }
+    elif (level == LOG_INFO) { sakshi_info(msg, len); }
+    elif (level == LOG_DEBUG) { sakshi_debug(msg, len); }
+    else { sakshi_trace(msg, len); }
+    return 0;
+}
+
+# Log at TRACE level
+fn log_trace(msg): i64 { return _log_emit(LOG_TRACE, msg); }
+
+# Log at DEBUG level
+fn log_debug(msg): i64 { return _log_emit(LOG_DEBUG, msg); }
+
+# Log at INFO level
+fn log_info(msg): i64 { return _log_emit(LOG_INFO, msg); }
+
+# Log at WARN level
+fn log_warn(msg): i64 { return _log_emit(LOG_WARN, msg); }
+
+# Log at ERROR level
+fn log_error(msg): i64 { return _log_emit(LOG_ERROR, msg); }
+
+# Log at FATAL level (does NOT exit — caller decides)
+fn log_fatal(msg): i64 { return _log_emit(LOG_FATAL, msg); }
+
+# Log with key=value context
+fn log_info_kv(msg, key, val): i64 {
+    if (LOG_INFO < _log_level) { return 0; }
+    # Build "msg key=val" in scratch buffer
+    var buf[512];
+    var off = 0;
+    var ml = strlen(msg);
+    var kl = strlen(key);
+    var vl = strlen(val);
+    var i = 0;
+    while (i < ml) { store8(&buf + off, load8(msg + i)); off = off + 1; i = i + 1; }
+    store8(&buf + off, 32); off = off + 1;
+    i = 0;
+    while (i < kl) { store8(&buf + off, load8(key + i)); off = off + 1; i = i + 1; }
+    store8(&buf + off, 61); off = off + 1;
+    i = 0;
+    while (i < vl) { store8(&buf + off, load8(val + i)); off = off + 1; i = i + 1; }
+    store8(&buf + off, 0);
+    sakshi_info(&buf, off);
+    return 0;
+}
+
+# Log with integer value
+fn log_info_int(msg, key, val): i64 {
+    if (LOG_INFO < _log_level) { return 0; }
+    var buf[512];
+    var off = 0;
+    var ml = strlen(msg);
+    var kl = strlen(key);
+    var i = 0;
+    while (i < ml) { store8(&buf + off, load8(msg + i)); off = off + 1; i = i + 1; }
+    store8(&buf + off, 32); off = off + 1;
+    i = 0;
+    while (i < kl) { store8(&buf + off, load8(key + i)); off = off + 1; i = i + 1; }
+    store8(&buf + off, 61); off = off + 1;
+    # Format integer into buffer
+    if (val == 0) { store8(&buf + off, 48); off = off + 1; }
+    else {
+        var tmp[20];
+        var ti = 19;
+        var v = val;
+        if (v < 0) { store8(&buf + off, 45); off = off + 1; v = 0 - v; }
+        while (v > 0) { store8(&tmp + ti, 48 + v % 10); v = v / 10; ti = ti - 1; }
+        ti = ti + 1;
+        while (ti < 20) { store8(&buf + off, load8(&tmp + ti)); off = off + 1; ti = ti + 1; }
+    }
+    store8(&buf + off, 0);
+    sakshi_info(&buf, off);
+    return 0;
+}

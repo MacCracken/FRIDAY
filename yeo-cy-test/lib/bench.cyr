@@ -1,0 +1,284 @@
+# bench.cyr — benchmarking framework for Cyrius
+# Usage: include "lib/bench.cyr"
+# Requires: string.cyr, fmt.cyr, alloc.cyr, agnosys/syscalls.cyr
+#
+# Overhead costs (x86_64 Linux):
+#   clock_gettime:     ~120ns per call
+#   fncall0 dispatch:  ~6ns per call (indirect call via function pointer)
+#   direct call:       ~3ns per call
+#   inline operation:  ~2ns per iteration
+#
+# For sub-1us operations, use bench_batch_start/stop with batch_size >= 1000.
+# The per-iteration bench_start/stop adds ~240ns of clock overhead per op.
+# Function pointer dispatch (bench_run_batch) adds ~6ns per op.
+#
+# BEST for hot inner loops:
+#   var b = bench_new("my_op");
+#   bench_batch_start(b);
+#   var i = 0;
+#   while (i < 10000) { my_op(); i = i + 1; }
+#   bench_batch_stop(b, 10000);
+#   bench_report(b);
+
+# clock_gettime syscall
+var SYS_CLOCK_GETTIME = 228;
+var CLOCK_MONOTONIC_RAW = 4;
+
+# Get monotonic nanoseconds
+fn now_ns(): i64 {
+    var ts[2];
+    syscall(SYS_CLOCK_GETTIME, CLOCK_MONOTONIC_RAW, &ts);
+    return load64(&ts) * 1000000000 + load64(&ts + 8);
+}
+
+# Benchmark state: { name_ptr, start_ns, elapsed_ns, iterations, min_ns, max_ns }
+var BENCH_SIZE = 48;
+
+# Create a new benchmark with the given name
+fn bench_new(name): i64 {
+    var b = alloc(BENCH_SIZE);
+    store64(b, name);
+    store64(b + 8, 0);
+    store64(b + 16, 0);
+    store64(b + 24, 0);
+    store64(b + 32, 0x7FFFFFFFFFFFFFFF);
+    store64(b + 40, 0);
+    return b;
+}
+
+# Return the name string of a benchmark
+fn bench_name(b): i64 { return load64(b); }
+
+# Record the start timestamp for a benchmark iteration
+fn bench_start(b): i64 {
+    store64(b + 8, now_ns());
+    return 0;
+}
+
+# Stop timing, update elapsed/min/max/iterations
+fn bench_stop(b): i64 {
+    var end = now_ns();
+    var elapsed = end - load64(b + 8);
+    store64(b + 16, load64(b + 16) + elapsed);
+    var iters = load64(b + 24) + 1;
+    store64(b + 24, iters);
+    if (elapsed < load64(b + 32)) { store64(b + 32, elapsed); }
+    if (elapsed > load64(b + 40)) { store64(b + 40, elapsed); }
+    return elapsed;
+}
+
+# Return the number of completed iterations
+fn bench_iterations(b): i64 { return load64(b + 24); }
+# Return total elapsed nanoseconds across all iterations
+fn bench_total_ns(b): i64 { return load64(b + 16); }
+# Return the minimum single-iteration time in nanoseconds
+fn bench_min_ns(b): i64 { return load64(b + 32); }
+# Return the maximum single-iteration time in nanoseconds
+fn bench_max_ns(b): i64 { return load64(b + 40); }
+
+# Return the average time per iteration in nanoseconds
+fn bench_avg_ns(b): i64 {
+    var iters = load64(b + 24);
+    if (iters == 0) { return 0; }
+    return load64(b + 16) / iters;
+}
+
+# Run a function N times and measure
+fn bench_run(b, fp, n): i64 {
+    var bi = 0;
+    while (bi < n) {
+        bench_start(b);
+        fncall0(fp);
+        bench_stop(b);
+        bi = bi + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Batch timing — for sub-100ns operations
+# ================================================================
+# Wraps one clock_gettime pair around N iterations, avoiding
+# the ~40ns syscall overhead per measurement. Runs `rounds` batches
+# of `batch_size` each, tracking per-op min/max across batches.
+#
+#   var b = bench_new("my_fast_op");
+#   bench_run_batch(b, &my_fast_op, 10000, 100);
+#   bench_report(b);
+#
+# For ops that need an argument:
+#   bench_run_batch1(b, &my_op, arg, 10000, 100);
+
+# Batch-time a zero-arg function pointer. Calls fp batch_size times per round,
+# measures total elapsed with one clock pair per round. Runs `rounds` rounds.
+# Use for sub-100ns ops where per-iteration clock overhead dominates.
+fn bench_run_batch(b, fp, batch_size, rounds): i64 {
+    var ri = 0;
+    while (ri < rounds) {
+        var start = now_ns();
+        var bi = 0;
+        while (bi < batch_size) {
+            fncall0(fp);
+            bi = bi + 1;
+        }
+        var elapsed = now_ns() - start;
+        var per_op = elapsed / batch_size;
+        store64(b + 16, load64(b + 16) + elapsed);
+        store64(b + 24, load64(b + 24) + batch_size);
+        if (per_op < load64(b + 32)) { store64(b + 32, per_op); }
+        if (per_op > load64(b + 40)) { store64(b + 40, per_op); }
+        ri = ri + 1;
+    }
+    return 0;
+}
+
+# Batch-time a one-arg function pointer. Like bench_run_batch but passes arg to each call.
+fn bench_run_batch1(b, fp, arg, batch_size, rounds): i64 {
+    var ri = 0;
+    while (ri < rounds) {
+        var start = now_ns();
+        var bi = 0;
+        while (bi < batch_size) {
+            fncall1(fp, arg);
+            bi = bi + 1;
+        }
+        var elapsed = now_ns() - start;
+        var per_op = elapsed / batch_size;
+        store64(b + 16, load64(b + 16) + elapsed);
+        store64(b + 24, load64(b + 24) + batch_size);
+        if (per_op < load64(b + 32)) { store64(b + 32, per_op); }
+        if (per_op > load64(b + 40)) { store64(b + 40, per_op); }
+        ri = ri + 1;
+    }
+    return 0;
+}
+
+# Batch-time a two-arg function pointer. Like bench_run_batch but passes arg1, arg2 to each call.
+fn bench_run_batch2(b, fp, arg1, arg2, batch_size, rounds): i64 {
+    var ri = 0;
+    while (ri < rounds) {
+        var start = now_ns();
+        var bi = 0;
+        while (bi < batch_size) {
+            fncall2(fp, arg1, arg2);
+            bi = bi + 1;
+        }
+        var elapsed = now_ns() - start;
+        var per_op = elapsed / batch_size;
+        store64(b + 16, load64(b + 16) + elapsed);
+        store64(b + 24, load64(b + 24) + batch_size);
+        if (per_op < load64(b + 32)) { store64(b + 32, per_op); }
+        if (per_op > load64(b + 40)) { store64(b + 40, per_op); }
+        ri = ri + 1;
+    }
+    return 0;
+}
+
+# Convenience: batch-time an inline loop body (no function pointer needed)
+# Usage:
+#   var b = bench_new("inline_op");
+#   var rounds = 100;
+#   var batch = 10000;
+#   var ri = 0;
+#   while (ri < rounds) {
+#       bench_batch_start(b);
+#       var bi = 0;
+#       while (bi < batch) { /* op */ bi = bi + 1; }
+#       bench_batch_stop(b, batch);
+#       ri = ri + 1;
+#   }
+#   bench_report(b);
+
+# Record start timestamp for an inline batch measurement
+fn bench_batch_start(b): i64 {
+    store64(b + 8, now_ns());
+    return 0;
+}
+
+# Stop batch timing, update stats with per-op time. Returns per-op nanoseconds.
+fn bench_batch_stop(b, batch_size): i64 {
+    var end = now_ns();
+    var elapsed = end - load64(b + 8);
+    var per_op = elapsed / batch_size;
+    store64(b + 16, load64(b + 16) + elapsed);
+    store64(b + 24, load64(b + 24) + batch_size);
+    if (per_op < load64(b + 32)) { store64(b + 32, per_op); }
+    if (per_op > load64(b + 40)) { store64(b + 40, per_op); }
+    return per_op;
+}
+
+# Format nanoseconds as human-readable
+fn _fmt_time(ns, buf): i64 {
+    var major = 0;
+    var minor = 0;
+    var tlen = 0;
+    if (ns >= 1000000000) {
+        major = ns / 1000000000;
+        minor = (ns % 1000000000) / 1000000;
+        tlen = fmt_int_buf(major, buf);
+        store8(buf + tlen, 46);
+        tlen = tlen + 1 + fmt_int_buf(minor, buf + tlen + 1);
+        store8(buf + tlen, 115);
+        store8(buf + tlen + 1, 0);
+        return tlen + 1;
+    }
+    if (ns >= 1000000) {
+        major = ns / 1000000;
+        minor = (ns % 1000000) / 1000;
+        tlen = fmt_int_buf(major, buf);
+        store8(buf + tlen, 46);
+        tlen = tlen + 1 + fmt_int_buf(minor, buf + tlen + 1);
+        memcpy(buf + tlen, "ms", 2);
+        store8(buf + tlen + 2, 0);
+        return tlen + 2;
+    }
+    if (ns >= 1000) {
+        major = ns / 1000;
+        tlen = fmt_int_buf(major, buf);
+        memcpy(buf + tlen, "us", 2);
+        store8(buf + tlen + 2, 0);
+        return tlen + 2;
+    }
+    tlen = fmt_int_buf(ns, buf);
+    memcpy(buf + tlen, "ns", 2);
+    store8(buf + tlen + 2, 0);
+    return tlen + 2;
+}
+
+# Print benchmark report
+fn bench_report(b): i64 {
+    var name = load64(b);
+    var tbuf[24];
+    syscall(1, 1, "  ", 2);
+    syscall(1, 1, name, strlen(name));
+    syscall(1, 1, ": ", 2);
+    # Avg
+    _fmt_time(bench_avg_ns(b), &tbuf);
+    syscall(1, 1, &tbuf, strlen(&tbuf));
+    syscall(1, 1, " avg", 4);
+    # Min/max
+    syscall(1, 1, " (min=", 6);
+    _fmt_time(bench_min_ns(b), &tbuf);
+    syscall(1, 1, &tbuf, strlen(&tbuf));
+    syscall(1, 1, " max=", 5);
+    _fmt_time(bench_max_ns(b), &tbuf);
+    syscall(1, 1, &tbuf, strlen(&tbuf));
+    syscall(1, 1, ")", 1);
+    # Iterations
+    syscall(1, 1, " [", 2);
+    fmt_int(bench_iterations(b));
+    syscall(1, 1, " iters]\n", 8);
+    return 0;
+}
+
+# Print all benchmarks in a vec
+fn bench_report_all(benches): i64 {
+    println("=== Benchmarks ===");
+    var len = vec_len(benches);
+    var bi = 0;
+    while (bi < len) {
+        bench_report(vec_get(benches, bi));
+        bi = bi + 1;
+    }
+    return 0;
+}

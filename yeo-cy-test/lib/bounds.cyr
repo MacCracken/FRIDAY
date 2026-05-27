@@ -1,0 +1,68 @@
+# bounds.cyr — opt-in runtime bounds checking
+# Usage: include "lib/bounds.cyr"
+# Requires: string.cyr (for println), fmt.cyr (for fmt_int_buf)
+#
+# Provides checked memory access that aborts on out-of-bounds.
+# Use when safety matters more than speed.
+
+# Print "bounds: {msg} index {idx} >= len {len}\n" to stderr and abort.
+fn _bounds_fail(msg, mlen, idx, len): i64 {
+    syscall(1, 2, "bounds: ", 8);
+    syscall(1, 2, msg, mlen);
+    var _ib[24]; var _il = fmt_int_buf(idx, &_ib);
+    syscall(1, 2, &_ib, _il);
+    syscall(1, 2, " >= len ", 8);
+    var _lb[24]; var _ll = fmt_int_buf(len, &_lb);
+    syscall(1, 2, &_lb, _ll);
+    syscall(1, 2, "\n", 1);
+    syscall(60, 1);
+    return 0;
+}
+
+# Abort with "bounds: {msg}\n"
+fn _bounds_neg(msg, mlen): i64 {
+    syscall(1, 2, "bounds: ", 8);
+    syscall(1, 2, msg, mlen);
+    syscall(1, 2, "\n", 1);
+    syscall(60, 1);
+    return 0;
+}
+
+# Checked 64-bit load: aborts if index out of range
+# buf = base pointer, len = number of 8-byte slots, idx = slot index
+fn checked_load64(buf, len, idx): i64 {
+    if (idx < 0) { _bounds_neg("index < 0", 9); }
+    if (idx >= len) { _bounds_fail("index ", 6, idx, len); }
+    return load64(buf + idx * 8);
+}
+
+# Checked 64-bit store
+fn checked_store64(buf, len, idx, val): i64 {
+    if (idx < 0) { _bounds_neg("index < 0", 9); }
+    if (idx >= len) { _bounds_fail("index ", 6, idx, len); }
+    store64(buf + idx * 8, val);
+    return 0;
+}
+
+# Checked byte load
+fn checked_load8(buf, len, idx): i64 {
+    if (idx < 0) { _bounds_neg("byte index < 0", 14); }
+    if (idx >= len) { _bounds_fail("byte index ", 11, idx, len); }
+    return load8(buf + idx);
+}
+
+# Checked byte store
+fn checked_store8(buf, len, idx, val): i64 {
+    if (idx < 0) { _bounds_neg("byte index < 0", 14); }
+    if (idx >= len) { _bounds_fail("byte index ", 11, idx, len); }
+    store8(buf + idx, val);
+    return 0;
+}
+
+# Checked memcpy — validates both src and dst bounds
+fn checked_memcpy(dst, dst_len, src, src_len, count): i64 {
+    if (count > dst_len) { _bounds_neg("memcpy dst overflow", 19); }
+    if (count > src_len) { _bounds_neg("memcpy src overflow", 19); }
+    memcpy(dst, src, count);
+    return 0;
+}

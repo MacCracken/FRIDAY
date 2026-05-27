@@ -1,0 +1,162 @@
+# pam.cyr — non-root password verification via unix_chkpwd(8).
+#
+# Linux-PAM ships a small setuid-root helper at /usr/sbin/unix_chkpwd
+# (same binary appears at /usr/bin/unix_chkpwd on some distros) whose
+# whole purpose is letting non-root callers verify a user's password
+# against /etc/shadow. It's what pam_unix.so itself invokes from an
+# unprivileged process.
+#
+# Calling convention (documented in Linux-PAM's pam_unix source):
+#   argv: [ "unix_chkpwd", username, mode ]
+#     where mode is "nullok" (accept empty passwords — typical for
+#     interactive auth) or "nonull" (reject empty).
+#   stdin: the password bytes, no trailing NUL or newline; close
+#          the write end when done to send EOF.
+#   stdout/stderr: ignored.
+#   exit status: 0 = password correct, non-zero = fail.
+#
+# This is the Path-B escape hatch documented in
+# docs/development/issues/dynlib-nss-bootstrap.md: consumers that
+# can't shell out to `/usr/bin/su` and can't read /etc/shadow
+# directly (because they're not root) use this helper. Works
+# against any NSS backend the system is configured for (files,
+# LDAP, SSSD, …) — unix_chkpwd itself does a normal glibc lookup
+# on the setuid-root side.
+#
+# Why not reimplement SHA-512-crypt in cyrius? (a) Drepper's
+# algorithm is ~120 lines of carefully-interleaved hashing with
+# magic constants; easy to get wrong and hard to test.
+# (b) unix_chkpwd handles every crypt(3) hash type the system
+# supports, not just $6$.  (c) Fork+exec is ~1 ms, acceptable for
+# any auth path. Inline SHA-512-crypt can be a future patch if a
+# consumer ever needs zero-fork auth.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+
+var PAM_AUTH_OK = 0;
+var PAM_AUTH_FAIL = 1;
+var PAM_AUTH_HELPER_MISSING = 0 - 2;
+var PAM_AUTH_PIPE_FAILED    = 0 - 3;
+var PAM_AUTH_FORK_FAILED    = 0 - 4;
+var PAM_AUTH_EXEC_FAILED    = 0 - 5;
+
+# Locate the unix_chkpwd helper. Returns the absolute path or 0.
+fn _pam_find_chkpwd(): i64 {
+    # /usr/sbin is the documented Linux-PAM location; Arch and some
+    # others unify to /usr/bin via the usr-merge. Probe both.
+    var p1 = "/usr/sbin/unix_chkpwd";
+    var fd = sys_open(p1, 0, 0);
+    if (fd >= 0) { sys_close(fd); return p1; }
+    var p2 = "/usr/bin/unix_chkpwd";
+    fd = sys_open(p2, 0, 0);
+    if (fd >= 0) { sys_close(fd); return p2; }
+    return 0;
+}
+
+# Verify `password` (cstring, no terminator in the pipe) for
+# `user`. Forks a child, pipes the password to unix_chkpwd's
+# stdin, waits for exit.
+#
+# Returns:
+#    PAM_AUTH_OK (0)            — password verified
+#    PAM_AUTH_FAIL (1)          — rejected (wrong password, locked,
+#                                  disabled, …)
+#    PAM_AUTH_HELPER_MISSING    — unix_chkpwd not on system
+#    PAM_AUTH_PIPE_FAILED       — syscall(pipe) errored
+#    PAM_AUTH_FORK_FAILED       — syscall(fork) errored
+#    PAM_AUTH_EXEC_FAILED       — child's execve returned (helper
+#                                  present but couldn't run)
+fn pam_unix_authenticate(user, password): i64 {
+    var helper = _pam_find_chkpwd();
+    if (helper == 0) { return PAM_AUTH_HELPER_MISSING; }
+
+    var fds[2];
+    var pr = sys_pipe(&fds);
+    if (pr < 0) { return PAM_AUTH_PIPE_FAILED; }
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(rfd);
+        sys_close(wfd);
+        return PAM_AUTH_FORK_FAILED;
+    }
+
+    if (pid == 0) {
+        # Child: wire rfd → stdin, close the rest, exec helper.
+        sys_close(wfd);
+        sys_dup2(rfd, 0);
+        sys_close(rfd);
+
+        var argv[4];
+        store64(&argv,      helper);
+        store64(&argv + 8,  user);
+        store64(&argv + 16, "nullok");
+        store64(&argv + 24, 0);
+
+        var envp[1];
+        store64(&envp, 0);
+
+        sys_execve(helper, &argv, &envp);
+        sys_exit(127);                   # only reached if execve failed
+    }
+
+    # Parent: send password bytes, close write end → EOF for child.
+    sys_close(rfd);
+    var plen = strlen(password);
+    if (plen > 0) {
+        sys_write(wfd, password, plen);
+    }
+    sys_close(wfd);
+
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 0) { return PAM_AUTH_OK; }
+        if (WEXITSTATUS(status) == 127) { return PAM_AUTH_EXEC_FAILED; }
+        return PAM_AUTH_FAIL;
+    }
+    # Signalled or stopped: treat as fail.
+    return PAM_AUTH_FAIL;
+}
+
+# Returns 1 if the unix_chkpwd helper is present on the system,
+# 0 otherwise. Consumers should gate on this before advertising
+# that they support password auth.
+fn pam_unix_available(): i64 {
+    if (_pam_find_chkpwd() == 0) { return 0; }
+    return 1;
+}
+
+# v5.8.31 — PamError variants. Maps the int-return contract of
+# pam_unix_authenticate. Variant-name prefix `Pam` keeps these
+# distinct from the other v5.8.30/.31 module errors.
+include "lib/result.cyr"
+
+enum PamError {
+    PamAuthFail;
+    PamHelperMissing;
+    PamPipeFailed;
+    PamForkFailed;
+    PamExecFailed;
+    PamOther;
+}
+
+# v5.8.31 — Result variant of pam_unix_authenticate.
+# `Ok(0)` = password verified; everything else folds to a typed
+# variant. The `pam_unix_available` boolean stays bool — no
+# Result variant needed.
+fn pam_unix_authenticate_r(user, password) : Result {
+    var rc = pam_unix_authenticate(user, password);
+    if (rc == PAM_AUTH_OK)             { return Ok(0); }
+    if (rc == PAM_AUTH_FAIL)           { return Err(PamAuthFail); }
+    if (rc == PAM_AUTH_HELPER_MISSING) { return Err(PamHelperMissing); }
+    if (rc == PAM_AUTH_PIPE_FAILED)    { return Err(PamPipeFailed); }
+    if (rc == PAM_AUTH_FORK_FAILED)    { return Err(PamForkFailed); }
+    if (rc == PAM_AUTH_EXEC_FAILED)    { return Err(PamExecFailed); }
+    return Err(PamOther);
+}

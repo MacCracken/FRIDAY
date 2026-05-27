@@ -1,0 +1,134 @@
+# freelist.cyr — allocator with individual free
+# Usage: include "lib/freelist.cyr"
+# Requires: syscalls.cyr (for SYS_MMAP, SYS_MUNMAP)
+#
+# Segregated free-list allocator. Allocations are rounded up to
+# size classes (16, 32, 64, 128, 256, 512, 1024, 2048, 4096).
+# Each class has a singly-linked free list. Large allocations
+# (>4096) go directly to mmap/munmap.
+#
+# Layout per block: { next_free: i64, size_class: i64, data... }
+# Header = 16 bytes. Returned pointer skips the header.
+
+# Size classes: 16 32 64 128 256 512 1024 2048 4096
+var _fl_heads[72];
+var _fl_init = 0;
+
+# Arena for small allocations (64KB chunks via mmap)
+var _fl_arena = 0;
+var _fl_arena_pos = 0;
+var _fl_arena_end = 0;
+var FL_ARENA_SIZE = 65536;
+
+# Initialize the freelist allocator
+fn fl_init(): i64 {
+    if (_fl_init == 1) { return 0; }
+    var i = 0;
+    while (i < 9) {
+        store64(&_fl_heads + i * 8, 0);
+        i = i + 1;
+    }
+    _fl_init = 1;
+    return 0;
+}
+
+# Map size to class index (0-8) or -1 for large
+fn _fl_class(size): i64 {
+    if (size <= 16) { return 0; }
+    if (size <= 32) { return 1; }
+    if (size <= 64) { return 2; }
+    if (size <= 128) { return 3; }
+    if (size <= 256) { return 4; }
+    if (size <= 512) { return 5; }
+    if (size <= 1024) { return 6; }
+    if (size <= 2048) { return 7; }
+    if (size <= 4096) { return 8; }
+    return 0 - 1;
+}
+
+# Class index to actual block size (including 16-byte header)
+fn _fl_block_size(cls): i64 {
+    if (cls == 0) { return 32; }
+    if (cls == 1) { return 48; }
+    if (cls == 2) { return 80; }
+    if (cls == 3) { return 144; }
+    if (cls == 4) { return 272; }
+    if (cls == 5) { return 528; }
+    if (cls == 6) { return 1040; }
+    if (cls == 7) { return 2064; }
+    if (cls == 8) { return 4112; }
+    return 0;
+}
+
+# Allocate from arena (bump within mmap'd chunk)
+fn _fl_arena_alloc(bsize): i64 {
+    if (_fl_arena_pos + bsize > _fl_arena_end) {
+        # Need new arena chunk
+        var prot = PROT_READ | PROT_WRITE;
+        var flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        _fl_arena = syscall(SYS_MMAP, 0, FL_ARENA_SIZE, prot, flags, 0 - 1, 0);
+        _fl_arena_pos = _fl_arena;
+        _fl_arena_end = _fl_arena + FL_ARENA_SIZE;
+    }
+    var ptr = _fl_arena_pos;
+    _fl_arena_pos = _fl_arena_pos + bsize;
+    return ptr;
+}
+
+# Allocate size bytes. Returns pointer to usable memory.
+fn fl_alloc(size): i64 {
+    fl_init();
+    var cls = _fl_class(size);
+    if (cls < 0) {
+        # Large allocation: mmap directly
+        var total = size + 16;
+        var prot = PROT_READ | PROT_WRITE;
+        var flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        var blk = syscall(SYS_MMAP, 0, total, prot, flags, 0 - 1, 0);
+        store64(blk, 0);
+        store64(blk + 8, total);
+        return blk + 16;
+    }
+    # Check free list for this class
+    var head = load64(&_fl_heads + cls * 8);
+    if (head != 0) {
+        # Reuse freed block
+        store64(&_fl_heads + cls * 8, load64(head));
+        store64(head, 0);
+        return head + 16;
+    }
+    # No free block — allocate from arena
+    var bsize = _fl_block_size(cls);
+    var blk = _fl_arena_alloc(bsize);
+    store64(blk, 0);
+    store64(blk + 8, cls);
+    return blk + 16;
+}
+
+# Free a pointer returned by fl_alloc.
+fn fl_free(ptr): i64 {
+    if (ptr == 0) { return 0; }
+    var blk = ptr - 16;
+    var cls = load64(blk + 8);
+    if (cls > 8) {
+        # Large allocation: munmap
+        syscall(SYS_MUNMAP, blk, cls);
+        return 0;
+    }
+    # Push onto free list for this class
+    store64(blk, load64(&_fl_heads + cls * 8));
+    store64(&_fl_heads + cls * 8, blk);
+    return 0;
+}
+
+# Allocate and zero-fill
+fn fl_calloc(size): i64 {
+    var ptr = fl_alloc(size);
+    if (ptr == 0) { return 0; }
+    var i = 0;
+    while (i < size) {
+        store8(ptr + i, 0);
+        i = i + 1;
+    }
+    return ptr;
+}

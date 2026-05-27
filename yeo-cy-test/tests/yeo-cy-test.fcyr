@@ -1,0 +1,16 @@
+# yeo-cy-test fuzz harness
+
+fn fuzz_main(data, len) {
+    if (len == 0) { return 0; }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    fuzz_main("test", 4);
+    println("fuzz: ok");
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

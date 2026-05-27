@@ -1,0 +1,47 @@
+# yeo-cy-test — top-level test entry (referenced by cyrius.cyml [build].test).
+#
+# Verifies the storage-layer invariant the app relies on: note bodies are
+# base64-encoded before they hit patra's SQL (which has no string escaping),
+# so the encoded form must be (a) free of single quotes and (b) losslessly
+# decodable back to the original bytes — including apostrophes and unicode.
+
+# Returns 0 on pass, non-zero on failure.
+fn test_base64_quote_free_and_lossless(): i64 {
+    var s = "it's working — café ☕";
+    var slen = strlen(s);
+
+    var enc = base64_encode(s, slen);
+    # (a) no single quote (0x27) may appear in the encoded form.
+    var i = 0;
+    while (i < strlen(enc)) {
+        if (load8(enc + i) == 39) { return 1; }
+        i = i + 1;
+    }
+
+    # (b) round-trips losslessly.
+    var dec = base64_decode(enc, strlen(enc));
+    var dptr = load64(dec);
+    var dlen = load64(dec + 8);
+    if (dlen != slen) { return 2; }
+    if (memeq(dptr, s, dlen) == 0) { return 3; }
+
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+
+    var r = test_base64_quote_free_and_lossless();
+    if (r != 0) {
+        print("FAIL: base64 quote-free/lossless (code ", 38);
+        fmt_int(r);
+        println(")");
+        return 1;
+    }
+
+    println("ok: base64 body encoding is quote-free and lossless");
+    return 0;
+}
+
+var rc = main();
+syscall(SYS_EXIT, rc);

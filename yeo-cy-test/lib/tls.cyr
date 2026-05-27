@@ -1,0 +1,694 @@
+# tls.cyr — TLS client via libssl.so.3 (fdlopen bridge)
+# Usage: include "lib/tls.cyr"
+# Requires: alloc.cyr, syscalls.cyr, net.cyr, mmap.cyr, fnptr.cyr,
+#           string.cyr, dynlib.cyr, FDLOPEN.CYR (load-bearing as of v5.6.37)
+#
+# Formal contract: `docs/development/lib-tls-contract.md` (v5.10.42).
+# That doc is the invariant layer — verb return semantics, lifecycle
+# ordering, and ABI guarantees. Changes to the per-fn docstrings below
+# MUST preserve those guarantees unless the contract is amended in
+# the same patch.
+#
+# **IMPORTANT (v5.6.37+):** callers MUST `include "lib/fdlopen.cyr"`
+# before `include "lib/tls.cyr"` so this file's references to
+# `fdlopen_init_full` / `fdlopen_dlopen` / `fdlopen_dlsym` resolve.
+# tls.cyr doesn't auto-include fdlopen because the preprocessor
+# output cap (1 MB expanded) is tight for programs that pull
+# in many heavy stdlib modules (e.g. `tests/tcyr/large_input.tcyr`
+# already runs at 98% of cap) — an auto-include would put them
+# over.
+#
+# Loads libssl.so.3 + libcrypto.so.3 at runtime via `fdlopen`'s
+# ld.so-bootstrapped real glibc `dlopen` + `dlsym`. This is the
+# only sound load path for libssl because libssl's internal
+# pthread init (`OPENSSL_init_ssl` → `pthread_once` → recursive
+# mutex) requires a fully-initialised glibc TCB, which only ld.so
+# can produce. A plain `dynlib_open` path loaded libssl on top of
+# cyrius's minimal `dynlib_bootstrap_tls` stub; libssl's first
+# `SSL_CTX_new` then deadlocked on a futex at TCB+0x118
+# (mutex contended-bit; same thread re-enters on a non-recursive
+# mutex because the TCB's `__kind` field reads 0 in the stub).
+# v5.6.37 fixed this by routing libssl through fdlopen.
+# SNI and system-CA peer verification enabled by default.
+#
+# Interface:
+#   tls_available()            → 1 if libssl usable, 0 otherwise
+#   tls_connect(sock, host)    → ctx on success, 0 on failure
+#   tls_write(ctx, buf, len)   → bytes written or -1
+#   tls_read(ctx, buf, maxlen) → bytes read or -1
+#   tls_close(ctx)             → 0
+#
+# ctx layout (24 bytes):
+#   +0   SSL_CTX*
+#   +8   SSL*
+#   +16  socket fd
+
+# OpenSSL constants
+enum TlsConst {
+    SSL_VERIFY_PEER = 1;
+    SSL_CTRL_SET_TLSEXT_HOSTNAME = 55;
+    TLSEXT_NAMETYPE_host_name = 0;
+    # v5.10.21 — TLS 1.3 0-RTT early-data status return codes
+    # from SSL_read_early_data. Surfaced by tls_read_early_data
+    # as positive bytes-count (SUCCESS), -2 (FINISH — caller
+    # transitions to normal tls_read), or -1 (ERROR).
+    SSL_READ_EARLY_DATA_ERROR = 0;
+    SSL_READ_EARLY_DATA_SUCCESS = 1;
+    SSL_READ_EARLY_DATA_FINISH = 2;
+    # v5.10.21 — session cache modes for tls_ctx_set_session_cache_mode.
+    # Sandhi 1.3.1 cache uses CLIENT mode by default (server-side cache
+    # is sandhi's app-level concern, not stdlib's).
+    SSL_SESS_CACHE_OFF = 0;
+    SSL_SESS_CACHE_CLIENT = 1;
+    SSL_SESS_CACHE_SERVER = 2;
+    SSL_SESS_CACHE_BOTH = 3;
+    # v5.10.34 — TLS 1.3 0-RTT acceptance status surfaced by
+    # tls_get_early_data_status (wraps SSL_get_early_data_status).
+    # Mirrors libssl's SSL_EARLY_DATA_NOT_SENT/REJECTED/ACCEPTED.
+    # Sandhi 1.3.2 client-side 0-RTT uses these for post-handshake
+    # retry logic: REJECTED → resend over normal stream;
+    # ACCEPTED → response is on the way; NOT_SENT → no early data
+    # was attempted on this connection.
+    TLS_EARLY_DATA_NOT_SENT = 0;
+    TLS_EARLY_DATA_REJECTED = 1;
+    TLS_EARLY_DATA_ACCEPTED = 2;
+}
+
+var _tls_inited = 0;
+var _tls_ok = 0;
+
+# fdlopen state: 256-byte scratch region holding setjmp buf + real
+# glibc fn pointers. Zeroed at first use; populated by
+# fdlopen_init_full on success.
+var _tls_fdl_state[256];
+
+# v5.6.40: libssl dlopen handle saved post-_tls_init so consumers
+# can resolve additional libssl/libcrypto symbols via tls_dlsym
+# (e.g. SSL_CTX_set_alpn_protos for ALPN negotiation, custom
+# verify cb, mTLS cert load). Set by _tls_init when dlopen
+# succeeds; 0 means tls_dlsym returns 0.
+var _tls_libssl_handle = 0;
+
+# Function pointers resolved from libssl/libcrypto.
+# v5.10.13 audit: 15 libssl ABI symbols hard-coded by name; the
+# private-side `_fn_*` table is implementation detail — public
+# verbs below (`tls_*`) keep their signatures across any future
+# native-TLS swap. v5.10.13 added `_fn_SSL_CTX_set_alpn_protos`
+# so the new typed `tls_set_alpn` wrapper doesn't need to call
+# back into `tls_dlsym`.
+var _fn_TLS_client_method = 0;
+var _fn_SSL_CTX_new = 0;
+var _fn_SSL_CTX_free = 0;
+var _fn_SSL_CTX_set_default_verify_paths = 0;
+var _fn_SSL_CTX_set_verify = 0;
+var _fn_SSL_CTX_set_alpn_protos = 0;
+var _fn_SSL_new = 0;
+var _fn_SSL_free = 0;
+var _fn_SSL_set_fd = 0;
+var _fn_SSL_ctrl = 0;
+var _fn_SSL_connect = 0;
+var _fn_SSL_write = 0;
+var _fn_SSL_read = 0;
+var _fn_SSL_shutdown = 0;
+var _fn_SSL_get_error = 0;
+# v5.10.21 — TLS 1.3 session resumption + 0-RTT primitives.
+# Sandhi 1.3.1/1.3.2 explicitly requested. Pre-v5.10.21 these
+# were silently absent — the v5.10.13 TLS slot shipped only
+# tls_set_alpn / tls_set_verify; the session + early-data
+# surface that sandhi was actually blocked on never landed.
+# Ship the full unblocking surface here.
+var _fn_SSL_get1_session = 0;
+var _fn_SSL_set_session = 0;
+var _fn_SSL_SESSION_free = 0;
+var _fn_SSL_CTX_sess_set_new_cb = 0;
+var _fn_SSL_CTX_sess_set_remove_cb = 0;
+var _fn_SSL_CTX_sess_set_get_cb = 0;
+var _fn_SSL_CTX_set_session_cache_mode = 0;
+var _fn_SSL_CTX_set_max_early_data = 0;
+var _fn_SSL_write_early_data = 0;
+var _fn_SSL_read_early_data = 0;
+# v5.10.34 — TLS 1.3 0-RTT acceptance + eligibility surface
+# (sandhi 1.3.2 client-side 0-RTT unblock). Pre-v5.10.34 the
+# write/read primitives shipped (v5.10.21) but consumers had no
+# way to (1) check post-handshake whether the server accepted the
+# early data, or (2) check pre-attempt whether the cached session
+# even advertised early-data support.
+var _fn_SSL_get_early_data_status = 0;
+var _fn_SSL_SESSION_get_max_early_data = 0;
+
+# Lazy-init: bootstrap real glibc via fdlopen, then dlopen libssl
+# through it. v5.6.37 rewrite — the prior dynlib_open path loaded
+# libssl on top of cyrius's minimal %fs stub, which deadlocked
+# libssl's first SSL_CTX_new on a futex at TCB+0x118 (mutex
+# contended-bit). Routing through fdlopen's ld.so-bootstrapped
+# libc makes pthread work correctly (TCB has real __kind fields,
+# DTV, stack_guard, etc.), so SSL_CTX_new no longer deadlocks and
+# SSL_connect completes the handshake.
+fn _tls_init(): i64 {
+    if (_tls_inited == 1) { return 0; }
+    _tls_inited = 1;
+
+    # fdlopen requires ~/.cyrius/dlopen-helper (built by install.sh
+    # at toolchain install time). If the helper isn't present, TLS
+    # is unavailable; callers see tls_available()==0 and fall back
+    # to plain HTTP or error out.
+    if (fdlopen_helper_available() == 0) { return 0; }
+
+    var rc = fdlopen_init_full(&_tls_fdl_state);
+    if (rc != 0) { return 0; }
+
+    var fn_dlopen = fdlopen_dlopen(&_tls_fdl_state);
+    var fn_dlsym  = fdlopen_dlsym(&_tls_fdl_state);
+    if (fn_dlopen == 0) { return 0; }
+    if (fn_dlsym  == 0) { return 0; }
+
+    # RTLD_NOW|RTLD_GLOBAL = 0x102 — resolve all symbols now and
+    # make them visible to subsequent dlopens (libssl sees libcrypto
+    # via global search). Load libcrypto first so libssl's dyn-link
+    # against its symbols resolves without extra work.
+    var hc = fncall2(fn_dlopen, "libcrypto.so.3", 0x102);
+    if (hc == 0) { return 0; }
+    var h = fncall2(fn_dlopen, "libssl.so.3", 0x102);
+    if (h  == 0) { return 0; }
+    _tls_libssl_handle = h;
+
+    # Resolve symbols via real glibc dlsym, handle-scoped to libssl.
+    # SSL_* + TLS_* live in libssl; libcrypto's symbols are also
+    # reachable via libssl's dependency chain under RTLD_GLOBAL.
+    _fn_TLS_client_method                = fncall2(fn_dlsym, h, "TLS_client_method");
+    _fn_SSL_CTX_new                      = fncall2(fn_dlsym, h, "SSL_CTX_new");
+    _fn_SSL_CTX_free                     = fncall2(fn_dlsym, h, "SSL_CTX_free");
+    _fn_SSL_CTX_set_default_verify_paths = fncall2(fn_dlsym, h, "SSL_CTX_set_default_verify_paths");
+    _fn_SSL_CTX_set_verify               = fncall2(fn_dlsym, h, "SSL_CTX_set_verify");
+    _fn_SSL_CTX_set_alpn_protos          = fncall2(fn_dlsym, h, "SSL_CTX_set_alpn_protos");
+    _fn_SSL_new                          = fncall2(fn_dlsym, h, "SSL_new");
+    _fn_SSL_free                         = fncall2(fn_dlsym, h, "SSL_free");
+    _fn_SSL_set_fd                       = fncall2(fn_dlsym, h, "SSL_set_fd");
+    _fn_SSL_ctrl                         = fncall2(fn_dlsym, h, "SSL_ctrl");
+    _fn_SSL_connect                      = fncall2(fn_dlsym, h, "SSL_connect");
+    _fn_SSL_write                        = fncall2(fn_dlsym, h, "SSL_write");
+    _fn_SSL_read                         = fncall2(fn_dlsym, h, "SSL_read");
+    _fn_SSL_shutdown                     = fncall2(fn_dlsym, h, "SSL_shutdown");
+    _fn_SSL_get_error                    = fncall2(fn_dlsym, h, "SSL_get_error");
+    # v5.10.21 — session resumption + 0-RTT early data symbols.
+    # Resolution failure is NOT fatal (older libssl may not have
+    # all of these); callers see 0 from `tls_*` wrappers and can
+    # fall back to a non-resumed handshake. Hard-bail only on the
+    # core handshake path above.
+    _fn_SSL_get1_session                 = fncall2(fn_dlsym, h, "SSL_get1_session");
+    _fn_SSL_set_session                  = fncall2(fn_dlsym, h, "SSL_set_session");
+    _fn_SSL_SESSION_free                 = fncall2(fn_dlsym, h, "SSL_SESSION_free");
+    _fn_SSL_CTX_sess_set_new_cb          = fncall2(fn_dlsym, h, "SSL_CTX_sess_set_new_cb");
+    _fn_SSL_CTX_sess_set_remove_cb       = fncall2(fn_dlsym, h, "SSL_CTX_sess_set_remove_cb");
+    _fn_SSL_CTX_sess_set_get_cb          = fncall2(fn_dlsym, h, "SSL_CTX_sess_set_get_cb");
+    _fn_SSL_CTX_set_session_cache_mode   = fncall2(fn_dlsym, h, "SSL_CTX_set_session_cache_mode");
+    _fn_SSL_CTX_set_max_early_data       = fncall2(fn_dlsym, h, "SSL_CTX_set_max_early_data");
+    _fn_SSL_write_early_data             = fncall2(fn_dlsym, h, "SSL_write_early_data");
+    _fn_SSL_read_early_data              = fncall2(fn_dlsym, h, "SSL_read_early_data");
+    # v5.10.34 — early-data acceptance status + per-session
+    # max-early-data probe (sandhi 1.3.2 client-side 0-RTT).
+    _fn_SSL_get_early_data_status        = fncall2(fn_dlsym, h, "SSL_get_early_data_status");
+    _fn_SSL_SESSION_get_max_early_data   = fncall2(fn_dlsym, h, "SSL_SESSION_get_max_early_data");
+
+    # Minimum viable set — bail if any critical symbol missing
+    if (_fn_TLS_client_method == 0) { return 0; }
+    if (_fn_SSL_CTX_new == 0) { return 0; }
+    if (_fn_SSL_new == 0) { return 0; }
+    if (_fn_SSL_set_fd == 0) { return 0; }
+    if (_fn_SSL_connect == 0) { return 0; }
+    if (_fn_SSL_write == 0) { return 0; }
+    if (_fn_SSL_read == 0) { return 0; }
+    if (_fn_SSL_ctrl == 0) { return 0; }
+
+    _tls_ok = 1;
+    return 0;
+}
+
+# Returns 1 if TLS support is available on this system
+fn tls_available(): i64 {
+    _tls_init();
+    return _tls_ok;
+}
+
+# v5.10.13 — typed ALPN wrapper. Pre-fix sandhi's
+# `tls_policy/alpn.cyr` called `tls_dlsym("SSL_CTX_set_alpn_protos")`
+# + `fncall3(fp, handle, protos, len)` directly, binding the
+# consumer to libssl's symbol name + ABI. Now: stdlib resolves
+# the symbol once at `_tls_init` time and exposes a typed entry
+# point. Consumers call `tls_set_alpn(handle, protos, len)` from
+# within their `tls_connect_with_ctx_hook` callback. Implementation
+# detail (libssl vs native TLS) stays inside lib/tls.cyr.
+#
+# `protos` is the OpenSSL wire-format ALPN buffer: each protocol
+# is length-prefixed, e.g. `\x02h2\x07http/1.1` advertises h2 +
+# http/1.1. `len` is total bytes. Returns 0 on success, non-zero
+# on failure (matches OpenSSL's `SSL_CTX_set_alpn_protos`
+# semantics — note the inverted-from-most-OpenSSL-fns return
+# convention: 0 = success per the SSL_CTX_set_alpn_protos man
+# page).
+fn tls_set_alpn(handle, protos, protos_len): i64 {
+    if (handle == 0) { return 0 - 1; }
+    if (_fn_SSL_CTX_set_alpn_protos == 0) { return 0 - 1; }
+    return fncall3(_fn_SSL_CTX_set_alpn_protos, handle, protos, protos_len);
+}
+
+# v5.10.13 — typed verify-mode wrapper. Override stdlib's
+# default `SSL_VERIFY_PEER` with a custom mode + callback.
+# `mode` is an OpenSSL `SSL_VERIFY_*` flags bitmask (consumers
+# can use the values surfaced via `enum TlsConst`). `callback`
+# is a fn pointer to the verify callback (cyrius signature:
+# `fn vcb(preverify_ok, x509_store_ctx) -> int`). Pass
+# `callback = 0` to disable the callback (mode-only override).
+#
+# Implementation detail (libssl `SSL_CTX_set_verify`) hidden
+# behind this typed verb so consumers don't bind to libssl's
+# symbol name. Returns 0 on success, -1 on missing handle or
+# unresolved symbol.
+fn tls_set_verify(handle, mode, callback): i64 {
+    if (handle == 0) { return 0 - 1; }
+    if (_fn_SSL_CTX_set_verify == 0) { return 0 - 1; }
+    fncall3(_fn_SSL_CTX_set_verify, handle, mode, callback);
+    return 0;
+}
+
+# v5.6.40: resolve a libssl/libcrypto symbol by name via the
+# fdlopen-managed libssl handle. Lets consumers (e.g. sandhi's
+# `tls_policy/alpn.cyr`) call SSL_CTX_set_alpn_protos /
+# SSL_get0_alpn_selected / any other libssl symbol the stdlib
+# doesn't pre-resolve, without re-implementing the fdlopen
+# bootstrap. Returns 0 if _tls_init hasn't run successfully OR
+# the symbol isn't in libssl/libcrypto (RTLD_GLOBAL means
+# libcrypto symbols ARE visible via the libssl handle's search
+# under v5.6.37's loader setup).
+#
+# v5.10.13: **soft-deprecated** in favour of typed wrappers
+# (`tls_set_alpn`, `tls_set_verify`). New consumers should
+# prefer the typed entry points; this stays available for
+# escape-hatch usage (rarely-needed libssl symbols not yet
+# wrapped). Each direct call is a libssl-ABI binding that
+# won't survive a native-TLS transport swap; typed wrappers
+# do.
+fn tls_dlsym(name): i64 {
+    _tls_init();
+    if (_tls_ok == 0) { return 0; }
+    if (_tls_libssl_handle == 0) { return 0; }
+    var fn_dlsym = fdlopen_dlsym(&_tls_fdl_state);
+    if (fn_dlsym == 0) { return 0; }
+    return fncall2(fn_dlsym, _tls_libssl_handle, name);
+}
+
+# v5.6.40: wrap an already-connected TCP socket in a TLS session
+# with a caller-supplied configuration hook. The hook fires AFTER
+# stdlib defaults (peer verification, system CAs) and BEFORE the
+# session is created / handshake runs. Consumers customise via
+# typed `tls_set_*(handle, ...)` wrappers (ALPN advertise,
+# custom verify mode + callback, etc.).
+#
+# Hook signature: `hook_fp(hook_ctx, handle) -> int` — non-zero
+# return aborts the connection (frees the handle and returns 0
+# from tls_connect_alloc). `hook_ctx` is opaque consumer state
+# pointer; pass 0 if unused. Pass `hook_fp = 0` to skip the hook
+# entirely (matches the pre-v5.6.40 `tls_connect` behavior).
+#
+# v5.10.13 contract clarification — the `handle` arg passed to
+# the hook is OPAQUE to consumers. Today (libssl-backed) it's
+# an `SSL_CTX*`, but consumers MUST call typed `tls_set_*`
+# wrappers instead of touching the handle directly. A future
+# native-TLS transport swap will keep the same hook signature
+# and `tls_set_*` verbs; the handle's underlying type changes
+# but consumers don't see the change. The escape hatch
+# (`tls_dlsym` for unwrapped libssl symbols) is soft-deprecated
+# — direct libssl ABI binding ties consumers to the transport.
+#
+# Filed by sandhi 2026-04-24 in
+# `sandhi/docs/issues/2026-04-24-stdlib-tls-alpn-hook.md`,
+# Option A (function-pointer hook — least invasive, most
+# flexible). v5.10.13 follow-up: typed wrappers added so the
+# hook can stay generic across transports.
+#
+# v5.10.27 — Phase 1 of Option A staged-connect (sandhi 1.3.1
+# client-side session resumption unblock). Allocates the SSL_CTX
+# + SSL handle + binds fd + sets SNI, runs the consumer hook
+# pre-SSL_new, but DOES NOT run SSL_connect. Returns the ctx
+# struct in "ready to handshake" state so the consumer can
+# `tls_set_session(ctx, cached_session)` BEFORE handshake to
+# attempt resumption — the timing window OpenSSL requires.
+#
+# Sandhi 1.3.1 flow:
+#   var ctx = tls_connect_alloc(sock, host, hook_fp, hook_ctx);
+#   if (ctx == 0) { return 0; }
+#   var cached = sandhi_session_cache_lookup(host, port, alpn);
+#   if (cached != 0) { tls_set_session(ctx, cached); }
+#   if (tls_connect_complete(ctx) != 1) { tls_close(ctx); return 0; }
+#
+# Returns a ctx in pre-handshake state; caller MUST either run
+# tls_connect_complete (success path) or tls_close (cleanup) to
+# release. Returns 0 on any allocation/binding/hook failure (all
+# resources released in the error path before return).
+fn tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
+    _tls_init();
+    if (_tls_ok == 0) { return 0; }
+
+    var method = fncall0(_fn_TLS_client_method);
+    if (method == 0) { return 0; }
+
+    var ssl_ctx = fncall1(_fn_SSL_CTX_new, method);
+    if (ssl_ctx == 0) { return 0; }
+
+    # Load system CA certificates for peer verification
+    if (_fn_SSL_CTX_set_default_verify_paths != 0) {
+        fncall1(_fn_SSL_CTX_set_default_verify_paths, ssl_ctx);
+    }
+
+    # Enable peer certificate verification
+    if (_fn_SSL_CTX_set_verify != 0) {
+        fncall3(_fn_SSL_CTX_set_verify, ssl_ctx, SSL_VERIFY_PEER, 0);
+    }
+
+    # v5.6.40 hook point — runs on the bare SSL_CTX with stdlib
+    # defaults already applied. Consumer can override defaults
+    # (re-call SSL_CTX_set_verify with different flags) or layer
+    # additional config (ALPN, mTLS, custom trust store).
+    if (hook_fp != 0) {
+        var hook_rc = fncall2(hook_fp, hook_ctx, ssl_ctx);
+        if (hook_rc != 0) {
+            fncall1(_fn_SSL_CTX_free, ssl_ctx);
+            return 0;
+        }
+    }
+
+    var ssl = fncall1(_fn_SSL_new, ssl_ctx);
+    if (ssl == 0) {
+        fncall1(_fn_SSL_CTX_free, ssl_ctx);
+        return 0;
+    }
+
+    fncall2(_fn_SSL_set_fd, ssl, sock);
+
+    # Set SNI hostname via SSL_ctrl (SSL_set_tlsext_host_name is a macro)
+    if (host != 0) {
+        fncall4(_fn_SSL_ctrl, ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, host);
+    }
+
+    # Allocate ctx struct in pre-handshake state. Layout matches
+    # post-handshake ctx (struct shape preserved across the
+    # alloc → complete transition); tls_close handles either
+    # state correctly via SSL_free which works on either
+    # connected or unconnected SSL handles.
+    var ctx = alloc(24);
+    store64(ctx, ssl_ctx);
+    store64(ctx + 8, ssl);
+    store64(ctx + 16, sock);
+    return ctx;
+}
+
+# v5.10.27 — Phase 2 of Option A staged-connect. Runs
+# SSL_connect on a ctx returned by tls_connect_alloc. Returns
+# 1 on handshake success (ctx now usable for tls_read/write/
+# get_session), 0 on failure (caller MUST tls_close the ctx
+# to release; this fn does NOT free on failure since the caller
+# may want to inspect SSL_get_error before freeing).
+fn tls_connect_complete(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    var ssl = load64(ctx + 8);
+    if (ssl == 0) { return 0; }
+    var r = fncall1(_fn_SSL_connect, ssl);
+    if (r != 1) { return 0; }
+    return 1;
+}
+
+# Wrap an already-connected TCP socket in a TLS session.
+# SNI set from host. System CAs used for peer verification.
+# v5.6.40: thin wrapper around tls_connect_with_ctx_hook with a
+# null hook (no SSL_CTX customisation). Existing consumers see
+# byte-identical behavior; this signature is preserved.
+fn tls_connect(sock, host): i64 {
+    return tls_connect_with_ctx_hook(sock, host, 0, 0);
+}
+
+# v5.10.27 — Wrapper preserving the v5.6.40 signature. Composed
+# from staged-connect Phase 1 + Phase 2; existing callers see
+# byte-identical behavior. Sandhi-style resumption-aware callers
+# call tls_connect_alloc + tls_set_session + tls_connect_complete
+# directly to inject a cached session in the timing window
+# between SSL_new and SSL_connect.
+fn tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx): i64 {
+    var ctx = tls_connect_alloc(sock, host, hook_fp, hook_ctx);
+    if (ctx == 0) { return 0; }
+    if (tls_connect_complete(ctx) != 1) { tls_close(ctx); return 0; }
+    return ctx;
+}
+
+# Write through TLS session
+fn tls_write(ctx, buf, len): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    var ssl = load64(ctx + 8);
+    return fncall3(_fn_SSL_write, ssl, buf, len);
+}
+
+# Read from TLS session
+fn tls_read(ctx, buf, maxlen): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    var ssl = load64(ctx + 8);
+    return fncall3(_fn_SSL_read, ssl, buf, maxlen);
+}
+
+# Close TLS session and free resources
+fn tls_close(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    var ssl_ctx = load64(ctx);
+    var ssl = load64(ctx + 8);
+    if (_fn_SSL_shutdown != 0) { fncall1(_fn_SSL_shutdown, ssl); }
+    if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
+    if (_fn_SSL_CTX_free != 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); }
+    return 0;
+}
+
+# ================================================================
+# v5.10.21 — TLS 1.3 session resumption + 0-RTT (early data)
+# ================================================================
+# Sandhi 1.3.1 (session-resumption cache) + 1.3.2 (TLS 1.3 0-RTT)
+# unblocking surface. Sandhi explicitly filed the request; v5.10.13
+# shipped tls_set_alpn / tls_set_verify but silently deferred the
+# session + early-data primitives — that was a partial-fix antipattern
+# (per `feedback_no_one_fix_per_slot` memory pin). v5.10.21 closes
+# the gap with the full surface sandhi 1.3.x needs.
+#
+# Wrapping libssl 3.x APIs:
+#   SSL_get1_session         (refcount-bumping session getter; caller
+#                             owns the returned SSL_SESSION* and MUST
+#                             call tls_session_free when done)
+#   SSL_set_session          (install a previously-cached session
+#                             before tls_connect to attempt resumption)
+#   SSL_SESSION_free         (release a session ref)
+#   SSL_CTX_sess_set_new_cb  (cb fires when handshake produces a new
+#                             session worth caching)
+#   SSL_CTX_sess_set_remove_cb (cb fires when session is invalidated)
+#   SSL_CTX_sess_set_get_cb  (cb fires during handshake to fetch a
+#                             session from caller's cache by id)
+#   SSL_CTX_set_session_cache_mode (enables session caching at all)
+#   SSL_CTX_set_max_early_data / SSL_set_max_early_data (0-RTT receive
+#                             enable; 0 = disabled, default)
+#   SSL_write_early_data     (write 0-RTT payload before handshake
+#                             completes; only valid when ssl has a
+#                             cached session set via tls_set_session)
+#   SSL_read_early_data      (server-side counterpart; client uses
+#                             it after a 0-RTT-accepted handshake to
+#                             confirm early-data acceptance status)
+
+# Get the current session for ctx as an SSL_SESSION* (refcount-bumped).
+# Returns 0 if libssl missing the symbol or no session yet established.
+# Caller MUST free via tls_session_free.
+fn tls_get_session(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    if (_fn_SSL_get1_session == 0) { return 0; }
+    var ssl = load64(ctx + 8);
+    return fncall1(_fn_SSL_get1_session, ssl);
+}
+
+# Install a previously-saved session before tls_connect attempts
+# resumption. Returns 1 on success, 0 on failure (no-op if libssl
+# missing the symbol — caller falls back to a fresh handshake).
+fn tls_set_session(ctx, session): i64 {
+    if (ctx == 0) { return 0; }
+    if (session == 0) { return 0; }
+    if (_fn_SSL_set_session == 0) { return 0; }
+    var ssl = load64(ctx + 8);
+    return fncall2(_fn_SSL_set_session, ssl, session);
+}
+
+# Release a session reference obtained via tls_get_session.
+# No-op if session is 0 or libssl missing the symbol.
+fn tls_session_free(session): i64 {
+    if (session == 0) { return 0; }
+    if (_fn_SSL_SESSION_free == 0) { return 0; }
+    fncall1(_fn_SSL_SESSION_free, session);
+    return 0;
+}
+
+# Install a session-new callback on an SSL_CTX (the `handle` arg
+# from tls_connect_with_ctx_hook). Callback fires when a handshake
+# produces a session worth caching; consumer's cache impl persists
+# it. cb_fp signature: `int new_cb(SSL *ssl, SSL_SESSION *session)`.
+# Returning 1 transfers session ownership to the consumer (consumer
+# now owns the ref); 0 means libssl retains ownership.
+fn tls_ctx_set_session_new_cb(handle, cb_fp): i64 {
+    if (_fn_SSL_CTX_sess_set_new_cb == 0) { return 0; }
+    fncall2(_fn_SSL_CTX_sess_set_new_cb, handle, cb_fp);
+    return 0;
+}
+
+# Install a session-remove callback. Fires when libssl invalidates
+# a session; consumer's cache should evict matching entries.
+# cb_fp signature: `void remove_cb(SSL_CTX *ctx, SSL_SESSION *session)`.
+fn tls_ctx_set_session_remove_cb(handle, cb_fp): i64 {
+    if (_fn_SSL_CTX_sess_set_remove_cb == 0) { return 0; }
+    fncall2(_fn_SSL_CTX_sess_set_remove_cb, handle, cb_fp);
+    return 0;
+}
+
+# Install a session-lookup callback. Fires during handshake when
+# libssl wants to find a cached session by id. cb_fp signature:
+# `SSL_SESSION *get_cb(SSL *ssl, unsigned char *id, int len, int *copy)`.
+# Set *copy = 1 to bump the refcount on the returned session;
+# 0 to transfer ownership.
+fn tls_ctx_set_session_get_cb(handle, cb_fp): i64 {
+    if (_fn_SSL_CTX_sess_set_get_cb == 0) { return 0; }
+    fncall2(_fn_SSL_CTX_sess_set_get_cb, handle, cb_fp);
+    return 0;
+}
+
+# Enable session caching at the SSL_CTX level. Pass one of:
+#   SSL_SESS_CACHE_OFF (0)     — no caching (libssl default)
+#   SSL_SESS_CACHE_CLIENT (1)  — client-side caching enabled
+#   SSL_SESS_CACHE_SERVER (2)  — server-side caching enabled
+#   SSL_SESS_CACHE_BOTH (3)    — both client + server
+# Returns the previous mode, or 0 if libssl missing the symbol.
+fn tls_ctx_set_session_cache_mode(handle, mode): i64 {
+    if (_fn_SSL_CTX_set_session_cache_mode == 0) { return 0; }
+    return fncall2(_fn_SSL_CTX_set_session_cache_mode, handle, mode);
+}
+
+# Enable TLS 1.3 0-RTT receive on the CTX. `max` is the byte budget
+# per session; 0 (default) means 0-RTT disabled. Recommended starting
+# point per RFC 8446: 16384. Caller's session-cache impl should also
+# bound this against replay-attack risk.
+fn tls_ctx_set_max_early_data(handle, max): i64 {
+    if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }
+    return fncall2(_fn_SSL_CTX_set_max_early_data, handle, max);
+}
+
+# Write 0-RTT (early) data on a TLS 1.3 connection. Only valid when
+# `ctx` has a session installed via tls_set_session AND the session's
+# server advertised acceptable 0-RTT. Returns bytes written, or -1
+# on error (including "library missing the symbol" — caller checks
+# the symbol via tls_supports_early_data() before attempting).
+fn tls_write_early_data(ctx, buf, len): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    if (_fn_SSL_write_early_data == 0) { return 0 - 1; }
+    var ssl = load64(ctx + 8);
+    var written[1];
+    store64(&written, 0);
+    var rc = fncall4(_fn_SSL_write_early_data, ssl, buf, len, &written);
+    if (rc != 1) { return 0 - 1; }
+    return load64(&written);
+}
+
+# Read 0-RTT (early) data on the server side of a TLS 1.3 connection.
+# Returns:
+#   positive  — bytes actually read into buf
+#   -2        — early data exhausted; caller transitions to tls_read
+#               for the regular post-handshake stream (libssl status
+#               SSL_READ_EARLY_DATA_FINISH)
+#   -1        — error or library missing the symbol
+fn tls_read_early_data(ctx, buf, maxlen): i64 {
+    if (ctx == 0) { return 0 - 1; }
+    if (_fn_SSL_read_early_data == 0) { return 0 - 1; }
+    var ssl = load64(ctx + 8);
+    var rdb[1];
+    store64(&rdb, 0);
+    var status = fncall4(_fn_SSL_read_early_data, ssl, buf, maxlen, &rdb);
+    if (status == SSL_READ_EARLY_DATA_SUCCESS) { return load64(&rdb); }
+    if (status == SSL_READ_EARLY_DATA_FINISH)  { return 0 - 2; }
+    return 0 - 1;
+}
+
+# v5.10.34 — Post-handshake acceptance status check for client-side
+# TLS 1.3 0-RTT. Call AFTER tls_connect_complete to learn whether
+# the server accepted the early data sent via tls_write_early_data:
+#
+#   TLS_EARLY_DATA_NOT_SENT  (0)  — no early data was attempted
+#                                   on this connection (or ctx is
+#                                   null / libssl missing the symbol)
+#   TLS_EARLY_DATA_REJECTED  (1)  — server rejected early data;
+#                                   caller MUST resend the request
+#                                   over the normal stream via
+#                                   tls_write
+#   TLS_EARLY_DATA_ACCEPTED  (2)  — server accepted; the response
+#                                   is on the way via tls_read
+#
+# Sandhi 1.3.2 uses this for the post-handshake retry pattern:
+#
+#   tls_write_early_data(ctx, req, len);
+#   tls_connect_complete(ctx);
+#   if (tls_get_early_data_status(ctx) == TLS_EARLY_DATA_REJECTED) {
+#       tls_write(ctx, req, len);  # resend over normal stream
+#   }
+#
+# Wraps SSL_get_early_data_status. Defaults to TLS_EARLY_DATA_NOT_SENT
+# (0) on null ctx or unresolved symbol — same semantic as "early data
+# was not in play here," safe for consumers to treat as non-rejection.
+fn tls_get_early_data_status(ctx): i64 {
+    if (ctx == 0) { return TLS_EARLY_DATA_NOT_SENT; }
+    if (_fn_SSL_get_early_data_status == 0) { return TLS_EARLY_DATA_NOT_SENT; }
+    var ssl = load64(ctx + 8);
+    return fncall1(_fn_SSL_get_early_data_status, ssl);
+}
+
+# v5.10.34 — Pre-attempt eligibility probe for client-side 0-RTT.
+# Returns the maximum early-data byte budget the cached session's
+# server advertised at issue time; 0 means the session does NOT
+# advertise 0-RTT support (don't attempt). Caller bounds the
+# write size against this before calling tls_write_early_data.
+#
+# Sandhi 1.3.2 uses this for the pre-attempt gate:
+#
+#   var max_early = tls_session_get_max_early_data(cached_sess);
+#   if (max_early >= req_len) {
+#       tls_write_early_data(ctx, req, req_len);
+#   } # else: skip 0-RTT, proceed with normal handshake
+#
+# Wraps SSL_SESSION_get_max_early_data. Defaults to 0 on null
+# session or unresolved symbol — same semantic as "this session
+# doesn't advertise 0-RTT," consumer falls back to normal flow.
+fn tls_session_get_max_early_data(session): i64 {
+    if (session == 0) { return 0; }
+    if (_fn_SSL_SESSION_get_max_early_data == 0) { return 0; }
+    return fncall1(_fn_SSL_SESSION_get_max_early_data, session);
+}
+
+# Returns 1 if the linked libssl exposes the FULL 0-RTT client-
+# correctness surface (write + read + max_early_data setter
+# v5.10.21, plus get_early_data_status + SESSION_get_max_early_data
+# v5.10.34); 0 otherwise. Sandhi's 1.3.2 0-RTT path probes this
+# before attempting early-data send/recv with retry-on-rejection.
+fn tls_supports_early_data(): i64 {
+    if (_fn_SSL_write_early_data == 0) { return 0; }
+    if (_fn_SSL_read_early_data == 0) { return 0; }
+    if (_fn_SSL_CTX_set_max_early_data == 0) { return 0; }
+    if (_fn_SSL_get_early_data_status == 0) { return 0; }
+    if (_fn_SSL_SESSION_get_max_early_data == 0) { return 0; }
+    return 1;
+}
+
+# Returns 1 if the linked libssl exposes the session-resumption
+# symbols (get1_session + set_session + SESSION_free + cache mode
+# setter). Sandhi's 1.3.1 cache impl probes this before installing
+# session callbacks.
+fn tls_supports_session_resumption(): i64 {
+    if (_fn_SSL_get1_session == 0) { return 0; }
+    if (_fn_SSL_set_session == 0) { return 0; }
+    if (_fn_SSL_SESSION_free == 0) { return 0; }
+    if (_fn_SSL_CTX_set_session_cache_mode == 0) { return 0; }
+    return 1;
+}

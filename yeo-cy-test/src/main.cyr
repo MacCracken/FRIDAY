@@ -1,0 +1,233 @@
+# yeo-cy-test — full-stack slice backend: routed HTTP + JSON + patra persistence
+# Steps 2-4: TCP server, request routing, JSON, SQL-backed CRUD for /api/notes.
+#
+# Persistence note: patra's SQL tokenizer stops at the first single quote and
+# has no '' / backslash escaping and no bind parameters (see FINDINGS.md), so
+# arbitrary user text cannot be stored via a raw string literal. We sidestep
+# that by base64-encoding the note body before INSERT and decoding on read —
+# the base64 alphabet contains no quote characters.
+#
+# Stdlib + deps (patra, sakshi) auto-included via cyrius.cyml.
+
+var PORT = 8080;
+var g_db = 0;
+var g_next_id = 1;
+var MAX_B64 = 250;   # patra STR column is COL_STR_SZ (256) incl. NUL
+
+# ── small helpers ──
+
+# cstring literal -> borrowed Str (json_v_* and str_builder_add want Str)
+fn str_lit(c): Str {
+    return str_new(c, strlen(c));
+}
+
+# Match the start of the raw request buffer against a method+path prefix,
+# e.g. "GET /api/health " (trailing space terminates the path token).
+fn req_matches(buf, n, pat): i64 {
+    var plen = strlen(pat);
+    if (n < plen) { return 0; }
+    return memeq(buf, pat, plen);
+}
+
+# Offset of the body (just past the "\r\n\r\n" header terminator), or -1.
+fn find_body_offset(buf, n): i64 {
+    var i = 0;
+    while (i + 4 <= n) {
+        if (memeq(buf + i, "\r\n\r\n", 4) == 1) { return i + 4; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Frame and send one HTTP/1.1 response. status/ctype are cstrings; body is Str.
+fn send_response(cfd, status, ctype, body): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "HTTP/1.1 ");
+    str_builder_add_cstr(sb, status);
+    str_builder_add_cstr(sb, "\r\nContent-Type: ");
+    str_builder_add_cstr(sb, ctype);
+    str_builder_add_cstr(sb, "\r\nContent-Length: ");
+    str_builder_add_int(sb, str_len(body));
+    str_builder_add_cstr(sb, "\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+    str_builder_add(sb, body);
+    var resp = str_builder_build(sb);
+    sock_send(cfd, str_data(resp), str_len(resp));
+    return 0;
+}
+
+fn send_json_err(cfd, status, msg): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("error"), json_v_str_new(str_lit(msg)));
+    return send_response(cfd, status, "application/json", json_v_build(o));
+}
+
+# Read a static file (relative to CWD) and send it, or 404 if absent.
+fn serve_file(cfd, path, ctype): i64 {
+    var buf = alloc(262144);
+    var n = file_read_all(path, buf, 262144);
+    if (n <= 0) { return send_json_err(cfd, "404 Not Found", "file not found"); }
+    return send_response(cfd, "200 OK", ctype, str_new(buf, n));
+}
+
+# ── database ──
+
+fn db_init(): i64 {
+    fl_init();
+    patra_init();
+    g_db = patra_open("yeo.patra");
+    if (g_db == 0) { return 0; }
+    patra_exec(g_db, "CREATE TABLE notes (id INT, body STR, created INT)");
+
+    # Seed g_next_id from the current max id so restarts don't collide.
+    var rs = patra_query(g_db, "SELECT id FROM notes ORDER BY id");
+    if (rs != 0) {
+        var c = patra_result_count(rs);
+        var maxid = 0;
+        var i = 0;
+        while (i < c) {
+            var idv = patra_result_get_int(rs, i, 0);
+            if (idv > maxid) { maxid = idv; }
+            i = i + 1;
+        }
+        g_next_id = maxid + 1;
+        patra_result_free(rs);
+    }
+    return 1;
+}
+
+# ── route handlers ──
+
+fn handle_index(cfd): i64 {
+    return serve_file(cfd, "web/index.html", "text/html; charset=utf-8");
+}
+
+fn handle_appjs(cfd): i64 {
+    return serve_file(cfd, "web/app.js", "text/javascript; charset=utf-8");
+}
+
+fn handle_health(cfd): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("status"),  json_v_str_new(str_lit("ok")));
+    json_v_obj_set(o, str_lit("service"), json_v_str_new(str_lit("yeo-cy-test")));
+    json_v_obj_set(o, str_lit("version"), json_v_str_new(str_lit("0.1.0")));
+    return send_response(cfd, "200 OK", "application/json", json_v_build(o));
+}
+
+fn handle_list_notes(cfd): i64 {
+    var rs = patra_query(g_db, "SELECT id, body, created FROM notes ORDER BY id");
+    var arr = json_v_arr_new();
+    if (rs != 0) {
+        var c = patra_result_count(rs);
+        var i = 0;
+        while (i < c) {
+            var o = json_v_obj_new();
+            json_v_obj_set(o, str_lit("id"), json_v_int_new(patra_result_get_int(rs, i, 0)));
+
+            # body is stored base64-encoded; decode back to the original bytes.
+            var enc = patra_result_get_str(rs, i, 1);
+            var dec = base64_decode(enc, strlen(enc));
+            var body_str = str_new(load64(dec), load64(dec + 8));
+            json_v_obj_set(o, str_lit("body"), json_v_str_new(body_str));
+
+            var ts = patra_result_get_int(rs, i, 2);
+            json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
+            json_v_arr_push(arr, o);
+            i = i + 1;
+        }
+        patra_result_free(rs);
+    }
+    return send_response(cfd, "200 OK", "application/json", json_v_build(arr));
+}
+
+fn handle_create_note(cfd, buf, n): i64 {
+    var off = find_body_offset(buf, n);
+    if (off < 0) { return send_json_err(cfd, "400 Bad Request", "missing request body"); }
+
+    var v = json_v_parse_str(buf + off, n - off);
+    if (v == 0) { return send_json_err(cfd, "400 Bad Request", "invalid JSON"); }
+
+    var bstr = json_v_str(json_v_obj_get(v, "body"));
+    if (bstr == 0) { return send_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
+
+    # Encode to base64 so the value is SQL-literal-safe (no quotes).
+    var enc = base64_encode(str_data(bstr), str_len(bstr));
+    if (strlen(enc) > MAX_B64) {
+        return send_json_err(cfd, "413 Payload Too Large", "note body too long");
+    }
+
+    var id = g_next_id;
+    var ts = clock_epoch_secs();
+
+    # patra INSERT takes positional values only (no column list); order must
+    # match the CREATE TABLE column order: id, body, created.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "INSERT INTO notes VALUES (");
+    str_builder_add_int(sb, id);
+    str_builder_add_cstr(sb, ", '");
+    str_builder_add_cstr(sb, enc);
+    str_builder_add_cstr(sb, "', ");
+    str_builder_add_int(sb, ts);
+    str_builder_add_cstr(sb, ")");
+    var sql = str_cstr(str_builder_build(sb));
+
+    if (patra_exec(g_db, sql) != PATRA_OK) {
+        return send_json_err(cfd, "500 Internal Server Error", "insert failed");
+    }
+    g_next_id = id + 1;
+
+    # Echo the created note back (with the original, un-encoded body).
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("id"),      json_v_int_new(id));
+    json_v_obj_set(o, str_lit("body"),    json_v_str_new(bstr));
+    json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
+    return send_response(cfd, "201 Created", "application/json", json_v_build(o));
+}
+
+# ── server loop ──
+
+fn main() {
+    alloc_init();
+
+    if (db_init() == 0) { println("error: patra_open failed"); return 1; }
+
+    var sr = tcp_socket();
+    if (is_ok(sr) == 0) { println("error: tcp_socket failed"); return 1; }
+    var fd = result_unwrap(sr);
+    sock_reuse(fd);
+
+    var br = sock_bind(fd, INADDR_ANY(), PORT);
+    if (is_ok(br) == 0) { println("error: bind failed"); sock_close(fd); return 1; }
+
+    var lr = sock_listen(fd, 16);
+    if (is_ok(lr) == 0) { println("error: listen failed"); sock_close(fd); return 1; }
+
+    println("yeo-cy-test listening on :8080");
+
+    while (1) {
+        var ar = sock_accept(fd);
+        if (is_ok(ar) == 0) { continue; }
+        var cfd = result_unwrap(ar);
+
+        var reqbuf[8192];
+        var rr = sock_recv(cfd, &reqbuf, 8192);
+        var n = result_unwrap_or(rr, 0);
+
+        if      (req_matches(&reqbuf, n, "GET / ")           == 1) { handle_index(cfd); }
+        elif    (req_matches(&reqbuf, n, "GET /app.js ")     == 1) { handle_appjs(cfd); }
+        elif    (req_matches(&reqbuf, n, "GET /api/health ") == 1) { handle_health(cfd); }
+        elif    (req_matches(&reqbuf, n, "GET /api/notes ")  == 1) { handle_list_notes(cfd); }
+        elif    (req_matches(&reqbuf, n, "POST /api/notes ") == 1) { handle_create_note(cfd, &reqbuf, n); }
+        else                                                       { handle_404(cfd); }
+
+        sock_close(cfd);
+    }
+
+    return 0;
+}
+
+fn handle_404(cfd): i64 {
+    return send_json_err(cfd, "404 Not Found", "not found");
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

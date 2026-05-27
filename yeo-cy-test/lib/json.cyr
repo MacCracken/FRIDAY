@@ -1,0 +1,1434 @@
+# json.cyr — minimal JSON parser and builder
+# Usage: include "lib/json.cyr"
+# Requires: string.cyr, alloc.cyr, str.cyr, vec.cyr, fmt.cyr, io.cyr
+# Internally includes: fnptr.cyr (for streaming-parser fncallN dispatch)
+#
+# Parses flat JSON objects into key-value pairs.
+# Values are stored as strings (callers convert with str_to_int etc).
+
+include "lib/fnptr.cyr"
+# v5.8.30: Result-returning *_r variants for the file-loading
+# parsers (`json_parse_file_r`). Bare `json_parse(src)` keeps its
+# best-effort vec return — no clean -1 surface to migrate.
+include "lib/result.cyr"
+include "lib/io.cyr"
+
+# v5.8.30 — JsonError variants. `JsonIoErr` covers any underlying
+# IoError raised while reading the source file; `JsonParseErr` is
+# reserved for a future slot when the parser tracks structural
+# errors instead of best-effort recovery; `JsonOther` is the
+# catch-all. Keep variant-name prefix `Json` to avoid colliding
+# with IoError's `Io*` variants in the global enum-variant
+# namespace.
+enum JsonError {
+    JsonIoErr;
+    JsonParseErr;
+    JsonOther;
+}
+
+# JSON value: { key: Str, value: Str }
+var JSON_PAIR_SIZE = 16;
+
+# v5.8.36 — Allocator-as-first-arg variant of json_pair_new.
+# Allocates the 16-byte pair via `a`. Returns 0 on OOM.
+fn json_pair_new_a(a, key, value): i64 {
+    var p = alloc_via(a, JSON_PAIR_SIZE);
+    if (p == 0) { return 0; }
+    store64(p, key);
+    store64(p + 8, value);
+    return p;
+}
+
+# Create a new key-value pair for JSON storage. v5.8.36 wrapper.
+fn json_pair_new(key, value): i64 {
+    return json_pair_new_a(default_alloc(), key, value);
+}
+
+# Return the key Str from a JSON pair
+fn json_key(p): i64 { return load64(p); }
+# Return the value Str from a JSON pair
+fn json_value(p): i64 { return load64(p + 8); }
+
+# Parse a JSON object string into a vec of key-value pairs.
+# Handles: {"key": "value", "key2": "value2", "num": 42}
+# Returns vec of json_pair pointers.
+fn json_parse(src): i64 {
+    var pairs = vec_new();
+    var data = str_data(src);
+    var slen = str_len(src);
+    var ji = 0;
+    # Skip to opening brace
+    while (ji < slen) {
+        if (load8(data + ji) == 123) { ji = ji + 1; break; }
+        ji = ji + 1;
+    }
+    # Parse key-value pairs
+    var key = 0;
+    var val = 0;
+    while (ji < slen) {
+        var c = load8(data + ji);
+        # Skip whitespace and commas
+        if (c == 32) { ji = ji + 1; }
+        elif (c == 10) { ji = ji + 1; }
+        elif (c == 13) { ji = ji + 1; }
+        elif (c == 9) { ji = ji + 1; }
+        elif (c == 44) { ji = ji + 1; }
+        elif (c == 125) { break; }
+        elif (c == 34) {
+            # Parse quoted string
+            ji = ji + 1;
+            var qs = ji;
+            while (ji < slen) {
+                if (load8(data + ji) == 34) { break; }
+                ji = ji + 1;
+            }
+            var qstr = str_new(data + qs, ji - qs);
+            ji = ji + 1;
+            # Is this a key or value?
+            if (key == 0) {
+                key = qstr;
+                # Skip to colon
+                while (ji < slen) {
+                    if (load8(data + ji) == 58) { ji = ji + 1; break; }
+                    ji = ji + 1;
+                }
+            } else {
+                val = qstr;
+                vec_push(pairs, json_pair_new(key, val));
+                key = 0;
+                val = 0;
+            }
+        } else {
+            # Non-string value (number, true, false, null)
+            # Note: historical — chained if/break inside while was broken
+            # pre-3.2.6 (upstream report from argonaut, fixed long since);
+            # keep the flag + || form below anyway — it's clear enough.
+            if (key != 0) {
+                var vs = ji;
+                var done = 0;
+                while (ji < slen && done == 0) {
+                    var vc = load8(data + ji);
+                    if (vc == 44 || vc == 125 || vc == 32 || vc == 10) {
+                        done = 1;
+                    } else {
+                        ji = ji + 1;
+                    }
+                }
+                val = str_new(data + vs, ji - vs);
+                vec_push(pairs, json_pair_new(key, val));
+                key = 0;
+                val = 0;
+            } else {
+                ji = ji + 1;
+            }
+        }
+    }
+    return pairs;
+}
+
+# Find value by key in parsed JSON. Returns Str or 0 if not found.
+fn json_get(pairs, key): i64 {
+    if (pairs == 0) { return 0; }
+    if (key == 0) { return 0; }
+    var len = vec_len(pairs);
+    var gi = 0;
+    while (gi < len) {
+        var p = vec_get(pairs, gi);
+        if (str_eq(json_key(p), key) == 1) {
+            return json_value(p);
+        }
+        gi = gi + 1;
+    }
+    return 0;
+}
+
+# Get value as integer (0 if not found or not numeric)
+fn json_get_int(pairs, key): i64 {
+    var v = json_get(pairs, key);
+    if (v == 0) { return 0; }
+    return str_to_int(v);
+}
+
+# Build a JSON object from a vec of key-value pairs
+fn json_build(pairs): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{");
+    var len = vec_len(pairs);
+    var bi = 0;
+    while (bi < len) {
+        if (bi > 0) { str_builder_add_cstr(sb, ", "); }
+        var p = vec_get(pairs, bi);
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add(sb, json_key(p));
+        str_builder_add_cstr(sb, "\": \"");
+        str_builder_add(sb, json_value(p));
+        str_builder_add_cstr(sb, "\"");
+        bi = bi + 1;
+    }
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# Parse a JSON file
+fn json_parse_file(path): i64 {
+    var buf = alloc(16384);
+    var n = file_read_all(path, buf, 16384);
+    if (n <= 0) { return vec_new(); }
+    return json_parse(str_new(buf, n));
+}
+
+# v5.8.30 — Result variant of json_parse_file. Open + read are
+# pushed through file_open_r / file_read_r so an underlying
+# IoError surfaces as Err(JsonIoErr) instead of being silently
+# converted to an empty vec (the back-compat behavior of
+# `json_parse_file`).
+fn json_parse_file_r(path): i64 {
+    var fd_r = file_open_r(path, 0, 0);
+    if (is_err_result(fd_r) == 1) { return Err(JsonIoErr); }
+    var fd = load64(fd_r + 8);
+    var buf = alloc(16384);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var rd_r = file_read_r(fd, buf + total, 16384 - total);
+        if (is_err_result(rd_r) == 1) { sys_close(fd); return Err(JsonIoErr); }
+        var n = load64(rd_r + 8);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= 16384) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+    if (total == 0) { return Err(JsonIoErr); }
+    return Ok(json_parse(str_new(buf, total)));
+}
+
+# ======================================================================
+# JSON ENGINE (v5.7.20) — Tagged-value tree with full nesting + escapes
+# ======================================================================
+#
+# Stdlib baseline. RPC-grade scope (custom serializers, binary
+# extensions, etc.) is owned by sandhi (lib/sandhi.cyr).
+#
+# Backward compat: the flat key-value API at the top of this file
+# (json_parse, json_get, json_get_int, json_pair_new, json_key,
+# json_value, json_build, json_parse_file) is preserved unchanged.
+# Existing kybernet / argonaut / libro callers stay green.
+#
+# The new engine below uses a `json_v_*` prefix and a tagged 24-byte
+# heap value:
+#
+#   +0   tag      u64    JTAG_NULL / BOOL / INT / FLOAT / STR / ARR / OBJ
+#   +8   payload  u64    i64 / f64 bits / Str ptr / vec ptr
+#   +16  reserved u64    0 (future: source span for raw access)
+#
+# Vec contents:
+#   ARR: vec<json_v*> — element values in declaration order
+#   OBJ: vec<json_v_pair*> — { key: Str, value: json_v* } pairs in order
+#
+# Strings (STR tag and OBJ keys) are decoded — \" \\ \/ \b \f \n \r \t
+# \uXXXX (UTF-8 encoded) are all resolved at parse time. The Str ptr
+# holds the decoded byte sequence, not the source-text bytes.
+#
+# Numbers: parsed as INT if the source has no `.` `e` `E`; else FLOAT.
+# Float parsing handles scientific notation `3.14e10` / `1.5E-3`.
+#
+# Errors: parse failures set _json_err_msg (cstr) and _json_err_pos
+# (input byte offset). json_v_parse* returns 0 on error.
+
+var JTAG_NULL  = 0;
+var JTAG_BOOL  = 1;
+var JTAG_INT   = 2;
+var JTAG_FLOAT = 3;
+var JTAG_STR   = 4;
+var JTAG_ARR   = 5;
+var JTAG_OBJ   = 6;
+
+var JV_SIZE = 24;
+
+# Last-error reporting (single-threaded; one parse at a time).
+var _json_err_msg = 0;
+var _json_err_pos = 0;
+
+# Return the last parse error message (cstr) — set on json_v_parse* failure.
+fn json_last_error(): i64 {
+    if (_json_err_msg == 0) { return ""; }
+    return _json_err_msg;
+}
+
+# Return the last parse error byte offset — set on json_v_parse* failure.
+fn json_last_error_pos(): i64 { return _json_err_pos; }
+
+# === Constructors ===
+
+# v5.8.36 — Allocator-as-first-arg internal jv-cell allocator.
+# Returns 0 on OOM (caller must check). Used by every json_v_*_new_a
+# constructor below.
+fn _jv_alloc_a(a, tag): i64 {
+    var v = alloc_via(a, JV_SIZE);
+    if (v == 0) { return 0; }
+    store64(v, tag);
+    store64(v + 8, 0);
+    store64(v + 16, 0);
+    return v;
+}
+
+# Internal jv-cell allocator (back-compat wrapper).
+fn _jv_alloc(tag): i64 { return _jv_alloc_a(default_alloc(), tag); }
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_null.
+fn json_v_null_a(a): i64 { return _jv_alloc_a(a, JTAG_NULL); }
+
+# Create a new JTAG_NULL value. v5.8.36 wrapper.
+fn json_v_null(): i64 { return _jv_alloc(JTAG_NULL); }
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_bool_new.
+fn json_v_bool_new_a(a, b): i64 {
+    var v = _jv_alloc_a(a, JTAG_BOOL);
+    if (v == 0) { return 0; }
+    if (b == 0) { store64(v + 8, 0); }
+    else        { store64(v + 8, 1); }
+    return v;
+}
+
+# Create a new JTAG_BOOL value (b is 0 or 1). v5.8.36 wrapper.
+fn json_v_bool_new(b): i64 {
+    return json_v_bool_new_a(default_alloc(), b);
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_int_new.
+fn json_v_int_new_a(a, n): i64 {
+    var v = _jv_alloc_a(a, JTAG_INT);
+    if (v == 0) { return 0; }
+    store64(v + 8, n);
+    return v;
+}
+
+# Create a new JTAG_INT value (n is i64). v5.8.36 wrapper.
+fn json_v_int_new(n): i64 {
+    return json_v_int_new_a(default_alloc(), n);
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_float_new.
+fn json_v_float_new_a(a, f): i64 {
+    var v = _jv_alloc_a(a, JTAG_FLOAT);
+    if (v == 0) { return 0; }
+    store64(v + 8, f);
+    return v;
+}
+
+# Create a new JTAG_FLOAT value (f is f64 bit pattern). v5.8.36 wrapper.
+fn json_v_float_new(f): i64 {
+    return json_v_float_new_a(default_alloc(), f);
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_str_new.
+fn json_v_str_new_a(a, s): i64 {
+    var v = _jv_alloc_a(a, JTAG_STR);
+    if (v == 0) { return 0; }
+    store64(v + 8, s);
+    return v;
+}
+
+# Create a new JTAG_STR value (s is a Str ptr). v5.8.36 wrapper.
+fn json_v_str_new(s): i64 {
+    return json_v_str_new_a(default_alloc(), s);
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_arr_new.
+# Allocates BOTH the jv-cell AND the inner vec via `a`.
+fn json_v_arr_new_a(a): i64 {
+    var v = _jv_alloc_a(a, JTAG_ARR);
+    if (v == 0) { return 0; }
+    var inner = vec_new_a(a);
+    if (inner == 0) { return 0; }
+    store64(v + 8, inner);
+    return v;
+}
+
+# Create an empty JTAG_ARR value. v5.8.36 wrapper. Append via
+# json_v_arr_push (use json_v_arr_push_a if you need the same
+# allocator threaded through grows).
+fn json_v_arr_new(): i64 {
+    return json_v_arr_new_a(default_alloc());
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_obj_new.
+# Allocates BOTH the jv-cell AND the inner pairs vec via `a`.
+fn json_v_obj_new_a(a): i64 {
+    var v = _jv_alloc_a(a, JTAG_OBJ);
+    if (v == 0) { return 0; }
+    var inner = vec_new_a(a);
+    if (inner == 0) { return 0; }
+    store64(v + 8, inner);
+    return v;
+}
+
+# Create an empty JTAG_OBJ value. v5.8.36 wrapper.
+fn json_v_obj_new(): i64 {
+    return json_v_obj_new_a(default_alloc());
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of _jv_pair_new.
+fn _jv_pair_new_a(a, key, val): i64 {
+    var p = alloc_via(a, 16);
+    if (p == 0) { return 0; }
+    store64(p, key);
+    store64(p + 8, val);
+    return p;
+}
+
+# A pair is a 16-byte heap struct: { key: Str @ +0, value: json_v* @ +8 }.
+# v5.8.36 wrapper.
+fn _jv_pair_new(key, val): i64 {
+    return _jv_pair_new_a(default_alloc(), key, val);
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of json_v_arr_push.
+# Routes any vec-grow through `a`. Returns -1 on grow OOM
+# (vs. back-compat which aborts via vec_push).
+fn json_v_arr_push_a(a, arr, val): i64 {
+    if (arr == 0) { return 0 - 1; }
+    if (load64(arr) != JTAG_ARR) { return 0 - 1; }
+    return vec_push_a(a, load64(arr + 8), val);
+}
+
+# Append a value to an array. No-op if arr is not JTAG_ARR.
+# v5.8.36 wrapper.
+fn json_v_arr_push(arr, val): i64 {
+    if (arr == 0) { return 0; }
+    if (load64(arr) != JTAG_ARR) { return 0; }
+    vec_push(load64(arr + 8), val);
+    return 0;
+}
+
+# Append a key/value pair to an object. No-op if obj is not JTAG_OBJ.
+fn json_v_obj_set(obj, key, val): i64 {
+    if (obj == 0) { return 0; }
+    if (load64(obj) != JTAG_OBJ) { return 0; }
+    vec_push(load64(obj + 8), _jv_pair_new(key, val));
+    return 0;
+}
+
+# === Tag predicates ===
+
+# Return the value tag (JTAG_NULL/BOOL/INT/FLOAT/STR/ARR/OBJ), or -1 if v is 0.
+fn json_v_tag(v): i64 {
+    if (v == 0) { return 0 - 1; }
+    return load64(v);
+}
+
+# Tag predicates — return 1 if v has the given tag, else 0. All return 0 on null v.
+fn json_v_is_null(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_NULL)  { return 1; } return 0; }
+# True if v is a JTAG_BOOL value.
+fn json_v_is_bool(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_BOOL)  { return 1; } return 0; }
+# True if v is a JTAG_INT value.
+fn json_v_is_int(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_INT)   { return 1; } return 0; }
+# True if v is a JTAG_FLOAT value.
+fn json_v_is_float(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_FLOAT) { return 1; } return 0; }
+# True if v is a JTAG_STR value.
+fn json_v_is_str(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_STR)   { return 1; } return 0; }
+# True if v is a JTAG_ARR value.
+fn json_v_is_arr(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_ARR)   { return 1; } return 0; }
+# True if v is a JTAG_OBJ value.
+fn json_v_is_obj(v): i64 { if (v == 0) { return 0; } if (load64(v) == JTAG_OBJ)   { return 1; } return 0; }
+
+# === Value accessors (INT/FLOAT coercion) ===
+
+# Return v as i64 (0 or 1) if v is JTAG_BOOL, else 0.
+fn json_v_bool(v): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_BOOL) { return 0; }
+    return load64(v + 8);
+}
+
+# Return v as i64 — coerces JTAG_FLOAT via f64_to. Returns 0 on other tags.
+fn json_v_int(v): i64 {
+    if (v == 0) { return 0; }
+    var t = load64(v);
+    if (t == JTAG_INT) { return load64(v + 8); }
+    if (t == JTAG_FLOAT) { return f64_to(load64(v + 8)); }
+    return 0;
+}
+
+# Return v as f64 bit pattern — coerces JTAG_INT via f64_from. Returns f64_from(0) on other tags.
+fn json_v_float(v): i64 {
+    if (v == 0) { return 0; }
+    var t = load64(v);
+    if (t == JTAG_FLOAT) { return load64(v + 8); }
+    if (t == JTAG_INT)   { return f64_from(load64(v + 8)); }
+    return f64_from(0);
+}
+
+# Return v as Str ptr if v is JTAG_STR, else 0.
+fn json_v_str(v): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_STR) { return 0; }
+    return load64(v + 8);
+}
+
+# === Container accessors ===
+
+# Return array length, or 0 if v is not JTAG_ARR.
+fn json_v_arr_len(v): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_ARR) { return 0; }
+    return vec_len(load64(v + 8));
+}
+
+# Return array element at index i (json_v* or 0 if out of range / wrong tag).
+fn json_v_arr_get(v, i): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_ARR) { return 0; }
+    var arr = load64(v + 8);
+    if (i < 0) { return 0; }
+    if (i >= vec_len(arr)) { return 0; }
+    return vec_get(arr, i);
+}
+
+# Return object pair count, or 0 if v is not JTAG_OBJ.
+fn json_v_obj_len(v): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_OBJ) { return 0; }
+    return vec_len(load64(v + 8));
+}
+
+# Return the n-th object key (Str ptr or 0 if out of range / wrong tag).
+fn json_v_obj_key(v, i): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_OBJ) { return 0; }
+    var pairs = load64(v + 8);
+    if (i < 0) { return 0; }
+    if (i >= vec_len(pairs)) { return 0; }
+    return load64(vec_get(pairs, i));
+}
+
+# Return the n-th object value (json_v* or 0 if out of range / wrong tag).
+fn json_v_obj_val(v, i): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_OBJ) { return 0; }
+    var pairs = load64(v + 8);
+    if (i < 0) { return 0; }
+    if (i >= vec_len(pairs)) { return 0; }
+    return load64(vec_get(pairs, i) + 8);
+}
+
+# json_v_obj_get — lookup by C-string key. Returns json_v* or 0.
+fn json_v_obj_get(v, key): i64 {
+    if (v == 0) { return 0; }
+    if (load64(v) != JTAG_OBJ) { return 0; }
+    var pairs = load64(v + 8);
+    var n = vec_len(pairs);
+    var klen = strlen(key);
+    var i = 0;
+    while (i < n) {
+        var p = vec_get(pairs, i);
+        var ks = load64(p);
+        if (str_len(ks) == klen) {
+            if (memeq(str_data(ks), key, klen) == 1) {
+                return load64(p + 8);
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# === Parser state (single-threaded) ===
+var _jp_buf = 0;
+var _jp_len = 0;
+var _jp_pos = 0;
+
+fn _jp_set_err(msg): i64 {
+    _json_err_msg = msg;
+    _json_err_pos = _jp_pos;
+    return 0;
+}
+
+# Skip whitespace (space, tab, LF, CR).
+fn _jp_skip_ws(): i64 {
+    while (_jp_pos < _jp_len) {
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 32 || c == 9 || c == 10 || c == 13) { _jp_pos = _jp_pos + 1; }
+        else { return 0; }
+    }
+    return 0;
+}
+
+# Decode a hex digit (returns -1 if not a hex digit).
+fn _jp_hex(c): i64 {
+    if (c >= 48) { if (c <= 57)  { return c - 48; } }
+    if (c >= 97) { if (c <= 102) { return c - 87; } }
+    if (c >= 65) { if (c <= 70)  { return c - 55; } }
+    return 0 - 1;
+}
+
+# Encode codepoint cp as UTF-8 into dst; return bytes written (1..4).
+# Caller handles surrogate pairs before calling.
+fn _jp_emit_utf8(dst, cp): i64 {
+    if (cp < 128)    { store8(dst, cp); return 1; }
+    if (cp < 2048)   {
+        store8(dst, 192 | (cp >> 6));
+        store8(dst + 1, 128 | (cp & 63));
+        return 2;
+    }
+    if (cp < 65536)  {
+        store8(dst, 224 | (cp >> 12));
+        store8(dst + 1, 128 | ((cp >> 6) & 63));
+        store8(dst + 2, 128 | (cp & 63));
+        return 3;
+    }
+    store8(dst, 240 | (cp >> 18));
+    store8(dst + 1, 128 | ((cp >> 12) & 63));
+    store8(dst + 2, 128 | ((cp >> 6) & 63));
+    store8(dst + 3, 128 | (cp & 63));
+    return 4;
+}
+
+# Parse a JSON string starting at the opening quote. Returns Str* or 0.
+# On entry, _jp_pos points at the `"`. On success, _jp_pos points just
+# past the closing `"`.
+fn _jp_parse_string(): i64 {
+    if (_jp_pos >= _jp_len) { _jp_set_err("unexpected EOF in string"); return 0; }
+    if (load8(_jp_buf + _jp_pos) != 34) { _jp_set_err("expected string"); return 0; }
+    _jp_pos = _jp_pos + 1;
+    # Worst case: every escape decoded to fewer bytes. Allocate input-len buf.
+    var cap = _jp_len - _jp_pos + 1;
+    var out = alloc(cap + 4);
+    var oi = 0;
+    while (1 == 1) {
+        if (_jp_pos >= _jp_len) { _jp_set_err("unterminated string"); return 0; }
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 34) { _jp_pos = _jp_pos + 1; store8(out + oi, 0); return str_new(out, oi); }
+        if (c == 92) {
+            # Escape sequence
+            _jp_pos = _jp_pos + 1;
+            if (_jp_pos >= _jp_len) { _jp_set_err("unterminated escape"); return 0; }
+            var e = load8(_jp_buf + _jp_pos);
+            _jp_pos = _jp_pos + 1;
+            if      (e == 34)  { store8(out + oi,  34); oi = oi + 1; }
+            elif    (e == 92)  { store8(out + oi,  92); oi = oi + 1; }
+            elif    (e == 47)  { store8(out + oi,  47); oi = oi + 1; }
+            elif    (e == 98)  { store8(out + oi,   8); oi = oi + 1; }
+            elif    (e == 102) { store8(out + oi,  12); oi = oi + 1; }
+            elif    (e == 110) { store8(out + oi,  10); oi = oi + 1; }
+            elif    (e == 114) { store8(out + oi,  13); oi = oi + 1; }
+            elif    (e == 116) { store8(out + oi,   9); oi = oi + 1; }
+            elif    (e == 117) {
+                if (_jp_pos + 3 >= _jp_len) { _jp_set_err("\\u needs 4 hex digits"); return 0; }
+                var d0 = _jp_hex(load8(_jp_buf + _jp_pos));
+                var d1 = _jp_hex(load8(_jp_buf + _jp_pos + 1));
+                var d2 = _jp_hex(load8(_jp_buf + _jp_pos + 2));
+                var d3 = _jp_hex(load8(_jp_buf + _jp_pos + 3));
+                if (d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0) { _jp_set_err("\\u: bad hex digit"); return 0; }
+                _jp_pos = _jp_pos + 4;
+                var cp = (d0 << 12) | (d1 << 8) | (d2 << 4) | d3;
+                # Surrogate pair handling
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    # High surrogate — expect low surrogate next
+                    if (_jp_pos + 5 >= _jp_len) { _jp_set_err("incomplete surrogate pair"); return 0; }
+                    if (load8(_jp_buf + _jp_pos) != 92 || load8(_jp_buf + _jp_pos + 1) != 117) {
+                        _jp_set_err("expected low surrogate after high");
+                        return 0;
+                    }
+                    _jp_pos = _jp_pos + 2;
+                    var l0 = _jp_hex(load8(_jp_buf + _jp_pos));
+                    var l1 = _jp_hex(load8(_jp_buf + _jp_pos + 1));
+                    var l2 = _jp_hex(load8(_jp_buf + _jp_pos + 2));
+                    var l3 = _jp_hex(load8(_jp_buf + _jp_pos + 3));
+                    if (l0 < 0 || l1 < 0 || l2 < 0 || l3 < 0) { _jp_set_err("low surrogate: bad hex"); return 0; }
+                    _jp_pos = _jp_pos + 4;
+                    var lo = (l0 << 12) | (l1 << 8) | (l2 << 4) | l3;
+                    if (lo < 0xDC00 || lo > 0xDFFF) { _jp_set_err("invalid low surrogate"); return 0; }
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                }
+                elif (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    _jp_set_err("unexpected low surrogate");
+                    return 0;
+                }
+                oi = oi + _jp_emit_utf8(out + oi, cp);
+            }
+            else { _jp_set_err("unknown escape sequence"); return 0; }
+        }
+        else {
+            # Ordinary byte
+            store8(out + oi, c);
+            oi = oi + 1;
+            _jp_pos = _jp_pos + 1;
+        }
+    }
+    return 0;
+}
+
+# Parse a number. Returns json_v* (INT or FLOAT) or 0.
+fn _jp_parse_number(): i64 {
+    var start = _jp_pos;
+    var is_float = 0;
+    # Optional minus
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 45) { _jp_pos = _jp_pos + 1; }
+    # Integer part
+    while (_jp_pos < _jp_len) {
+        var c = load8(_jp_buf + _jp_pos);
+        if (c >= 48 && c <= 57) { _jp_pos = _jp_pos + 1; }
+        else { break; }
+    }
+    # Fraction
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 46) {
+        is_float = 1;
+        _jp_pos = _jp_pos + 1;
+        while (_jp_pos < _jp_len) {
+            var c2 = load8(_jp_buf + _jp_pos);
+            if (c2 >= 48 && c2 <= 57) { _jp_pos = _jp_pos + 1; }
+            else { break; }
+        }
+    }
+    # Exponent
+    if (_jp_pos < _jp_len) {
+        var ec = load8(_jp_buf + _jp_pos);
+        if (ec == 101 || ec == 69) {
+            is_float = 1;
+            _jp_pos = _jp_pos + 1;
+            if (_jp_pos < _jp_len) {
+                var sg = load8(_jp_buf + _jp_pos);
+                if (sg == 43 || sg == 45) { _jp_pos = _jp_pos + 1; }
+            }
+            while (_jp_pos < _jp_len) {
+                var c3 = load8(_jp_buf + _jp_pos);
+                if (c3 >= 48 && c3 <= 57) { _jp_pos = _jp_pos + 1; }
+                else { break; }
+            }
+        }
+    }
+    if (_jp_pos == start) { _jp_set_err("expected number"); return 0; }
+    if (is_float == 1) {
+        var fbits = _jp_atof(_jp_buf + start, _jp_pos - start);
+        return json_v_float_new(fbits);
+    }
+    var iv = _jp_atoi(_jp_buf + start, _jp_pos - start);
+    return json_v_int_new(iv);
+}
+
+# Parse a signed integer from buf[0..len). Returns i64.
+fn _jp_atoi(buf, len): i64 {
+    var i = 0;
+    var sign = 1;
+    if (len > 0 && load8(buf) == 45) { sign = 0 - 1; i = 1; }
+    var n = 0;
+    while (i < len) {
+        n = n * 10 + (load8(buf + i) - 48);
+        i = i + 1;
+    }
+    return sign * n;
+}
+
+# Parse a float from buf[0..len). Returns f64 bit pattern.
+# Handles signed mantissa, optional fraction, optional signed exponent.
+fn _jp_atof(buf, len): i64 {
+    var i = 0;
+    var sign = 1;
+    if (len > 0 && load8(buf) == 45) { sign = 0 - 1; i = 1; }
+    elif (len > 0 && load8(buf) == 43) { i = 1; }
+    var int_part = f64_from(0);
+    while (i < len) {
+        var c = load8(buf + i);
+        if (c < 48 || c > 57) { break; }
+        int_part = f64_add(f64_mul(int_part, f64_from(10)), f64_from(c - 48));
+        i = i + 1;
+    }
+    var frac_part = f64_from(0);
+    var frac_div  = f64_from(1);
+    if (i < len && load8(buf + i) == 46) {
+        i = i + 1;
+        while (i < len) {
+            var c2 = load8(buf + i);
+            if (c2 < 48 || c2 > 57) { break; }
+            frac_part = f64_add(f64_mul(frac_part, f64_from(10)), f64_from(c2 - 48));
+            frac_div  = f64_mul(frac_div, f64_from(10));
+            i = i + 1;
+        }
+    }
+    var val = f64_add(int_part, f64_div(frac_part, frac_div));
+    if (i < len) {
+        var ec = load8(buf + i);
+        if (ec == 101 || ec == 69) {
+            i = i + 1;
+            var esign = 1;
+            if (i < len && load8(buf + i) == 43) { i = i + 1; }
+            elif (i < len && load8(buf + i) == 45) { esign = 0 - 1; i = i + 1; }
+            var exp = 0;
+            while (i < len) {
+                var c3 = load8(buf + i);
+                if (c3 < 48 || c3 > 57) { break; }
+                exp = exp * 10 + (c3 - 48);
+                i = i + 1;
+            }
+            var ei = 0;
+            while (ei < exp) {
+                if (esign > 0) { val = f64_mul(val, f64_from(10)); }
+                else           { val = f64_div(val, f64_from(10)); }
+                ei = ei + 1;
+            }
+        }
+    }
+    if (sign < 0) { val = f64_sub(f64_from(0), val); }
+    return val;
+}
+
+# === Main parse entry ===
+
+# Recursive value parser. Returns json_v* or 0.
+fn _jp_parse_value(): i64 {
+    _jp_skip_ws();
+    if (_jp_pos >= _jp_len) { _jp_set_err("unexpected EOF"); return 0; }
+    var c = load8(_jp_buf + _jp_pos);
+    if (c == 123) { return _jp_parse_object(); }
+    if (c == 91)  { return _jp_parse_array(); }
+    if (c == 34)  {
+        var s = _jp_parse_string();
+        if (s == 0) { return 0; }
+        return json_v_str_new(s);
+    }
+    if (c == 116) {
+        if (_jp_pos + 3 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "rue", 3) == 1) {
+            _jp_pos = _jp_pos + 4;
+            return json_v_bool_new(1);
+        }
+        _jp_set_err("expected 'true'"); return 0;
+    }
+    if (c == 102) {
+        if (_jp_pos + 4 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "alse", 4) == 1) {
+            _jp_pos = _jp_pos + 5;
+            return json_v_bool_new(0);
+        }
+        _jp_set_err("expected 'false'"); return 0;
+    }
+    if (c == 110) {
+        if (_jp_pos + 3 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "ull", 3) == 1) {
+            _jp_pos = _jp_pos + 4;
+            return json_v_null();
+        }
+        _jp_set_err("expected 'null'"); return 0;
+    }
+    if (c == 45 || (c >= 48 && c <= 57)) {
+        return _jp_parse_number();
+    }
+    _jp_set_err("unexpected character");
+    return 0;
+}
+
+fn _jp_parse_array(): i64 {
+    if (load8(_jp_buf + _jp_pos) != 91) { _jp_set_err("expected '['"); return 0; }
+    _jp_pos = _jp_pos + 1;
+    var arr = json_v_arr_new();
+    _jp_skip_ws();
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 93) {
+        _jp_pos = _jp_pos + 1;
+        return arr;
+    }
+    while (1 == 1) {
+        var v = _jp_parse_value();
+        if (v == 0) { return 0; }
+        json_v_arr_push(arr, v);
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _jp_set_err("unterminated array"); return 0; }
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 44) { _jp_pos = _jp_pos + 1; _jp_skip_ws(); }
+        elif (c == 93) { _jp_pos = _jp_pos + 1; return arr; }
+        else { _jp_set_err("expected ',' or ']'"); return 0; }
+    }
+    return 0;
+}
+
+fn _jp_parse_object(): i64 {
+    if (load8(_jp_buf + _jp_pos) != 123) { _jp_set_err("expected '{'"); return 0; }
+    _jp_pos = _jp_pos + 1;
+    var obj = json_v_obj_new();
+    _jp_skip_ws();
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 125) {
+        _jp_pos = _jp_pos + 1;
+        return obj;
+    }
+    while (1 == 1) {
+        _jp_skip_ws();
+        var k = _jp_parse_string();
+        if (k == 0) { return 0; }
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _jp_set_err("unterminated object"); return 0; }
+        if (load8(_jp_buf + _jp_pos) != 58) { _jp_set_err("expected ':' after key"); return 0; }
+        _jp_pos = _jp_pos + 1;
+        _jp_skip_ws();
+        var val = _jp_parse_value();
+        if (val == 0) { return 0; }
+        json_v_obj_set(obj, k, val);
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _jp_set_err("unterminated object"); return 0; }
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 44) { _jp_pos = _jp_pos + 1; }
+        elif (c == 125) { _jp_pos = _jp_pos + 1; return obj; }
+        else { _jp_set_err("expected ',' or '}'"); return 0; }
+    }
+    return 0;
+}
+
+# Public parse entry — Str. Returns json_v* or 0.
+fn json_v_parse(src): i64 {
+    if (src == 0) { _json_err_msg = "null source"; _json_err_pos = 0; return 0; }
+    return json_v_parse_str(str_data(src), str_len(src));
+}
+
+# Public parse entry — explicit cstr+len.
+fn json_v_parse_str(buf, len): i64 {
+    _jp_buf = buf;
+    _jp_len = len;
+    _jp_pos = 0;
+    _json_err_msg = 0;
+    _json_err_pos = 0;
+    var v = _jp_parse_value();
+    if (v == 0) { return 0; }
+    _jp_skip_ws();
+    if (_jp_pos != _jp_len) {
+        _json_err_msg = "trailing content after JSON value";
+        _json_err_pos = _jp_pos;
+        return 0;
+    }
+    return v;
+}
+
+# === Serializer ===
+
+# Append a JSON-escaped string into sb, including the surrounding quotes.
+fn _jb_append_string(sb, s): i64 {
+    str_builder_add_cstr(sb, "\"");
+    var data = str_data(s);
+    var slen = str_len(s);
+    var i = 0;
+    while (i < slen) {
+        var c = load8(data + i);
+        if      (c == 34) { str_builder_add_cstr(sb, "\\\""); }
+        elif    (c == 92) { str_builder_add_cstr(sb, "\\\\"); }
+        elif    (c ==  8) { str_builder_add_cstr(sb, "\\b"); }
+        elif    (c == 12) { str_builder_add_cstr(sb, "\\f"); }
+        elif    (c == 10) { str_builder_add_cstr(sb, "\\n"); }
+        elif    (c == 13) { str_builder_add_cstr(sb, "\\r"); }
+        elif    (c ==  9) { str_builder_add_cstr(sb, "\\t"); }
+        elif    (c < 32) {
+            # Control char — emit \u00XX
+            str_builder_add_cstr(sb, "\\u00");
+            var hi = c >> 4;
+            var lo = c & 15;
+            var hb[3];
+            if (hi < 10) { store8(&hb, 48 + hi); } else { store8(&hb, 87 + hi); }
+            if (lo < 10) { store8(&hb + 1, 48 + lo); } else { store8(&hb + 1, 87 + lo); }
+            store8(&hb + 2, 0);
+            str_builder_add_cstr(sb, &hb);
+        }
+        else {
+            var bb[2];
+            store8(&bb, c);
+            store8(&bb + 1, 0);
+            str_builder_add_cstr(sb, &bb);
+        }
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "\"");
+    return 0;
+}
+
+# Emit '\n' followed by (indent * level) spaces. Pretty-mode helper.
+fn _jb_emit_indent(sb, indent, level): i64 {
+    str_builder_add_byte(sb, 10);
+    var total = indent * level;
+    var i = 0;
+    while (i < total) {
+        str_builder_add_byte(sb, 32);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Unified compact + pretty walker. `indent` param drives mode:
+# 0 = compact (":" separator), >0 = pretty (newlines, ": ").
+# `if n > 0` guards empty-container case for both modes.
+# See CHANGELOG [5.7.47].
+fn _jb_walk(sb, v, indent, level): i64 {
+    if (v == 0) { str_builder_add_cstr(sb, "null"); return 0; }
+    var t = load64(v);
+    if      (t == JTAG_NULL)  { str_builder_add_cstr(sb, "null"); }
+    elif    (t == JTAG_BOOL)  {
+        if (load64(v + 8) == 0) { str_builder_add_cstr(sb, "false"); }
+        else                    { str_builder_add_cstr(sb, "true");  }
+    }
+    elif    (t == JTAG_INT)   {
+        var nb[24];
+        var nl = fmt_int_buf(load64(v + 8), &nb);
+        store8(&nb + nl, 0);
+        str_builder_add_cstr(sb, &nb);
+    }
+    elif    (t == JTAG_FLOAT) {
+        var fb[64];
+        var fl = fmt_float_buf(load64(v + 8), &fb, 6);
+        store8(&fb + fl, 0);
+        str_builder_add_cstr(sb, &fb);
+    }
+    elif    (t == JTAG_STR)   { _jb_append_string(sb, load64(v + 8)); }
+    elif    (t == JTAG_ARR)   {
+        str_builder_add_cstr(sb, "[");
+        var arr = load64(v + 8);
+        var n = vec_len(arr);
+        if (n > 0) {
+            var i = 0;
+            while (i < n) {
+                if (i > 0) { str_builder_add_cstr(sb, ","); }
+                if (indent > 0) { _jb_emit_indent(sb, indent, level + 1); }
+                _jb_walk(sb, vec_get(arr, i), indent, level + 1);
+                i = i + 1;
+            }
+            if (indent > 0) { _jb_emit_indent(sb, indent, level); }
+        }
+        str_builder_add_cstr(sb, "]");
+    }
+    elif    (t == JTAG_OBJ)   {
+        str_builder_add_cstr(sb, "{");
+        var pairs = load64(v + 8);
+        var pn = vec_len(pairs);
+        if (pn > 0) {
+            var pi = 0;
+            while (pi < pn) {
+                if (pi > 0) { str_builder_add_cstr(sb, ","); }
+                if (indent > 0) { _jb_emit_indent(sb, indent, level + 1); }
+                var p = vec_get(pairs, pi);
+                _jb_append_string(sb, load64(p));
+                if (indent > 0) { str_builder_add_cstr(sb, ": "); }
+                else            { str_builder_add_cstr(sb, ":");  }
+                _jb_walk(sb, load64(p + 8), indent, level + 1);
+                pi = pi + 1;
+            }
+            if (indent > 0) { _jb_emit_indent(sb, indent, level); }
+        }
+        str_builder_add_cstr(sb, "}");
+    }
+    else {
+        str_builder_add_cstr(sb, "null");
+    }
+    return 0;
+}
+
+# json_v_build — serialize a tagged value tree to a Str (compact).
+fn json_v_build(v): i64 {
+    var sb = str_builder_new();
+    _jb_walk(sb, v, 0, 0);
+    return str_builder_build(sb);
+}
+
+# json_v_build_pretty — serialize a tagged value tree with newlines + indent.
+# `indent` is the spaces per level; `indent <= 0` falls back to compact.
+fn json_v_build_pretty(v, indent): i64 {
+    if (indent <= 0) { return json_v_build(v); }
+    var sb = str_builder_new();
+    _jb_walk(sb, v, indent, 0);
+    return str_builder_build(sb);
+}
+
+# ======================================================================
+# STREAMING PARSER (v5.7.41) — event-driven, no tree allocation
+# ======================================================================
+#
+# For multi-MB JSON inputs that don't fit the tagged-tree memory model.
+# Caller allocates a handler struct, fills in the callbacks they care
+# about (others stay 0 = no-op), and the driver fires events as it walks.
+#
+# Handler layout (96 bytes):
+#   +0   ctx              user pointer (1st arg to every callback)
+#   +8   on_object_start  fnptr or 0  fncall1(ctx)
+#   +16  on_object_end    fnptr or 0  fncall1(ctx)
+#   +24  on_array_start   fnptr or 0  fncall1(ctx)
+#   +32  on_array_end     fnptr or 0  fncall1(ctx)
+#   +40  on_key           fnptr or 0  fncall2(ctx, key_str)
+#   +48  on_string        fnptr or 0  fncall2(ctx, value_str)
+#   +56  on_int           fnptr or 0  fncall2(ctx, value_i64)
+#   +64  on_float         fnptr or 0  fncall2(ctx, value_f64_bits)
+#   +72  on_bool          fnptr or 0  fncall2(ctx, value_0_or_1)
+#   +80  on_null          fnptr or 0  fncall1(ctx)
+#   +88  on_error         fnptr or 0  fncall3(ctx, msg_cstr, pos)
+#
+# Lex state shared with the tree parser (_jp_buf / _jp_len / _jp_pos +
+# _json_err_msg / _json_err_pos), so existing helpers _jp_skip_ws,
+# _jp_parse_string, _jp_atoi, _jp_atof, _jp_set_err are reused as-is.
+# This keeps the streaming surface ~210 LOC instead of ~400.
+
+var JS_EV_OBJECT_START = 0;
+var JS_EV_OBJECT_END   = 1;
+var JS_EV_ARRAY_START  = 2;
+var JS_EV_ARRAY_END    = 3;
+var JS_EV_KEY          = 4;
+var JS_EV_STRING       = 5;
+var JS_EV_INT          = 6;
+var JS_EV_FLOAT        = 7;
+var JS_EV_BOOL         = 8;
+var JS_EV_NULL         = 9;
+var JS_EV_ERROR        = 10;
+var JS_EV_COUNT        = 11;
+
+var _JS_HANDLER_SIZE = 96;
+
+# Allocate a handler with all callback slots 0 (no-op). `ctx` is the
+# user pointer threaded through every callback as its first argument.
+fn json_stream_handler_new(ctx): i64 {
+    var h = alloc(_JS_HANDLER_SIZE);
+    var i = 0;
+    while (i < _JS_HANDLER_SIZE) { store64(h + i, 0); i = i + 8; }
+    store64(h, ctx);
+    return h;
+}
+
+# Bind callback `fp` to event `event_id`. Returns 0 on success, -1 on
+# bad event_id. Pass fp=0 to clear an event.
+fn json_stream_on(h, event_id, fp): i64 {
+    if (event_id < 0 || event_id >= JS_EV_COUNT) { return 0 - 1; }
+    store64(h + 8 + event_id * 8, fp);
+    return 0;
+}
+
+fn _js_ctx(h): i64 { return load64(h); }
+fn _js_cb(h, event_id): i64 { return load64(h + 8 + event_id * 8); }
+
+# Set last-error globals + fire on_error if registered.
+fn _js_emit_error(h, msg): i64 {
+    _json_err_msg = msg;
+    _json_err_pos = _jp_pos;
+    var fp = _js_cb(h, JS_EV_ERROR);
+    if (fp != 0) { fncall3(fp, _js_ctx(h), msg, _jp_pos); }
+    return 0;
+}
+
+# Relay a _jp_set_err-set error through to on_error (for paths that
+# call _jp_parse_string and get a 0 back — error globals are already
+# populated, just need to forward).
+fn _js_relay_err(h): i64 {
+    var fp = _js_cb(h, JS_EV_ERROR);
+    if (fp != 0) { fncall3(fp, _js_ctx(h), _json_err_msg, _json_err_pos); }
+    return 0;
+}
+
+# Number parser — mirrors _jp_parse_number's lex but emits via
+# callback instead of allocating json_v*. Returns 0 on success, -1 on
+# error.
+fn _js_parse_number(h): i64 {
+    var start = _jp_pos;
+    var is_float = 0;
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 45) { _jp_pos = _jp_pos + 1; }
+    while (_jp_pos < _jp_len) {
+        var c = load8(_jp_buf + _jp_pos);
+        if (c >= 48 && c <= 57) { _jp_pos = _jp_pos + 1; }
+        else { break; }
+    }
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 46) {
+        is_float = 1;
+        _jp_pos = _jp_pos + 1;
+        while (_jp_pos < _jp_len) {
+            var c2 = load8(_jp_buf + _jp_pos);
+            if (c2 >= 48 && c2 <= 57) { _jp_pos = _jp_pos + 1; }
+            else { break; }
+        }
+    }
+    if (_jp_pos < _jp_len) {
+        var ec = load8(_jp_buf + _jp_pos);
+        if (ec == 101 || ec == 69) {
+            is_float = 1;
+            _jp_pos = _jp_pos + 1;
+            if (_jp_pos < _jp_len) {
+                var sg = load8(_jp_buf + _jp_pos);
+                if (sg == 43 || sg == 45) { _jp_pos = _jp_pos + 1; }
+            }
+            while (_jp_pos < _jp_len) {
+                var c3 = load8(_jp_buf + _jp_pos);
+                if (c3 >= 48 && c3 <= 57) { _jp_pos = _jp_pos + 1; }
+                else { break; }
+            }
+        }
+    }
+    if (_jp_pos == start) { _js_emit_error(h, "expected number"); return 0 - 1; }
+    if (is_float == 1) {
+        var fbits = _jp_atof(_jp_buf + start, _jp_pos - start);
+        var fp_f = _js_cb(h, JS_EV_FLOAT);
+        if (fp_f != 0) { fncall2(fp_f, _js_ctx(h), fbits); }
+    } else {
+        var iv = _jp_atoi(_jp_buf + start, _jp_pos - start);
+        var fp_i = _js_cb(h, JS_EV_INT);
+        if (fp_i != 0) { fncall2(fp_i, _js_ctx(h), iv); }
+    }
+    return 0;
+}
+
+fn _js_parse_array(h): i64 {
+    if (load8(_jp_buf + _jp_pos) != 91) { _js_emit_error(h, "expected '['"); return 0 - 1; }
+    _jp_pos = _jp_pos + 1;
+    var fp_s = _js_cb(h, JS_EV_ARRAY_START);
+    if (fp_s != 0) { fncall1(fp_s, _js_ctx(h)); }
+    _jp_skip_ws();
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 93) {
+        _jp_pos = _jp_pos + 1;
+        var fp_e = _js_cb(h, JS_EV_ARRAY_END);
+        if (fp_e != 0) { fncall1(fp_e, _js_ctx(h)); }
+        return 0;
+    }
+    while (1 == 1) {
+        if (_js_parse_value(h) != 0) { return 0 - 1; }
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _js_emit_error(h, "unterminated array"); return 0 - 1; }
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 44) { _jp_pos = _jp_pos + 1; _jp_skip_ws(); }
+        elif (c == 93) {
+            _jp_pos = _jp_pos + 1;
+            var fp_e2 = _js_cb(h, JS_EV_ARRAY_END);
+            if (fp_e2 != 0) { fncall1(fp_e2, _js_ctx(h)); }
+            return 0;
+        } else { _js_emit_error(h, "expected ',' or ']'"); return 0 - 1; }
+    }
+    return 0;
+}
+
+fn _js_parse_object(h): i64 {
+    if (load8(_jp_buf + _jp_pos) != 123) { _js_emit_error(h, "expected '{'"); return 0 - 1; }
+    _jp_pos = _jp_pos + 1;
+    var fp_s = _js_cb(h, JS_EV_OBJECT_START);
+    if (fp_s != 0) { fncall1(fp_s, _js_ctx(h)); }
+    _jp_skip_ws();
+    if (_jp_pos < _jp_len && load8(_jp_buf + _jp_pos) == 125) {
+        _jp_pos = _jp_pos + 1;
+        var fp_e = _js_cb(h, JS_EV_OBJECT_END);
+        if (fp_e != 0) { fncall1(fp_e, _js_ctx(h)); }
+        return 0;
+    }
+    while (1 == 1) {
+        _jp_skip_ws();
+        var k = _jp_parse_string();
+        if (k == 0) { _js_relay_err(h); return 0 - 1; }
+        var fp_k = _js_cb(h, JS_EV_KEY);
+        if (fp_k != 0) { fncall2(fp_k, _js_ctx(h), k); }
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _js_emit_error(h, "unterminated object"); return 0 - 1; }
+        if (load8(_jp_buf + _jp_pos) != 58) { _js_emit_error(h, "expected ':' after key"); return 0 - 1; }
+        _jp_pos = _jp_pos + 1;
+        if (_js_parse_value(h) != 0) { return 0 - 1; }
+        _jp_skip_ws();
+        if (_jp_pos >= _jp_len) { _js_emit_error(h, "unterminated object"); return 0 - 1; }
+        var c = load8(_jp_buf + _jp_pos);
+        if (c == 44) { _jp_pos = _jp_pos + 1; }
+        elif (c == 125) {
+            _jp_pos = _jp_pos + 1;
+            var fp_e2 = _js_cb(h, JS_EV_OBJECT_END);
+            if (fp_e2 != 0) { fncall1(fp_e2, _js_ctx(h)); }
+            return 0;
+        } else { _js_emit_error(h, "expected ',' or '}'"); return 0 - 1; }
+    }
+    return 0;
+}
+
+fn _js_parse_value(h): i64 {
+    _jp_skip_ws();
+    if (_jp_pos >= _jp_len) { _js_emit_error(h, "unexpected EOF"); return 0 - 1; }
+    var c = load8(_jp_buf + _jp_pos);
+    if (c == 123) { return _js_parse_object(h); }
+    if (c == 91)  { return _js_parse_array(h); }
+    if (c == 34)  {
+        var s = _jp_parse_string();
+        if (s == 0) { _js_relay_err(h); return 0 - 1; }
+        var fp_s = _js_cb(h, JS_EV_STRING);
+        if (fp_s != 0) { fncall2(fp_s, _js_ctx(h), s); }
+        return 0;
+    }
+    if (c == 116) {
+        if (_jp_pos + 3 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "rue", 3) == 1) {
+            _jp_pos = _jp_pos + 4;
+            var fp_b = _js_cb(h, JS_EV_BOOL);
+            if (fp_b != 0) { fncall2(fp_b, _js_ctx(h), 1); }
+            return 0;
+        }
+        _js_emit_error(h, "expected 'true'");
+        return 0 - 1;
+    }
+    if (c == 102) {
+        if (_jp_pos + 4 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "alse", 4) == 1) {
+            _jp_pos = _jp_pos + 5;
+            var fp_b = _js_cb(h, JS_EV_BOOL);
+            if (fp_b != 0) { fncall2(fp_b, _js_ctx(h), 0); }
+            return 0;
+        }
+        _js_emit_error(h, "expected 'false'");
+        return 0 - 1;
+    }
+    if (c == 110) {
+        if (_jp_pos + 3 < _jp_len && memeq(_jp_buf + _jp_pos + 1, "ull", 3) == 1) {
+            _jp_pos = _jp_pos + 4;
+            var fp_n = _js_cb(h, JS_EV_NULL);
+            if (fp_n != 0) { fncall1(fp_n, _js_ctx(h)); }
+            return 0;
+        }
+        _js_emit_error(h, "expected 'null'");
+        return 0 - 1;
+    }
+    if (c == 45 || (c >= 48 && c <= 57)) {
+        return _js_parse_number(h);
+    }
+    _js_emit_error(h, "unexpected character");
+    return 0 - 1;
+}
+
+# Public stream-parse entry — explicit cstr+len+handler. Returns 0 on
+# success, -1 on error. After error, callers can read json_last_error()
+# and json_last_error_pos(); the JS_EV_ERROR callback (if registered)
+# already fired.
+fn json_stream_parse(buf, len, h): i64 {
+    _jp_buf = buf;
+    _jp_len = len;
+    _jp_pos = 0;
+    _json_err_msg = 0;
+    _json_err_pos = 0;
+    if (_js_parse_value(h) != 0) { return 0 - 1; }
+    _jp_skip_ws();
+    if (_jp_pos != _jp_len) {
+        _js_emit_error(h, "trailing content after JSON value");
+        return 0 - 1;
+    }
+    return 0;
+}
+
+# Convenience: stream-parse from a Str.
+fn json_stream_parse_str(src, h): i64 {
+    if (src == 0) { _json_err_msg = "null source"; _json_err_pos = 0; return 0 - 1; }
+    return json_stream_parse(str_data(src), str_len(src), h);
+}
+
+# ======================================================================
+# JSON POINTER (v5.7.42, RFC 6901)
+# ======================================================================
+#
+# Walk the tagged tree by slash-separated path. Returns the referenced
+# json_v* or 0 (not found / invalid pointer / can't descend into scalar).
+#
+# Empty pointer ""           → whole document
+# "/foo"                     → root["foo"]
+# "/foo/0/bar"               → root["foo"][0]["bar"]
+# "/" (just slash)           → root[""] (empty-string key)
+# "/a/"                      → a[""] (trailing-slash empty token)
+#
+# Tokens are unescaped per RFC 6901 §3: "~1" → "/", "~0" → "~". The
+# left-to-right single-pass unescape below is equivalent to the spec's
+# two-pass "~1 then ~0" order — only "~0" and "~1" are valid escapes,
+# so any other "~X" is an error and returns 0.
+#
+# Array tokens must match `0|[1-9][0-9]*` per RFC 6901 §4. The "-"
+# (next-element) token is append-only and has no read meaning, so
+# it returns 0.
+
+# Look up (buf, len) as a key in OBJ value `v`. Length-explicit so
+# tokens with interior NUL bytes (theoretical via `\u0000`) still match.
+fn _jp_obj_lookup(v, buf, len): i64 {
+    if (load64(v) != JTAG_OBJ) { return 0; }
+    var pairs = load64(v + 8);
+    var n = vec_len(pairs);
+    var i = 0;
+    while (i < n) {
+        var p = vec_get(pairs, i);
+        var ks = load64(p);
+        if (str_len(ks) == len) {
+            if (memeq(str_data(ks), buf, len) == 1) {
+                return load64(p + 8);
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Parse (buf, len) as a strict array index per RFC 6901 §4. Returns
+# index >= 0, or -1 on invalid (leading zero, non-digit, empty,
+# the "-" next-element token, etc.).
+fn _jp_parse_idx(buf, len): i64 {
+    if (len == 0) { return 0 - 1; }
+    var c0 = load8(buf);
+    if (c0 == 48) { if (len == 1) { return 0; } return 0 - 1; }
+    if (c0 < 49 || c0 > 57) { return 0 - 1; }
+    var n = c0 - 48;
+    var i = 1;
+    while (i < len) {
+        var c = load8(buf + i);
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+# Unescape one reference token from (src, src_len) into a freshly
+# allocated buffer. Layout: u64 length prefix at offset 0, decoded
+# bytes from offset 8, NUL byte at offset 8+len. Returns the alloc
+# pointer, or 0 on bad escape (lone "~" or "~X" where X != 0/1).
+fn _jp_token_unescape(src, src_len): i64 {
+    var out = alloc(src_len + 8 + 1);
+    var oi = 0;
+    var i = 0;
+    while (i < src_len) {
+        var c = load8(src + i);
+        if (c == 126) {
+            i = i + 1;
+            if (i >= src_len) { return 0; }
+            var e = load8(src + i);
+            if      (e == 48) { store8(out + 8 + oi, 126); oi = oi + 1; }
+            elif    (e == 49) { store8(out + 8 + oi,  47); oi = oi + 1; }
+            else { return 0; }
+            i = i + 1;
+        } else {
+            store8(out + 8 + oi, c);
+            oi = oi + 1;
+            i = i + 1;
+        }
+    }
+    store8(out + 8 + oi, 0);
+    store64(out, oi);
+    return out;
+}
+
+# Public entry — explicit buf+len pointer string.
+fn json_v_pointer_cstr(v, ptr, plen): i64 {
+    if (v == 0) { return 0; }
+    if (plen == 0) { return v; }
+    if (load8(ptr) != 47) { return 0; }   # must start with '/'
+    var pos = 1;
+    var cur = v;
+    while (pos <= plen) {
+        var start = pos;
+        while (pos < plen) {
+            if (load8(ptr + pos) == 47) { break; }
+            pos = pos + 1;
+        }
+        var tok_len = pos - start;
+        var ub = _jp_token_unescape(ptr + start, tok_len);
+        if (ub == 0) { return 0; }
+        var ulen = load64(ub);
+        var ubuf = ub + 8;
+        if (cur == 0) { return 0; }
+        var t = load64(cur);
+        if (t == JTAG_OBJ) {
+            cur = _jp_obj_lookup(cur, ubuf, ulen);
+        } elif (t == JTAG_ARR) {
+            var idx = _jp_parse_idx(ubuf, ulen);
+            if (idx < 0) { return 0; }
+            cur = json_v_arr_get(cur, idx);
+        } else {
+            return 0;
+        }
+        if (cur == 0) { return 0; }
+        if (pos == plen) { return cur; }
+        pos = pos + 1;
+    }
+    return cur;
+}
+
+# Convenience: pointer as a Str.
+fn json_v_pointer(v, ptr): i64 {
+    if (ptr == 0) { return v; }
+    return json_v_pointer_cstr(v, str_data(ptr), str_len(ptr));
+}

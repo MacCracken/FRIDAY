@@ -1,0 +1,680 @@
+# regression.cyr — testing-stdlib primitives carved from
+# `programs/check.cyr` at v5.9.42.
+#
+# Usage: include "lib/regression.cyr"
+# Requires: string.cyr, syscalls.cyr (host arch variant),
+#           io.cyr, alloc.cyr, str.cyr, fmt.cyr,
+#           net.cyr (v5.10.11 — `regression_network_probe`
+#           composes on `net_connect_nb`).
+#
+# What this module provides — ~22 reusable primitives that
+# accumulated through cyrius's v5.9.6 → v5.9.41 dispatcher
+# work, generalized so downstream test runners (yantra,
+# agnosys/mabda smoke suites, future runners) can reach for
+# the same shapes via a single include rather than re-rolling
+# fork/exec/SSH/timeout boilerplate.
+#
+# Surface groups:
+#   - **Display**: section header, pass/fail line, terse print,
+#     ANSI-color constants.
+#   - **Buffer scan**: prefix compare, substring count,
+#     file-contains-substring.
+#   - **Process**: pipe-stdin-to-binary (capture / discard),
+#     fork+exec with bounded timeout, exec-and-capture,
+#     exec-and-discard, exec-with-arg variants for both
+#     stdout-only and combined stdout+stderr capture,
+#     exec-in-cwd with up-to-3 args ± env-extras.
+#   - **Network**: TCP probe (non-blocking connect + poll
+#     timeout) — replaces bash `/dev/tcp` pattern.
+#   - **SSH cluster**: target resolver (env override + default),
+#     reachability skip-check, remote-exit, remote-exec-capture,
+#     scp-to, macOS codesign-remote.
+#   - Compile-shaped helpers (`pipe-to-compiler-and-run`,
+#     `compile-capture-stderr`) live in `programs/check.cyr`
+#     because they wrap `_self_host_pipe`'s 2 MB source-cap +
+#     raw-status return convention; the lib's
+#     `regression_pipe_to_bin*` use a 1 MB cap and WEXITSTATUS,
+#     which are right for arbitrary binaries but not for cyrius
+#     source. Callers that need both: compose
+#     `regression_pipe_to_bin_capture` + `regression_exec_run`
+#     manually.
+#
+# What this module does NOT provide — explicit non-goals:
+#   - A test framework with assert macros / fixture discovery /
+#     parallel runners. That's `lib/test.cyr` material; the
+#     decision (memory pin 2026-04-30) is to keep the framework
+#     surface narrow + earn it on consumer ask, not bundle here.
+#   - cyrius-specific gate dispatchers (`_tcyr_relay_gate` /
+#     `_expected_output_gate` shapes). Those live in
+#     `programs/check.cyr` because they use audit-internal
+#     accounting (`_check`, ROOT_PATH, etc.); generalizing them
+#     would need parametrizing call shapes that are dispatcher-
+#     idiosyncratic.
+#   - Cyrius-specific tool integration (`_cyrlint_count_marker`
+#     uses `CYRLINT_PATH`, `_ts_mode_run` uses cycc mode flags).
+#     Those stay in their dispatchers as thin wrappers over the
+#     primitives this module exports.
+#
+# Calling conventions:
+#   - All `regression_*` verbs that fork+exec take an explicit
+#     `envp` arg (a pointer to a null-terminated array of
+#     "KEY=VAL" cstrings). Caller passes their own envp; the
+#     module never invents one. Use a 1-element array of `0` for
+#     "empty environment".
+#   - Functions returning exit codes use the stdlib convention:
+#     0..127 normal exit; 128+sig on signal; -1 on
+#     fork/exec/syscall failure; -2 specifically for timeout.
+
+# ── Display ───────────────────────────────
+
+var REGRESSION_ANSI_RED   = "\x1b[31m";
+var REGRESSION_ANSI_GREEN = "\x1b[32m";
+var REGRESSION_ANSI_RESET = "\x1b[0m";
+
+# Print with no trailing newline.
+fn regression_print(s): i64 {
+    var n = strlen(s);
+    syscall(SYS_WRITE, 1, s, n);
+    return 0;
+}
+
+# Section header: "── name ──\n".
+fn regression_section(name): i64 {
+    regression_print("── ");
+    regression_print(name);
+    regression_print(" ──");
+    regression_print("\n");
+    return 0;
+}
+
+# Record + print a PASS/FAIL line for `name` based on `exit_code`
+# (0 = PASS, anything else = FAIL). Returns the exit code so
+# callers can chain `if (regression_check(...) != 0) { ... }`.
+fn regression_check(name, exit_code): i64 {
+    regression_print("  ");
+    if (exit_code == 0) {
+        regression_print(REGRESSION_ANSI_GREEN);
+        regression_print("PASS");
+    } else {
+        regression_print(REGRESSION_ANSI_RED);
+        regression_print("FAIL");
+    }
+    regression_print(REGRESSION_ANSI_RESET);
+    regression_print(": ");
+    regression_print(name);
+    regression_print("\n");
+    return exit_code;
+}
+
+# ── Buffer scan ───────────────────────────
+
+# Returns 1 if buffer at `p` starts with cstring `s` for n bytes;
+# 0 otherwise. The byte-level prefix compare every other scan
+# helper composes on top of.
+fn regression_buf_eq(p, s, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Count occurrences of cstring `needle` in `buf[0..n]`. Skips
+# past each match (no overlap counting). Empty needle returns 0.
+fn regression_count_substr(buf, n, needle): i64 {
+    var nlen = strlen(needle);
+    if (nlen == 0) { return 0; }
+    var count = 0;
+    var i = 0;
+    while (i + nlen <= n) {
+        if (regression_buf_eq(buf + i, needle, nlen) == 1) {
+            count = count + 1;
+            i = i + nlen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return count;
+}
+
+# Read `path`'s contents into a fresh buffer; return 1 if the
+# cstring `substr` appears anywhere in those bytes, else 0.
+# Returns 0 also on read failure (the only file-not-readable
+# distinction the audit shape needs). Uses `strstr` from
+# `lib/string.cyr` for the actual scan.
+fn regression_file_contains_substr(path, substr): i64 {
+    var cap = 524288;
+    var buf = alloc(cap + 1);
+    var n = file_read_all(path, buf, cap);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);
+    if (strstr(buf, substr) >= 0) { return 1; }
+    return 0;
+}
+
+# ── Process: pipe-source-to-binary ──────────────────────────
+
+# Pipe `src_path`'s bytes to `bin_path`'s stdin. Captures stdout
+# to `out_path` (pass 0 for /dev/null) and discards stderr.
+# Returns WEXITSTATUS or 128+sig on signal; -1 on syscall
+# failure. Fork+exec with explicit envp (caller supplies; pass
+# `0`-terminated array for empty env).
+fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
+    var src_cap = 1048576;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n < 0) { src_n = 0; }
+
+    var out_fd = 0 - 1;
+    if (out_path == 0) {
+        out_fd = sys_open("/dev/null", 1, 0);
+    } else {
+        out_fd = sys_open(out_path, 577, 420);
+    }
+    if (out_fd < 0) { return 0 - 1; }
+
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 1; }
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(rfd); sys_close(wfd); sys_close(out_fd);
+        return 0 - 1;
+    }
+    if (pid == 0) {
+        sys_close(wfd);
+        sys_dup2(rfd, 0);
+        sys_close(rfd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(rfd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(wfd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(wfd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 0 - 1;
+}
+
+# Pipe `src_path`'s bytes to `bin_path`'s stdin; discard stdout +
+# stderr; return WEXITSTATUS or 128+sig. Thin wrapper over
+# `regression_pipe_to_bin_capture` with /dev/null output.
+fn regression_pipe_to_bin(bin_path, src_path, envp): i64 {
+    return regression_pipe_to_bin_capture(bin_path, src_path, 0, envp);
+}
+
+# ── Process: bounded run ──────────────────
+
+# Fork + exec with wall-clock timeout. Polls
+# `waitpid(WNOHANG)` every 100 ms; on timeout SIGKILLs the
+# child + reaps. Replaces the bash `timeout N binary` pattern.
+#
+# Returns:
+#   0..127     normal exit code
+#   128..192   128 + WTERMSIG (signal-killed)
+#   -1         fork/exec failure
+#   -2         timeout (child SIGKILL'd)
+fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    var elapsed = 0;
+    var ts[2];
+    store64(&ts,     0);
+    store64(&ts + 8, 100000000);
+    while (elapsed < timeout_ms) {
+        var w = sys_waitpid(pid, &stbuf, 1);
+        if (w == pid) {
+            var status = load32(&stbuf);
+            if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+            if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+            return 0 - 1;
+        }
+        syscall(35, &ts, 0);
+        elapsed = elapsed + 100;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, &stbuf, 0);
+    return 0 - 2;
+}
+
+# ── Process: exec + capture ───────────────
+
+# Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
+# discard stderr. Returns bytes captured (>= 0) or 0 on
+# fork/open failure. envp threaded through.
+fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
+    var out_path = _regression_tmp_path("audit_xc_");
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var dn_e = sys_open("/dev/null", 1, 0);
+        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
+}
+
+# Run `bin_path` (no args), discard stdout + stderr. Returns
+# WEXITSTATUS or 128+sig.
+fn regression_exec_run(bin_path, envp): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[2];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    return 0 - 1;
+}
+
+# Run `bin_path arg`, capture stdout into `buf[0..buflen)`,
+# discard stderr. Returns bytes captured or 0 on failure.
+fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp): i64 {
+    var out_path = _regression_tmp_path("audit_xa_");
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var dn_e = sys_open("/dev/null", 1, 0);
+        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        var argv[3];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, arg);
+        store64(&argv + 16, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
+}
+
+# Variant of `regression_exec_with_arg_capture` that captures
+# BOTH stdout and stderr into the same buffer. Used when the
+# tool emits diagnostics to stderr but the gate wants to scan
+# them (e.g. cyrlint warnings).
+fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp): i64 {
+    var out_path = _regression_tmp_path("audit_xa_");
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
+    if (pid == 0) {
+        sys_dup2(out_fd, 1);
+        sys_dup2(out_fd, 2);
+        sys_close(out_fd);
+        var dn_r = sys_open("/dev/null", 0, 0);
+        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        var argv[3];
+        store64(&argv,     bin_path);
+        store64(&argv + 8, arg);
+        store64(&argv + 16, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var total = file_read_all(out_path, buf, buflen);
+    sys_unlink(out_path);
+    if (total < 0) { return 0; }
+    return total;
+}
+
+# ── Network ───────────────────────────────
+
+# TCP probe — "is `addr_ipv4`:`port` reachable within
+# `timeout_ms`?". Replaces the bash `/dev/tcp` trick.
+# Returns 1 on reachable, 0 otherwise.
+#
+# `addr_ipv4` is a network-byte-order packed uint32 (e.g.
+# `1 | (1 << 8) | (1 << 16) | (1 << 24)` for 1.1.1.1 — same
+# shape `lib/net.cyr` uses).
+#
+# v5.10.11: factored to compose on `lib/net.cyr::net_connect_nb`.
+# Pre-v5.10.11 the syscall sequence (socket / fcntl O_NONBLOCK /
+# connect / poll / getsockopt SO_ERROR) was inlined here AND
+# in sandhi's `_sandhi_conn_connect_nb` — same shape twice
+# with subtly different blocking-mode restore behavior.
+# Both now compose on the stdlib primitive (sandhi's
+# switchover is sandhi-side per ADR 0001).
+fn regression_network_probe(addr_ipv4, port, timeout_ms): i64 {
+    var fd = syscall(41, 2, 1, 0);                          # socket(AF_INET, SOCK_STREAM)
+    if (fd < 0) { return 0; }
+    var rc = net_connect_nb(fd, addr_ipv4, port, timeout_ms);
+    sys_close(fd);
+    if (rc == 0) { return 1; }
+    return 0;
+}
+
+# ── SSH cluster ───────────────────────────
+
+# Resolve an SSH target name. Honors env override
+# (`getenv(env_name)` if set), else returns `default_name`.
+# Used for the cyrius cross-host verification cluster (pi /
+# cass / ecb wired in `~/.ssh/config`).
+fn regression_ssh_target(env_name, default_name): i64 {
+    var v = getenv(env_name);
+    if (v == 0) { return default_name; }
+    return v;
+}
+
+# Probe whether `target` is reachable via
+# `ssh -o BatchMode=yes -o ConnectTimeout=2 target "echo alive"`.
+# Returns 1 if reachable, 0 otherwise. Used by SSH-cluster gates
+# to skip cleanly when a host isn't currently connectable.
+#
+# `echo alive` (not `true`) — v5.9.32 portability fix: `true` is
+# a Unix builtin missing on Windows PowerShell remotes (cass);
+# `echo alive` works on Linux + macOS + Windows-PowerShell.
+fn regression_ssh_skip_check(target): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[8];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  "-o");
+        store64(&argv + 16, "BatchMode=yes");
+        store64(&argv + 24, "-o");
+        store64(&argv + 32, "ConnectTimeout=2");
+        store64(&argv + 40, target);
+        store64(&argv + 48, "echo alive");
+        store64(&argv + 56, 0);
+        var envp[1];
+        store64(&envp, 0);
+        sys_execve("/usr/bin/ssh", &argv, &envp);
+        sys_execve("/bin/ssh",     &argv, &envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) {
+        if (WEXITSTATUS(status) == 0) { return 1; }
+    }
+    return 0;
+}
+
+# `scp -q local_path target:remote_path`. Returns 0 on success,
+# non-zero on failure. Honors caller-supplied envp (for any
+# proxy-jump / agent-forwarding environment threading).
+# `-q` for quiet (suppresses progress meter on stderr).
+fn regression_scp_to(target, local_path, remote_path, envp): i64 {
+    var dest = _regression_join3(target, ":", remote_path);
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        var argv[5];
+        store64(&argv,      "scp");
+        store64(&argv + 8,  "-q");
+        store64(&argv + 16, local_path);
+        store64(&argv + 24, dest);
+        store64(&argv + 32, 0);
+        sys_execve("/usr/bin/scp", &argv, envp);
+        sys_execve("/bin/scp",     &argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# `ssh target command` — discard stdout/stderr; return
+# `command`'s exit status (or 128+sig on signal, -1 on any
+# failure). Used by SSH-cluster gates that only care about the
+# exit code.
+fn regression_ssh_remote_exit(target, command, envp): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        var dn1 = sys_open("/dev/null", 1, 0);
+        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, command);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, envp);
+        sys_execve("/bin/ssh",     &argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# `ssh target command > out_path` — capture stdout into the
+# given file (stderr to /dev/null). Returns the command's
+# exit status (or -1 on failure).
+fn regression_ssh_remote_exec_capture(target, command, out_path, envp): i64 {
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        var argv[4];
+        store64(&argv,      "ssh");
+        store64(&argv + 8,  target);
+        store64(&argv + 16, command);
+        store64(&argv + 24, 0);
+        sys_execve("/usr/bin/ssh", &argv, envp);
+        sys_execve("/bin/ssh",     &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# `ssh target chmod +x remote_path && codesign -s - remote_path` —
+# adhoc-codesign a Mach-O binary on a remote macOS host (required
+# after `scp` since the kernel rejects unsigned new files on
+# Apple Silicon, and `scp -p` doesn't always preserve the +x
+# bit). Returns the chained exit code; the `2>/dev/null`
+# swallows codesign's "not yet signed" pre-warning.
+fn regression_codesign_remote(target, remote_path, envp): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "chmod +x ");
+    str_builder_add_cstr(sb, remote_path);
+    str_builder_add_cstr(sb, " && codesign -s - ");
+    str_builder_add_cstr(sb, remote_path);
+    str_builder_add_cstr(sb, " 2>/dev/null");
+    var cmd = str_data(str_builder_build(sb));
+    return regression_ssh_remote_exit(target, cmd, envp);
+}
+
+# ── Process: exec-in-cwd with up to 3 args ─────────────────
+
+# Run `bin_path arg1 arg2 arg3` with cwd changed to `work_dir`.
+# Capture stdout to `out_path` (pass 0 for /dev/null). Trailing
+# `0` args are skipped (so 1-arg / 2-arg invocations don't need
+# distinct fns). Returns exit status.
+fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp): i64 {
+    var out_fd = 0 - 1;
+    if (out_path == 0) {
+        out_fd = sys_open("/dev/null", 1, 0);
+    } else {
+        out_fd = sys_open(out_path, 577, 420);
+    }
+    if (out_fd < 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(out_fd); return 0 - 1; }
+    if (pid == 0) {
+        var dn0 = sys_open("/dev/null", 0, 0);
+        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var dn2 = sys_open("/dev/null", 1, 0);
+        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        sys_chdir(work_dir);
+        var argv[5];
+        var ai = 0;
+        store64(&argv + ai * 8, bin_path); ai = ai + 1;
+        if (arg1 != 0) { store64(&argv + ai * 8, arg1); ai = ai + 1; }
+        if (arg2 != 0) { store64(&argv + ai * 8, arg2); ai = ai + 1; }
+        if (arg3 != 0) { store64(&argv + ai * 8, arg3); ai = ai + 1; }
+        store64(&argv + ai * 8, 0);
+        sys_execve(bin_path, &argv, envp);
+        sys_exit(127);
+    }
+    sys_close(out_fd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var status = load32(&stbuf);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    return 0 - 1;
+}
+
+# Variant of `regression_exec_in_dir3` that prepends extra
+# "KEY=VAL" cstrings to the inherited envp. `env_extras_vec` is
+# a `lib/vec.cyr`-style vector of cstrings; pass 0 for "no
+# extras". Used by gates that need to inject CYRIUS_HOME=… etc.
+# without baking it into the global ENVP.
+fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_path, envp): i64 {
+    if (env_extras_vec == 0) {
+        return regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp);
+    }
+    # Count base envp entries.
+    var base_n = 0;
+    if (envp != 0) {
+        while (load64(envp + base_n * 8) != 0) { base_n = base_n + 1; }
+    }
+    var extra_n = vec_len(env_extras_vec);
+    var merged = alloc((base_n + extra_n + 1) * 8);
+    var mi = 0;
+    var ei = 0;
+    while (ei < extra_n) {
+        store64(merged + mi * 8, vec_get(env_extras_vec, ei));
+        mi = mi + 1; ei = ei + 1;
+    }
+    var bi = 0;
+    while (bi < base_n) {
+        store64(merged + mi * 8, load64(envp + bi * 8));
+        mi = mi + 1; bi = bi + 1;
+    }
+    store64(merged + mi * 8, 0);
+    return regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, merged);
+}
+
+# ── Internal helpers (underscore prefix; not part of the
+# public surface but consistent within this module) ────────
+
+# Build "/tmp/<prefix><pid>" — used by the *_capture variants
+# for their scratch files. Same shape as `programs/check.cyr`'s
+# `_tmp_path` so cleanup behavior + collision properties are
+# identical.
+fn _regression_tmp_path(prefix): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/");
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add_int(sb, sys_getpid());
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+# Build "<a><b><c>" as a single cstring. Used by the SSH
+# helpers to produce the "target:remote_path" form scp wants.
+fn _regression_join3(a, b, c): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    return str_data(str_builder_build(sb));
+}

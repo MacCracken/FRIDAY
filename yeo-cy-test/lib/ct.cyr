@@ -1,0 +1,78 @@
+# ct.cyr — constant-time primitives for crypto code
+# Usage: include "lib/ct.cyr"
+#
+# These helpers avoid data-dependent branches in codegen. They are the
+# preferred replacement for hand-rolled mask-and-xor at secret-dependent
+# decision points (sigil's `ge_cmov`, `_ge_table_select`, canonical-S
+# reject path, etc.).
+#
+# Contract: the compiled output must contain no conditional branch that
+# depends on the `cond` argument. Each helper uses the widely-used
+# mask-xor pattern:
+#   mask = 0 - cond     ; 0 if cond == 0, all-1s if cond == 1
+#   r    = a ^ (mask & (a ^ b))
+# which reduces to `a` when cond == 0 and `b` when cond == 1 with only
+# arithmetic + bitwise ops.
+
+# Branchless select: returns `a` if cond == 0, `b` if cond == 1.
+# Undefined for cond outside {0, 1}.
+fn ct_select(cond, a, b): i64 {
+    var mask = 0 - cond;
+    return a ^ (mask & (a ^ b));
+}
+
+# Branchless byte-array equality. Returns 1 if `a[0..n] == b[0..n]`,
+# 0 otherwise. No data-dependent branch on the comparison result —
+# the canonical XOR-accumulate. Both buffers must be exactly `n`
+# bytes; equal-length is a contract on the caller (length is not
+# treated as secret here, so a length mismatch is a caller bug,
+# not a CT-leak risk handled by this fn). For variable-length
+# comparisons where length itself is non-secret but unequal-length
+# inputs are valid, hand-roll a length check that early-returns 0
+# AROUND `ct_eq_bytes` — see sigil's `lib/sigil.cyr:1316` `ct_eq`
+# for the dual-length wrapper shape.
+#
+# Pinned v5.9.18 (agnosys 1.1.2 filing 2026-05-06). Pre-v5.9.18
+# this primitive was hand-rolled three places — sigil:1316
+# (`ct_eq`, dual-length), sigil:1332 (`ct_eq_32`, 32-byte fast
+# path), agnosys/src/certpin.cyr:120 (`certpin_ct_streq`,
+# cstring variant). v5.9.18 stdlib adds the single-length core;
+# v5.9.20 adds the dual-length companion (paired with sigil
+# 3.0.2 retiring its hand-roll). `ct_eq_32` had zero call sites
+# in sigil's source, so it's dropped entirely — callers using a
+# 32-byte fixed compare can write `ct_eq_bytes(a, b, 32)`
+# directly.
+fn ct_eq_bytes(a, b, n): i64 {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        acc = acc | (load8(a + i) ^ load8(b + i));
+        i = i + 1;
+    }
+    return acc == 0;
+}
+
+# Branchless dual-length byte-array equality. Returns 0
+# immediately on length mismatch (length is NOT treated as
+# secret — that's the caller's contract), then runs the
+# constant-time XOR-accumulate over the equal-length common
+# prefix. Returns 1 only if both lengths match AND every byte
+# matches.
+#
+# Use this when the lengths themselves can validly differ at
+# the call site (e.g. password / hash compares where the
+# stored hash and candidate input may be different lengths).
+# Use `ct_eq_bytes(a, b, n)` when lengths are equal-by-
+# construction (fixed-size MAC tags, fixed-size signatures).
+#
+# Pinned v5.9.20 (sigil-paired consolidation). Pre-v5.9.20 this
+# was sigil's hand-rolled `ct_eq(a, a_len, b, b_len)` at
+# `sigil/src/ct.cyr:10`; v5.9.20 lifts the canonical shape into
+# stdlib + sigil 3.0.2 retires its hand-roll. Renamed
+# `ct_eq_bytes_lens` (suffix flags the dual-length variant)
+# rather than bare `ct_eq` to avoid the scalar-vs-buffer
+# ambiguity flagged in agnosys's 2026-05-06 filing.
+fn ct_eq_bytes_lens(a, a_len, b, b_len): i64 {
+    if (a_len != b_len) { return 0; }
+    return ct_eq_bytes(a, b, a_len);
+}

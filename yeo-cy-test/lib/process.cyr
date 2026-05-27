@@ -1,0 +1,403 @@
+# process.cyr — process management
+# Usage: include "lib/process.cyr"
+# Requires: lib/syscalls.cyr, lib/string.cyr, lib/alloc.cyr, lib/tagged.cyr
+#
+# v5.10.18 — was hard-blocked on `O_WRONLY` from `lib/io.cyr` for
+# the `/dev/null` redirect in `run_capture`; cyrius's own
+# `programs/check.cyr` (the only in-tree consumer) happened to
+# include io.cyr first so it parsed clean, but every downstream
+# consumer that didn't (agnosys 1.1.x specifically) hit
+# `error: undefined variable 'O_WRONLY'`. Replaced with the
+# literal `1` + a comment to keep this module self-sufficient
+# (matching the pattern in `lib/fdlopen.cyr:234` —
+# `# O_RDONLY`).
+
+# Build argv array and execve. Called in child after fork. Does not return.
+# argv[40] = 5 × 8 B (cmd + up to 2 args + NUL + 1 slot headroom); envp[16] =
+# 2 × 8 B (envp[0] + NUL). var buf[N] is N BYTES per CLAUDE.md buffer contract;
+# the pre-v5.11.60 var argv[4] / var envp[1] reserved only 4 and 1 BYTES and
+# silently corrupted the stack on every call. See CHANGELOG [5.11.60].
+fn _exec3(cmd, arg1, arg2): i64 {
+    var argv[40];
+    store64(&argv, cmd);
+    var ai = 1;
+    if (arg1 != 0) { store64(&argv + ai * 8, arg1); ai = ai + 1; }
+    if (arg2 != 0) { store64(&argv + ai * 8, arg2); ai = ai + 1; }
+    store64(&argv + ai * 8, 0);
+    var envp[16];
+    store64(&envp, 0);
+    sys_execve(cmd, &argv, &envp);
+    sys_exit(127);
+}
+
+# Run a command and wait for it. Returns Result(exit_code).
+fn run(cmd, arg1, arg2): Result {
+    var pid = sys_fork();
+    if (pid < 0) { return Err(0 - pid); }
+    if (pid == 0) { _exec3(cmd, arg1, arg2); }
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) { return Ok(WEXITSTATUS(status)); }
+    if (WIFSIGNALED(status) == 1) { return Ok(128 + WTERMSIG(status)); }
+    return Err(1);
+}
+
+# Run a command and capture stdout into a buffer.
+# Returns Result(bytes_read).
+fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { return Err(0 - pr); }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd);
+        sys_close(write_fd);
+        return Err(0 - pid);
+    }
+    if (pid == 0) {
+        sys_close(read_fd);
+        sys_dup2(write_fd, 1);
+        sys_close(write_fd);
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (Linux/macOS native; PE backend reroutes)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        _exec3(cmd, arg1, arg2);
+    }
+    sys_close(write_fd);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(read_fd, buf + total, buflen - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= buflen) { rgo = 0; }
+        }
+    }
+    sys_close(read_fd);
+    var status_buf[1];
+    sys_waitpid(pid, &status_buf, 0);
+    return Ok(total);
+}
+
+# Spawn a command in the background (don't wait).
+# Returns Result(child_pid).
+fn spawn(cmd, arg1, arg2): Result {
+    var pid = sys_fork();
+    if (pid < 0) { return Err(0 - pid); }
+    if (pid == 0) { _exec3(cmd, arg1, arg2); }
+    return Ok(pid);
+}
+
+# Wait for a specific pid. Returns Result(exit_code).
+fn wait_pid(pid): Result {
+    var status_buf[1];
+    var r = sys_waitpid(pid, &status_buf, 0);
+    if (r < 0) { return Err(0 - r); }
+    var status = load32(&status_buf);
+    if (WIFEXITED(status) == 1) { return Ok(WEXITSTATUS(status)); }
+    if (WIFSIGNALED(status) == 1) { return Ok(128 + WTERMSIG(status)); }
+    return Err(1);
+}
+
+# Get current process ID
+fn getpid(): i64 { return sys_getpid(); }
+
+# Get parent process ID
+fn getppid(): i64 { return sys_getppid(); }
+
+# ================================================================
+# Enhanced subprocess — variable args via vec, env passing
+# ================================================================
+#
+# Two argv-shape families (v5.10.44):
+#
+# - `exec_vec` / `exec_capture` / `exec_env` — argv elements are
+#   **cstr** (raw byte pointers; literal-friendly). `execve(2)`
+#   reads each as a NUL-terminated string directly. Use this shape
+#   when callers push cstr literals: `vec_push(a, "/usr/bin/ls")`.
+#
+# - `exec_vec_str` / `exec_capture_str` / `exec_env_str` — argv
+#   elements are **Str fat-pointers** (16-byte `{data, len}` heap
+#   structs). `str_data` is extracted on the way into execve's
+#   argv. Use this shape when callers push runtime-built Strs:
+#   `vec_push(a, str_from("/bin/" + name))`.
+#
+# **Do not mix shapes in one vec.** Pushing a Str into the cstr
+# family (or a cstr into the Str family) is silently broken —
+# `execve` reads the wrong 8 bytes as the path → typically rc=127
+# (path not found). v5.10.44 added the `_str` family specifically
+# to give Str-pushing consumers a working verb; pre-v5.10.44 the
+# natural cyrius idiom (Str push) silently failed under exec_vec.
+# Filed at `docs/development/issues/2026-05-10-process-exec-str-
+# cstr-ambiguity.md` (argonaut-blocking).
+#
+# Both shapes share the same envp shape with their family — the
+# cstr family pushes cstr envp entries (KEY=VALUE strings as cstr
+# literals), the _str family pushes Str envp entries. envp shape
+# follows the family, not the call site.
+
+# Run command with a vec of cstr argv elements. Returns exit code
+# or -1.
+# Usage: var args = vec_new(); vec_push(args, "/usr/bin/ls");
+#        vec_push(args, "-la"); var rc = exec_vec(args);
+# v5.10.44: docstring now explicitly cstr-only; Str pushers MUST
+# use `exec_vec_str` instead (silently fails otherwise — see family
+# header comment above).
+fn exec_vec(args): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = vec_get(args, 0);
+    # Build argv array (argc + 1 for null terminator)
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, vec_get(args, avi));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envp = alloc(8);
+    store64(envp, 0);
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var st = load32(&stbuf);
+    if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
+    return 0 - 1;
+}
+
+# Run command with cstr args vec and capture stdout. Returns bytes
+# read. buf must be pre-allocated.
+# v5.10.44: cstr-only; Str pushers use `exec_capture_str`.
+fn exec_capture(args, buf, buflen): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = vec_get(args, 0);
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, vec_get(args, avi));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envp = alloc(8);
+    store64(envp, 0);
+    var pipefd[16];
+    sys_pipe(&pipefd);
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 1; }
+    if (pid == 0) {
+        sys_close(rfd);
+        sys_dup2(wfd, 1);
+        sys_close(wfd);
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    sys_close(wfd);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(rfd, buf + total, buflen - total);
+        if (n <= 0) { rgo = 0; }
+        else { total = total + n; if (total >= buflen) { rgo = 0; } }
+    }
+    sys_close(rfd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    return total;
+}
+
+# Run command with cstr args vec + cstr env vec.
+# env is a vec of cstr "KEY=VALUE" pointers.
+# v5.10.44: cstr-only on both args + env; Str pushers use
+# `exec_env_str`.
+fn exec_env(args, env): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = vec_get(args, 0);
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, vec_get(args, avi));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envc = vec_len(env);
+    var envp = alloc((envc + 1) * 8);
+    var evi = 0;
+    while (evi < envc) {
+        store64(envp + evi * 8, vec_get(env, evi));
+        evi = evi + 1;
+    }
+    store64(envp + envc * 8, 0);
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var st = load32(&stbuf);
+    if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
+    return 0 - 1;
+}
+
+# ================================================================
+# Str-shape variants (v5.10.44 — argonaut-blocking unblock)
+# ================================================================
+# `_str` siblings of exec_vec / exec_capture / exec_env. Each
+# extracts `str_data` from every vec element on the way into
+# execve's argv (or envp for the env variant), so callers can
+# build the vec with `vec_push(a, str_from("..."))` — the natural
+# cyrius idiom — and pass it directly.
+#
+# Implementation: copy each `load64(slot)` through `load64` again
+# (= `str_data(Str_ptr)`) to land the byte payload pointer in argv.
+# Caller-side memory: every Str header pushed into `args` must
+# outlive the execve syscall (the byte payload is what execve
+# reads; the header itself is consulted only at copy time and can
+# be freed after). Standard cyrius lifetime — heap-allocated Strs
+# from `str_from(...)` survive until the consumer explicitly frees
+# them, so this is rarely a concern.
+
+# Run command with a vec of Str argv elements. Returns exit code
+# or -1. Same semantics as exec_vec; the only difference is the
+# argv element shape (Str fat-pointer rather than cstr).
+fn exec_vec_str(args): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = str_data(vec_get(args, 0));
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, str_data(vec_get(args, avi)));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envp = alloc(8);
+    store64(envp, 0);
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var st = load32(&stbuf);
+    if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
+    return 0 - 1;
+}
+
+# Run command with Str args vec and capture stdout. Returns bytes
+# read. buf must be pre-allocated.
+fn exec_capture_str(args, buf, buflen): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = str_data(vec_get(args, 0));
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, str_data(vec_get(args, avi)));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envp = alloc(8);
+    store64(envp, 0);
+    var pipefd[16];
+    sys_pipe(&pipefd);
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 1; }
+    if (pid == 0) {
+        sys_close(rfd);
+        sys_dup2(wfd, 1);
+        sys_close(wfd);
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    sys_close(wfd);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(rfd, buf + total, buflen - total);
+        if (n <= 0) { rgo = 0; }
+        else { total = total + n; if (total >= buflen) { rgo = 0; } }
+    }
+    sys_close(rfd);
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    return total;
+}
+
+# Run command with Str args vec + Str env vec.
+# env is a vec of "KEY=VALUE" Str pointers.
+fn exec_env_str(args, env): i64 {
+    var argc = vec_len(args);
+    if (argc < 1) { return 0 - 1; }
+    var cmd = str_data(vec_get(args, 0));
+    var argv = alloc((argc + 1) * 8);
+    var avi = 0;
+    while (avi < argc) {
+        store64(argv + avi * 8, str_data(vec_get(args, avi)));
+        avi = avi + 1;
+    }
+    store64(argv + argc * 8, 0);
+    var envc = vec_len(env);
+    var envp = alloc((envc + 1) * 8);
+    var evi = 0;
+    while (evi < envc) {
+        store64(envp + evi * 8, str_data(vec_get(env, evi)));
+        evi = evi + 1;
+    }
+    store64(envp + envc * 8, 0);
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        sys_execve(cmd, argv, envp);
+        sys_exit(127);
+    }
+    var stbuf[1];
+    sys_waitpid(pid, &stbuf, 0);
+    var st = load32(&stbuf);
+    if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
+    return 0 - 1;
+}
+
+# Helper: build args vec from command string (split by spaces)
+# For simple cases like exec_cmd("/usr/bin/ls -la /tmp")
+# v5.10.43: sep changed from " " (cstr — silently broken under
+# the pre-v5.10.43 byte-or-pointer impl, would crash under the
+# new STR-path dispatch) to 32 (byte literal for space). Hits the
+# byte path of str_split's v5.10.43 runtime dispatch.
+fn exec_cmd(cmdline): i64 {
+    var args = vec_new();
+    var parts = str_split(str_from(cmdline), 32);
+    var pi = 0;
+    while (pi < vec_len(parts)) {
+        var part = vec_get(parts, pi);
+        vec_push(args, str_data(part));
+        pi = pi + 1;
+    }
+    return exec_vec(args);
+}

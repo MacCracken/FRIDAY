@@ -1,0 +1,1180 @@
+# regex.cyr — Thompson NFA / Pike matcher (v5.7.18) + glob helpers.
+# Usage: include "lib/regex.cyr"
+# Requires: string.cyr, alloc.cyr, str.cyr
+#
+# Glob helpers (top): glob_match, str_glob, find_all, str_replace, str_replace_all.
+# Full regex engine (below): regex_compile, regex_match, regex_search, regex_group_*.
+
+# Match a glob pattern against a string
+# Supports: * (zero or more chars), ? (exactly one char)
+# Returns 1 if match, 0 if not.
+fn glob_match(pattern, text): i64 {
+    var pi = 0;
+    var ti = 0;
+    var plen = strlen(pattern);
+    var tlen = strlen(text);
+    var star_pi = 0 - 1;
+    var star_ti = 0 - 1;
+
+    while (ti < tlen) {
+        if (pi < plen) {
+            var pc = load8(pattern + pi);
+            var tc = load8(text + ti);
+            if (pc == 63) {
+                # ? matches any single char
+                pi = pi + 1;
+                ti = ti + 1;
+            }
+            elif (pc == 42) {
+                # * matches zero or more
+                star_pi = pi;
+                star_ti = ti;
+                pi = pi + 1;
+            }
+            elif (pc == tc) {
+                pi = pi + 1;
+                ti = ti + 1;
+            }
+            else {
+                if (star_pi >= 0) {
+                    pi = star_pi + 1;
+                    star_ti = star_ti + 1;
+                    ti = star_ti;
+                } else {
+                    return 0;
+                }
+            }
+        } else {
+            if (star_pi >= 0) {
+                pi = star_pi + 1;
+                star_ti = star_ti + 1;
+                ti = star_ti;
+            } else {
+                return 0;
+            }
+        }
+    }
+    # Consume trailing *s
+    while (pi < plen) {
+        if (load8(pattern + pi) != 42) { return 0; }
+        pi = pi + 1;
+    }
+    return 1;
+}
+
+# Match a Str against a glob pattern (C string)
+fn str_glob(s, pattern): i64 {
+    # Need null-terminated version of Str data
+    var slen = str_len(s);
+    var buf = alloc(slen + 1);
+    memcpy(buf, str_data(s), slen);
+    store8(buf + slen, 0);
+    return glob_match(pattern, buf);
+}
+
+# Find all occurrences of needle in haystack
+# Returns vec of indices
+fn find_all(haystack, needle): i64 {
+    var results = vec_new();
+    var hlen = strlen(haystack);
+    var nlen = strlen(needle);
+    if (nlen > hlen) { return results; }
+    var fi = 0;
+    while (fi <= hlen - nlen) {
+        if (memeq(haystack + fi, needle, nlen) == 1) {
+            vec_push(results, fi);
+        }
+        fi = fi + 1;
+    }
+    return results;
+}
+
+# Replace first occurrence of old with new in a Str
+# Returns new Str (or original if not found)
+fn str_replace(s, old, new_str): i64 {
+    var sdata = str_data(s);
+    var slen = str_len(s);
+    var odata = str_data(old);
+    var olen = str_len(old);
+    var ndata = str_data(new_str);
+    var nlen = str_len(new_str);
+    # Find old
+    var fi = 0;
+    while (fi <= slen - olen) {
+        if (memeq(sdata + fi, odata, olen) == 1) {
+            # Found — build replacement
+            var newlen = slen - olen + nlen;
+            var buf = alloc(newlen + 1);
+            memcpy(buf, sdata, fi);
+            memcpy(buf + fi, ndata, nlen);
+            memcpy(buf + fi + nlen, sdata + fi + olen, slen - fi - olen);
+            store8(buf + newlen, 0);
+            return str_new(buf, newlen);
+        }
+        fi = fi + 1;
+    }
+    return s;
+}
+
+# Replace all occurrences
+fn str_replace_all(s, old, new_str): i64 {
+    var result = s;
+    var changed = 1;
+    while (changed == 1) {
+        var next = str_replace(result, old, new_str);
+        if (str_eq(next, result) == 1) { changed = 0; }
+        else { result = next; }
+    }
+    return result;
+}
+
+# ======================================================================
+# REGEX ENGINE (v5.7.18) — Thompson NFA + Pike's matcher
+# ======================================================================
+#
+# Linear-time matching, no backtracking. Supports: literals + escapes
+# (\\ \. \n \r \t \0 \a \b \f \v \X for any other byte), . any-char,
+# anchors ^ $, char classes [abc] [^abc] [a-z], predefined classes
+# \d \D \w \W \s \S, quantifiers * + ? {n} {n,} {n,m} (greedy AND
+# lazy via trailing ?), alternation |, grouping (...) capturing and
+# (?:...) non-capturing, word boundaries \b \B.
+#
+# Out of scope: backreferences (non-regular), lookaround, Unicode
+# property classes (\p{L}), multiline flag.
+#
+# Compiled NFA layout (one alloc):
+#   +0    instr_count    u64
+#   +8    instrs_off     u64 (== REGEX_NFA_HEADER_SIZE)
+#   +16   class_count    u64
+#   +24   classes_off    u64 (== header + instr_cap*16)
+#   +32   capture_count  u64 (1..9 user groups; group 0 implicit)
+#   +40   match_start    i64 (last match start, -1 if none)
+#   +48   match_end      i64
+#   +56   saves[20]      i64 (group 0 + 9 user × 2 slots each)
+#
+# Instruction (16 B): byte 0 = opcode; byte 1 = small_arg; bytes 4..7 = arg1 (u32); word 1 = arg2 (u64).
+# Class bitmap: 32 B (256-bit).
+
+var REOP_MATCH      = 0;
+var REOP_CHAR       = 1;
+var REOP_ANY        = 2;
+var REOP_CLASS      = 3;
+var REOP_NCLASS     = 4;
+var REOP_JMP        = 5;
+var REOP_SPLIT      = 6;
+var REOP_SAVE       = 7;
+var REOP_BOL        = 8;
+var REOP_EOL        = 9;
+var REOP_BOUNDARY   = 10;
+var REOP_NBOUNDARY  = 11;
+
+var REGEX_NFA_HEADER_SIZE = 216;
+var REGEX_OFF_INSTR_COUNT = 0;
+var REGEX_OFF_INSTRS_OFF  = 8;
+var REGEX_OFF_CLASS_COUNT = 16;
+var REGEX_OFF_CLASSES_OFF = 24;
+var REGEX_OFF_CAPTURES    = 32;
+var REGEX_OFF_MATCH_START = 40;
+var REGEX_OFF_MATCH_END   = 48;
+var REGEX_OFF_SAVES       = 56;
+
+var REGEX_MAX_INSTRS = 4096;
+var REGEX_MAX_CLASSES = 64;
+var REGEX_MAX_SAVES = 20;
+
+var _re_pat = 0;
+var _re_pat_len = 0;
+var _re_pos = 0;
+var _re_nfa = 0;
+var _re_instr_base = 0;
+var _re_class_base = 0;
+var _re_instr_n = 0;
+var _re_class_n = 0;
+var _re_capture_n = 0;
+var _re_err = 0;
+
+var _re_m_init = 0;
+var _re_m_cur = 0;
+var _re_m_next = 0;
+var _re_m_lastgen = 0;
+var _re_m_gen = 0;
+
+fn _re_m_lazy_init(): i64 {
+    if (_re_m_init == 1) { return 0; }
+    _re_m_cur     = alloc(8 + REGEX_MAX_INSTRS * 168);
+    _re_m_next    = alloc(8 + REGEX_MAX_INSTRS * 168);
+    _re_m_lastgen = alloc(REGEX_MAX_INSTRS * 8);
+    var i = 0;
+    while (i < REGEX_MAX_INSTRS) {
+        store64(_re_m_lastgen + i * 8, 0);
+        i = i + 1;
+    }
+    _re_m_init = 1;
+    _re_m_gen = 1;
+    return 0;
+}
+
+# === Instruction emit / patch helpers =================================
+
+fn _re_w0(op, small, arg1): i64 {
+    return op | (small << 8) | (arg1 << 32);
+}
+
+fn _re_emit_raw(w0, w1): i64 {
+    var i = _re_instr_n;
+    if (i >= REGEX_MAX_INSTRS) { _re_err = 1; return i; }
+    store64(_re_instr_base + i * 16, w0);
+    store64(_re_instr_base + i * 16 + 8, w1);
+    _re_instr_n = i + 1;
+    return i;
+}
+
+fn _re_emit_op(op)        { return _re_emit_raw(op, 0); }
+fn _re_emit_char(c)       { return _re_emit_raw(REOP_CHAR | (c << 8), 0); }
+fn _re_emit_class(neg, ci): i64 {
+    var op = REOP_CLASS;
+    if (neg == 1) { op = REOP_NCLASS; }
+    return _re_emit_raw(op | (ci << 8), 0);
+}
+fn _re_emit_save(idx)     { return _re_emit_raw(REOP_SAVE | (idx << 8), 0); }
+fn _re_emit_jmp(target)   { return _re_emit_raw(REOP_JMP | (target << 32), 0); }
+fn _re_emit_split(a, b)   { return _re_emit_raw(REOP_SPLIT | (a << 32), b); }
+
+fn _re_patch_arg1(idx, arg1): i64 {
+    var off = _re_instr_base + idx * 16;
+    var w0 = load64(off);
+    store64(off, (w0 & 0xFFFFFFFF) | (arg1 << 32));
+    return 0;
+}
+
+fn _re_patch_arg2(idx, arg2): i64 {
+    store64(_re_instr_base + idx * 16 + 8, arg2);
+    return 0;
+}
+
+# Shift instructions [lo, hi) right by 1 slot (overlap-safe backward copy).
+fn _re_shift_right(lo, hi): i64 {
+    var k = (hi - lo) * 16 - 1;
+    while (k >= 0) {
+        var src = _re_instr_base + lo * 16 + k;
+        store8(src + 16, load8(src));
+        k = k - 1;
+    }
+    return 0;
+}
+
+# After shifting [lo, hi) right by 1, jumps inside [lo+1, hi+1) that point
+# back into the OLD [lo, hi) range are stale — bump them by 1.
+fn _re_shift_targets_one(lo, hi): i64 {
+    # Inclusive upper bound: a target == hi means "first position past
+    # the fragment" (where a JMP-to-end was patched at iter end with the
+    # then-current _re_instr_n == hi). After shift, that position is hi+1,
+    # so the target needs the same bump as targets strictly inside.
+    # v5.7.18: caught by `cat|dog|fish` (3-way alt) regression — the JMP
+    # after the first alt had target = end-of-original-fragment, which
+    # the half-open `< hi` missed and left landing inside the fragment.
+    var i = lo + 1;
+    var end = hi + 1;
+    while (i < end) {
+        var off = _re_instr_base + i * 16;
+        var w0 = load64(off);
+        var op = w0 & 0xFF;
+        var is_branch = 0;
+        if (op == REOP_JMP)   { is_branch = 1; }
+        if (op == REOP_SPLIT) { is_branch = 1; }
+        if (is_branch == 1) {
+            var arg1 = (w0 >> 32) & 0xFFFFFFFF;
+            if (arg1 >= lo && arg1 <= hi) {
+                _re_patch_arg1(i, arg1 + 1);
+            }
+            if (op == REOP_SPLIT) {
+                var arg2 = load64(off + 8);
+                if (arg2 >= lo && arg2 <= hi) {
+                    _re_patch_arg2(i, arg2 + 1);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# === Class bitmap helpers =============================================
+
+fn _re_alloc_class(): i64 {
+    var ci = _re_class_n;
+    if (ci >= REGEX_MAX_CLASSES) { _re_err = 1; return ci; }
+    var z = 0;
+    while (z < 32) {
+        store8(_re_class_base + ci * 32 + z, 0);
+        z = z + 1;
+    }
+    _re_class_n = ci + 1;
+    return ci;
+}
+
+fn _re_class_set(ci, c): i64 {
+    if (c < 0)   { return 0; }
+    if (c > 255) { return 0; }
+    var off = _re_class_base + ci * 32 + (c >> 3);
+    store8(off, load8(off) | (1 << (c & 7)));
+    return 0;
+}
+
+fn _re_class_clear(ci, c): i64 {
+    if (c < 0)   { return 0; }
+    if (c > 255) { return 0; }
+    var off = _re_class_base + ci * 32 + (c >> 3);
+    store8(off, load8(off) & (255 ^ (1 << (c & 7))));
+    return 0;
+}
+
+fn _re_class_get(ci, c): i64 {
+    if (c < 0)   { return 0; }
+    if (c > 255) { return 0; }
+    var off = _re_class_base + ci * 32 + (c >> 3);
+    var b = load8(off);
+    if ((b >> (c & 7)) & 1) { return 1; }
+    return 0;
+}
+
+fn _re_class_range(ci, lo, hi): i64 {
+    var c = lo;
+    while (c <= hi) {
+        _re_class_set(ci, c);
+        c = c + 1;
+    }
+    return 0;
+}
+
+fn _re_class_fill_digit(ci): i64 { _re_class_range(ci, 48, 57); return 0; }
+
+fn _re_class_fill_word(ci): i64 {
+    _re_class_range(ci, 48, 57);
+    _re_class_range(ci, 65, 90);
+    _re_class_range(ci, 97, 122);
+    _re_class_set(ci, 95);
+    return 0;
+}
+
+fn _re_class_fill_space(ci): i64 {
+    _re_class_set(ci, 32);
+    _re_class_set(ci, 9);
+    _re_class_set(ci, 10);
+    _re_class_set(ci, 11);
+    _re_class_set(ci, 12);
+    _re_class_set(ci, 13);
+    return 0;
+}
+
+# === Pattern decoder ==================================================
+
+# Decode the next char in the pattern (handles backslash escapes for
+# in-pattern bytes only — NOT classes like \d). Advances _re_pos. Sets
+# _re_err on EOF.
+fn _re_lit_byte(): i64 {
+    if (_re_pos >= _re_pat_len) { _re_err = 1; return 0; }
+    var c = load8(_re_pat + _re_pos);
+    _re_pos = _re_pos + 1;
+    if (c != 92) { return c; }
+    if (_re_pos >= _re_pat_len) { _re_err = 1; return 0; }
+    var e = load8(_re_pat + _re_pos);
+    _re_pos = _re_pos + 1;
+    if (e == 110) { return 10; }
+    if (e == 114) { return 13; }
+    if (e == 116) { return 9; }
+    if (e == 48)  { return 0; }
+    if (e == 97)  { return 7; }
+    if (e == 102) { return 12; }
+    if (e == 118) { return 11; }
+    return e;
+}
+
+# Apply ASCII complement to a class bitmap (in place).
+fn _re_class_invert(ci): i64 {
+    var z = 0;
+    while (z < 32) {
+        var off = _re_class_base + ci * 32 + z;
+        store8(off, 255 ^ load8(off));
+        z = z + 1;
+    }
+    return 0;
+}
+
+# Parse a `[...]` class body (caller already consumed `[`). Returns the
+# class index. Sets _re_err on syntax error. Negation is encoded by
+# returning -(ci+1).
+fn _re_parse_class(): i64 {
+    var ci = _re_alloc_class();
+    if (_re_err == 1) { return ci; }
+    var neg = 0;
+    if (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) == 94) {
+        neg = 1;
+        _re_pos = _re_pos + 1;
+    }
+    var done = 0;
+    while (done == 0) {
+        if (_re_pos >= _re_pat_len) { _re_err = 1; return 0 - 1; }
+        var pc = load8(_re_pat + _re_pos);
+        if (pc == 93) {
+            _re_pos = _re_pos + 1;
+            done = 1;
+        }
+        elif (pc == 92 && _re_pos + 1 < _re_pat_len) {
+            var nx = load8(_re_pat + _re_pos + 1);
+            if (nx == 100) { _re_class_fill_digit(ci); _re_pos = _re_pos + 2; }
+            elif (nx == 119) { _re_class_fill_word(ci); _re_pos = _re_pos + 2; }
+            elif (nx == 115) { _re_class_fill_space(ci); _re_pos = _re_pos + 2; }
+            elif (nx == 68) {
+                # \D inside [...]: union the negation of digits with what's already there.
+                var tmp = _re_alloc_class();
+                if (_re_err == 1) { return 0 - 1; }
+                _re_class_fill_digit(tmp);
+                _re_class_invert(tmp);
+                var z = 0;
+                while (z < 32) {
+                    var d = _re_class_base + ci * 32 + z;
+                    var s = _re_class_base + tmp * 32 + z;
+                    store8(d, load8(d) | load8(s));
+                    z = z + 1;
+                }
+                _re_class_n = _re_class_n - 1;  # release tmp
+                _re_pos = _re_pos + 2;
+            }
+            elif (nx == 87) {
+                var tmp2 = _re_alloc_class();
+                if (_re_err == 1) { return 0 - 1; }
+                _re_class_fill_word(tmp2);
+                _re_class_invert(tmp2);
+                var z2 = 0;
+                while (z2 < 32) {
+                    var d2 = _re_class_base + ci * 32 + z2;
+                    var s2 = _re_class_base + tmp2 * 32 + z2;
+                    store8(d2, load8(d2) | load8(s2));
+                    z2 = z2 + 1;
+                }
+                _re_class_n = _re_class_n - 1;
+                _re_pos = _re_pos + 2;
+            }
+            elif (nx == 83) {
+                var tmp3 = _re_alloc_class();
+                if (_re_err == 1) { return 0 - 1; }
+                _re_class_fill_space(tmp3);
+                _re_class_invert(tmp3);
+                var z3 = 0;
+                while (z3 < 32) {
+                    var d3 = _re_class_base + ci * 32 + z3;
+                    var s3 = _re_class_base + tmp3 * 32 + z3;
+                    store8(d3, load8(d3) | load8(s3));
+                    z3 = z3 + 1;
+                }
+                _re_class_n = _re_class_n - 1;
+                _re_pos = _re_pos + 2;
+            }
+            else {
+                # Plain escape: literal byte, possibly start of range.
+                var lc = _re_lit_byte();
+                if (_re_err == 1) { return 0 - 1; }
+                if (_re_pos + 1 < _re_pat_len && load8(_re_pat + _re_pos) == 45 && load8(_re_pat + _re_pos + 1) != 93) {
+                    _re_pos = _re_pos + 1;
+                    var hi = _re_lit_byte();
+                    if (_re_err == 1) { return 0 - 1; }
+                    _re_class_range(ci, lc, hi);
+                } else {
+                    _re_class_set(ci, lc);
+                }
+            }
+        }
+        else {
+            var lc2 = _re_lit_byte();
+            if (_re_err == 1) { return 0 - 1; }
+            if (_re_pos + 1 < _re_pat_len && load8(_re_pat + _re_pos) == 45 && load8(_re_pat + _re_pos + 1) != 93) {
+                _re_pos = _re_pos + 1;
+                var hi2 = _re_lit_byte();
+                if (_re_err == 1) { return 0 - 1; }
+                _re_class_range(ci, lc2, hi2);
+            } else {
+                _re_class_set(ci, lc2);
+            }
+        }
+    }
+    if (neg == 1) { return 0 - (ci + 1); }
+    return ci;
+}
+
+# === Recursive-descent compiler =======================================
+
+# Forward references: parse_primary -> parse_alt (groups) -> parse_concat -> parse_atom -> parse_primary.
+
+fn _re_parse_primary(): i64 {
+    if (_re_pos >= _re_pat_len) { _re_err = 1; return 0; }
+    var c = load8(_re_pat + _re_pos);
+    if (c == 46) {
+        _re_pos = _re_pos + 1;
+        _re_emit_op(REOP_ANY);
+    }
+    elif (c == 94) {
+        _re_pos = _re_pos + 1;
+        _re_emit_op(REOP_BOL);
+    }
+    elif (c == 36) {
+        _re_pos = _re_pos + 1;
+        _re_emit_op(REOP_EOL);
+    }
+    elif (c == 40) {
+        _re_pos = _re_pos + 1;
+        var capture_idx = 0 - 1;
+        if (_re_pos + 1 < _re_pat_len && load8(_re_pat + _re_pos) == 63 && load8(_re_pat + _re_pos + 1) == 58) {
+            _re_pos = _re_pos + 2;
+        } else {
+            _re_capture_n = _re_capture_n + 1;
+            capture_idx = _re_capture_n;
+            if (capture_idx > 9) { _re_err = 1; return 0; }
+            _re_emit_save(capture_idx * 2);
+        }
+        _re_parse_alt();
+        if (_re_err == 1) { return 0; }
+        if (_re_pos >= _re_pat_len || load8(_re_pat + _re_pos) != 41) { _re_err = 1; return 0; }
+        _re_pos = _re_pos + 1;
+        if (capture_idx >= 0) { _re_emit_save(capture_idx * 2 + 1); }
+    }
+    elif (c == 91) {
+        _re_pos = _re_pos + 1;
+        var ci = _re_parse_class();
+        if (_re_err == 1) { return 0; }
+        var neg = 0;
+        if (ci < 0) { neg = 1; ci = 0 - (ci + 1); }
+        _re_emit_class(neg, ci);
+    }
+    elif (c == 92) {
+        if (_re_pos + 1 >= _re_pat_len) { _re_err = 1; return 0; }
+        var e = load8(_re_pat + _re_pos + 1);
+        if (e == 100) {
+            _re_pos = _re_pos + 2;
+            var ci2 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_digit(ci2);
+            _re_emit_class(0, ci2);
+        }
+        elif (e == 68) {
+            _re_pos = _re_pos + 2;
+            var ci3 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_digit(ci3);
+            _re_emit_class(1, ci3);
+        }
+        elif (e == 119) {
+            _re_pos = _re_pos + 2;
+            var ci4 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_word(ci4);
+            _re_emit_class(0, ci4);
+        }
+        elif (e == 87) {
+            _re_pos = _re_pos + 2;
+            var ci5 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_word(ci5);
+            _re_emit_class(1, ci5);
+        }
+        elif (e == 115) {
+            _re_pos = _re_pos + 2;
+            var ci6 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_space(ci6);
+            _re_emit_class(0, ci6);
+        }
+        elif (e == 83) {
+            _re_pos = _re_pos + 2;
+            var ci7 = _re_alloc_class(); if (_re_err == 1) { return 0; }
+            _re_class_fill_space(ci7);
+            _re_emit_class(1, ci7);
+        }
+        elif (e == 98) {
+            _re_pos = _re_pos + 2;
+            _re_emit_op(REOP_BOUNDARY);
+        }
+        elif (e == 66) {
+            _re_pos = _re_pos + 2;
+            _re_emit_op(REOP_NBOUNDARY);
+        }
+        else {
+            var lc = _re_lit_byte();
+            if (_re_err == 0) { _re_emit_char(lc); }
+        }
+    }
+    elif (c == 124 || c == 41 || c == 42 || c == 43 || c == 63 || c == 123 || c == 125 || c == 93) {
+        _re_err = 1; return 0;
+    }
+    else {
+        _re_pos = _re_pos + 1;
+        _re_emit_char(c);
+    }
+    return 0;
+}
+
+# Apply *, +, ?, *?, +?, ?? to the just-emitted atom at [atom_start, _re_instr_n).
+# `op_char` is the quantifier byte; _re_pos is at it.
+fn _re_apply_simple_q(atom_start, op_char): i64 {
+    var atom_end = _re_instr_n;
+    if (atom_end == atom_start) { _re_err = 1; return 0; }
+    _re_pos = _re_pos + 1;
+    var lazy = 0;
+    if (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) == 63) {
+        lazy = 1;
+        _re_pos = _re_pos + 1;
+    }
+    if (op_char == 42) {
+        # a* — SPLIT body, exit ; body ; JMP back ; exit
+        _re_shift_right(atom_start, atom_end);
+        _re_shift_targets_one(atom_start, atom_end);
+        _re_instr_n = _re_instr_n + 1;
+        var body_pc = atom_start + 1;
+        if (lazy == 1) {
+            store64(_re_instr_base + atom_start * 16, _re_w0(REOP_SPLIT, 0, 0));
+            store64(_re_instr_base + atom_start * 16 + 8, body_pc);
+        } else {
+            store64(_re_instr_base + atom_start * 16, _re_w0(REOP_SPLIT, 0, body_pc));
+            store64(_re_instr_base + atom_start * 16 + 8, 0);
+        }
+        _re_emit_jmp(atom_start);
+        var exit_pc = _re_instr_n;
+        if (lazy == 1) { _re_patch_arg1(atom_start, exit_pc); }
+        else            { _re_patch_arg2(atom_start, exit_pc); }
+    }
+    elif (op_char == 43) {
+        # a+ — body ; SPLIT body, exit (greedy) | SPLIT exit, body (lazy)
+        if (lazy == 1) {
+            var s = _re_emit_split(0, atom_start);
+            _re_patch_arg1(s, _re_instr_n);
+        } else {
+            var s2 = _re_emit_split(atom_start, 0);
+            _re_patch_arg2(s2, _re_instr_n);
+        }
+    }
+    elif (op_char == 63) {
+        # a? — SPLIT body, exit (greedy) | SPLIT exit, body (lazy)
+        _re_shift_right(atom_start, atom_end);
+        _re_shift_targets_one(atom_start, atom_end);
+        _re_instr_n = _re_instr_n + 1;
+        var body = atom_start + 1;
+        if (lazy == 1) {
+            store64(_re_instr_base + atom_start * 16, _re_w0(REOP_SPLIT, 0, 0));
+            store64(_re_instr_base + atom_start * 16 + 8, body);
+            _re_patch_arg1(atom_start, _re_instr_n);
+        } else {
+            store64(_re_instr_base + atom_start * 16, _re_w0(REOP_SPLIT, 0, body));
+            store64(_re_instr_base + atom_start * 16 + 8, _re_instr_n);
+        }
+    }
+    return 0;
+}
+
+# Apply {n,m} or {n,} or {n} to the atom at [atom_start, _re_instr_n).
+# `save_primary_start` is the source position right before parse_primary
+# was called for the FIRST copy — used to re-parse for additional copies.
+fn _re_apply_brace_q(save_primary_start, atom_start): i64 {
+    if (_re_instr_n == atom_start) { _re_err = 1; return 0; }
+    _re_pos = _re_pos + 1;
+    var n_min = 0;
+    var have_min = 0;
+    while (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) >= 48 && load8(_re_pat + _re_pos) <= 57) {
+        n_min = n_min * 10 + (load8(_re_pat + _re_pos) - 48);
+        _re_pos = _re_pos + 1;
+        have_min = 1;
+    }
+    if (have_min == 0) { _re_err = 1; return 0; }
+    var n_max = n_min;
+    var open_ended = 0;
+    if (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) == 44) {
+        _re_pos = _re_pos + 1;
+        n_max = 0;
+        var have_max = 0;
+        while (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) >= 48 && load8(_re_pat + _re_pos) <= 57) {
+            n_max = n_max * 10 + (load8(_re_pat + _re_pos) - 48);
+            _re_pos = _re_pos + 1;
+            have_max = 1;
+        }
+        if (have_max == 0) { open_ended = 1; n_max = 0; }
+    }
+    if (_re_pos >= _re_pat_len || load8(_re_pat + _re_pos) != 125) { _re_err = 1; return 0; }
+    _re_pos = _re_pos + 1;
+    var lazy = 0;
+    if (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) == 63) {
+        lazy = 1;
+        _re_pos = _re_pos + 1;
+    }
+    var pos_after_q = _re_pos;
+    if (open_ended == 0 && n_max < n_min) { _re_err = 1; return 0; }
+    if (n_max > 1000) { _re_err = 1; return 0; }
+    if (n_min == 0) {
+        _re_instr_n = atom_start;
+        if (open_ended == 1) {
+            # {0,} = `*`
+            var ts = _re_instr_n;
+            _re_pos = save_primary_start;
+            _re_parse_primary();
+            if (_re_err == 1) { return 0; }
+            _re_apply_star_inline(ts, lazy);
+        } else {
+            var splits[64];
+            var sn = 0;
+            var k = 0;
+            while (k < n_max) {
+                if (sn >= 64) { _re_err = 1; return 0; }
+                var sx = _re_emit_split(0, 0);
+                store64(&splits + sn * 8, sx);
+                sn = sn + 1;
+                _re_pos = save_primary_start;
+                _re_parse_primary();
+                if (_re_err == 1) { return 0; }
+                k = k + 1;
+            }
+            var exit_pc = _re_instr_n;
+            var ti = 0;
+            while (ti < sn) {
+                var sxi = load64(&splits + ti * 8);
+                if (lazy == 1) { _re_patch_arg1(sxi, exit_pc); _re_patch_arg2(sxi, sxi + 1); }
+                else            { _re_patch_arg1(sxi, sxi + 1); _re_patch_arg2(sxi, exit_pc); }
+                ti = ti + 1;
+            }
+        }
+    } else {
+        var k1 = 1;
+        while (k1 < n_min) {
+            _re_pos = save_primary_start;
+            _re_parse_primary();
+            if (_re_err == 1) { return 0; }
+            k1 = k1 + 1;
+        }
+        if (open_ended == 1) {
+            var ts2 = _re_instr_n;
+            _re_pos = save_primary_start;
+            _re_parse_primary();
+            if (_re_err == 1) { return 0; }
+            _re_apply_star_inline(ts2, lazy);
+        } elif (n_max > n_min) {
+            var splits2[64];
+            var sn2 = 0;
+            var k2 = n_min;
+            while (k2 < n_max) {
+                if (sn2 >= 64) { _re_err = 1; return 0; }
+                var sy = _re_emit_split(0, 0);
+                store64(&splits2 + sn2 * 8, sy);
+                sn2 = sn2 + 1;
+                _re_pos = save_primary_start;
+                _re_parse_primary();
+                if (_re_err == 1) { return 0; }
+                k2 = k2 + 1;
+            }
+            var exit_pc2 = _re_instr_n;
+            var tj = 0;
+            while (tj < sn2) {
+                var syi = load64(&splits2 + tj * 8);
+                if (lazy == 1) { _re_patch_arg1(syi, exit_pc2); _re_patch_arg2(syi, syi + 1); }
+                else            { _re_patch_arg1(syi, syi + 1); _re_patch_arg2(syi, exit_pc2); }
+                tj = tj + 1;
+            }
+        }
+    }
+    _re_pos = pos_after_q;
+    return 0;
+}
+
+# Apply `*` (greedy or lazy) to the body at [body_start, _re_instr_n) — used
+# by {n,} unrolling for the unbounded tail.
+fn _re_apply_star_inline(body_start, lazy): i64 {
+    var body_end = _re_instr_n;
+    _re_shift_right(body_start, body_end);
+    _re_shift_targets_one(body_start, body_end);
+    _re_instr_n = _re_instr_n + 1;
+    var body_pc = body_start + 1;
+    if (lazy == 1) {
+        store64(_re_instr_base + body_start * 16, _re_w0(REOP_SPLIT, 0, 0));
+        store64(_re_instr_base + body_start * 16 + 8, body_pc);
+    } else {
+        store64(_re_instr_base + body_start * 16, _re_w0(REOP_SPLIT, 0, body_pc));
+        store64(_re_instr_base + body_start * 16 + 8, 0);
+    }
+    _re_emit_jmp(body_start);
+    var exit_pc = _re_instr_n;
+    if (lazy == 1) { _re_patch_arg1(body_start, exit_pc); }
+    else            { _re_patch_arg2(body_start, exit_pc); }
+    return 0;
+}
+
+fn _re_parse_atom(): i64 {
+    var save_primary_start = _re_pos;
+    var atom_start = _re_instr_n;
+    _re_parse_primary();
+    if (_re_err == 1) { return 0; }
+    if (_re_pos >= _re_pat_len) { return 0; }
+    var c = load8(_re_pat + _re_pos);
+    if (c == 42 || c == 43 || c == 63) {
+        _re_apply_simple_q(atom_start, c);
+    }
+    elif (c == 123) {
+        _re_apply_brace_q(save_primary_start, atom_start);
+    }
+    return 0;
+}
+
+fn _re_parse_concat(): i64 {
+    while (_re_pos < _re_pat_len) {
+        var c = load8(_re_pat + _re_pos);
+        if (c == 124 || c == 41) { return 0; }
+        _re_parse_atom();
+        if (_re_err == 1) { return 0; }
+    }
+    return 0;
+}
+
+fn _re_parse_alt(): i64 {
+    var left_start = _re_instr_n;
+    _re_parse_concat();
+    if (_re_err == 1) { return 0; }
+    while (_re_pos < _re_pat_len && load8(_re_pat + _re_pos) == 124) {
+        _re_pos = _re_pos + 1;
+        var left_end = _re_instr_n;
+        _re_shift_right(left_start, left_end);
+        _re_shift_targets_one(left_start, left_end);
+        _re_instr_n = _re_instr_n + 1;
+        store64(_re_instr_base + left_start * 16, _re_w0(REOP_SPLIT, 0, left_start + 1));
+        store64(_re_instr_base + left_start * 16 + 8, 0);
+        var jmp_idx = _re_emit_jmp(0);
+        var right_start = _re_instr_n;
+        _re_patch_arg2(left_start, right_start);
+        _re_parse_concat();
+        if (_re_err == 1) { return 0; }
+        _re_patch_arg1(jmp_idx, _re_instr_n);
+    }
+    return 0;
+}
+
+# === Compiler entry ===================================================
+
+# Compile a null-terminated regex pattern. Returns an opaque NFA pointer
+# (heap-allocated) or 0 on syntax error.
+fn regex_compile(pat): i64 {
+    var n = strlen(pat);
+    var instr_bytes = REGEX_MAX_INSTRS * 16;
+    var class_bytes = REGEX_MAX_CLASSES * 32;
+    var nfa = alloc(REGEX_NFA_HEADER_SIZE + instr_bytes + class_bytes);
+    var instrs = nfa + REGEX_NFA_HEADER_SIZE;
+    var classes = instrs + instr_bytes;
+    store64(nfa + REGEX_OFF_INSTRS_OFF,  REGEX_NFA_HEADER_SIZE);
+    store64(nfa + REGEX_OFF_CLASSES_OFF, REGEX_NFA_HEADER_SIZE + instr_bytes);
+    store64(nfa + REGEX_OFF_MATCH_START, 0 - 1);
+    store64(nfa + REGEX_OFF_MATCH_END,   0 - 1);
+    var sv = 0;
+    while (sv < REGEX_MAX_SAVES) {
+        store64(nfa + REGEX_OFF_SAVES + sv * 8, 0 - 1);
+        sv = sv + 1;
+    }
+    _re_pat = pat;
+    _re_pat_len = n;
+    _re_pos = 0;
+    _re_nfa = nfa;
+    _re_instr_base = instrs;
+    _re_class_base = classes;
+    _re_instr_n = 0;
+    _re_class_n = 0;
+    _re_capture_n = 0;
+    _re_err = 0;
+    _re_emit_save(0);
+    _re_parse_alt();
+    if (_re_err == 1 || _re_pos != _re_pat_len) { return 0; }
+    _re_emit_save(1);
+    _re_emit_op(REOP_MATCH);
+    store64(nfa + REGEX_OFF_INSTR_COUNT, _re_instr_n);
+    store64(nfa + REGEX_OFF_CLASS_COUNT, _re_class_n);
+    store64(nfa + REGEX_OFF_CAPTURES,    _re_capture_n);
+    return nfa;
+}
+
+# === Pike's NFA matcher ===============================================
+# Two thread lists; each thread is (pc: i64, saves[20]: i64) — 168 B.
+# Layout per list: count (u64) at base+0, then threads at base+8.
+
+fn _re_thread_pc(list_base, idx): i64 {
+    return load64(list_base + 8 + idx * 168);
+}
+
+fn _re_thread_save(list_base, idx, k): i64 {
+    return load64(list_base + 8 + idx * 168 + 8 + k * 8);
+}
+
+fn _re_set_thread_pc(list_base, idx, pc): i64 {
+    store64(list_base + 8 + idx * 168, pc);
+    return 0;
+}
+
+fn _re_set_thread_save(list_base, idx, k, v): i64 {
+    store64(list_base + 8 + idx * 168 + 8 + k * 8, v);
+    return 0;
+}
+
+fn _re_copy_saves_into_thread(list_base, idx, src_saves): i64 {
+    var k = 0;
+    while (k < REGEX_MAX_SAVES) {
+        var v = load64(src_saves + k * 8);
+        store64(list_base + 8 + idx * 168 + 8 + k * 8, v);
+        k = k + 1;
+    }
+    return 0;
+}
+
+# Add a thread at `pc` to `list_base`, propagating epsilon transitions
+# (JMP, SPLIT, SAVE, BOL, EOL, BOUNDARY, NBOUNDARY) by recursion. Threads
+# are deduped per pc per generation via `_re_m_lastgen`. `pos` is the
+# current input position; `input_len` is total input length; `input` is
+# the input ptr; `saves` is a 20×8B scratch buffer carrying capture state.
+fn _re_at_word_char(input, input_len, pos): i64 {
+    if (pos < 0)         { return 0; }
+    if (pos >= input_len){ return 0; }
+    var c = load8(input + pos);
+    if (c >= 48 && c <= 57)   { return 1; }
+    if (c >= 65 && c <= 90)   { return 1; }
+    if (c >= 97 && c <= 122)  { return 1; }
+    if (c == 95)              { return 1; }
+    return 0;
+}
+
+fn _re_is_boundary(input, input_len, pos): i64 {
+    var l = _re_at_word_char(input, input_len, pos - 1);
+    var r = _re_at_word_char(input, input_len, pos);
+    if (l != r) { return 1; }
+    return 0;
+}
+
+fn _re_add_thread(list_base, pc, input, input_len, pos, saves, instrs): i64 {
+    if (pc < 0)                 { return 0; }
+    if (load64(_re_m_lastgen + pc * 8) == _re_m_gen) { return 0; }
+    store64(_re_m_lastgen + pc * 8, _re_m_gen);
+    var off = instrs + pc * 16;
+    var w0 = load64(off);
+    var op = w0 & 0xFF;
+    if (op == REOP_JMP) {
+        var t = (w0 >> 32) & 0xFFFFFFFF;
+        _re_add_thread(list_base, t, input, input_len, pos, saves, instrs);
+    }
+    elif (op == REOP_SPLIT) {
+        var a = (w0 >> 32) & 0xFFFFFFFF;
+        var b = load64(off + 8);
+        _re_add_thread(list_base, a, input, input_len, pos, saves, instrs);
+        _re_add_thread(list_base, b, input, input_len, pos, saves, instrs);
+    }
+    elif (op == REOP_SAVE) {
+        var idx = (w0 >> 8) & 0xFF;
+        var prev = load64(saves + idx * 8);
+        store64(saves + idx * 8, pos);
+        _re_add_thread(list_base, pc + 1, input, input_len, pos, saves, instrs);
+        store64(saves + idx * 8, prev);
+    }
+    elif (op == REOP_BOL) {
+        var ok = 0;
+        if (pos == 0) { ok = 1; }
+        else {
+            if (load8(input + pos - 1) == 10) { ok = 1; }
+        }
+        if (ok == 1) { _re_add_thread(list_base, pc + 1, input, input_len, pos, saves, instrs); }
+    }
+    elif (op == REOP_EOL) {
+        var ok2 = 0;
+        if (pos == input_len) { ok2 = 1; }
+        elif (load8(input + pos) == 10) { ok2 = 1; }
+        if (ok2 == 1) { _re_add_thread(list_base, pc + 1, input, input_len, pos, saves, instrs); }
+    }
+    elif (op == REOP_BOUNDARY) {
+        if (_re_is_boundary(input, input_len, pos) == 1) {
+            _re_add_thread(list_base, pc + 1, input, input_len, pos, saves, instrs);
+        }
+    }
+    elif (op == REOP_NBOUNDARY) {
+        if (_re_is_boundary(input, input_len, pos) == 0) {
+            _re_add_thread(list_base, pc + 1, input, input_len, pos, saves, instrs);
+        }
+    }
+    else {
+        var n = load64(list_base);
+        store64(list_base + 8 + n * 168, pc);
+        var k = 0;
+        while (k < REGEX_MAX_SAVES) {
+            var v = load64(saves + k * 8);
+            store64(list_base + 8 + n * 168 + 8 + k * 8, v);
+            k = k + 1;
+        }
+        store64(list_base, n + 1);
+    }
+    return 0;
+}
+
+# Run the NFA against `input[start_pos..input_len)`. On match, write the
+# capture saves into nfa's header and return the match-end position.
+# Returns -1 on no match.
+fn _re_pike_run(nfa, input, input_len, start_pos): i64 {
+    _re_m_lazy_init();
+    var instrs = nfa + load64(nfa + REGEX_OFF_INSTRS_OFF);
+    var instr_count = load64(nfa + REGEX_OFF_INSTR_COUNT);
+    var class_base = nfa + load64(nfa + REGEX_OFF_CLASSES_OFF);
+    var matched = 0 - 1;
+    var saves_scratch = alloc(REGEX_MAX_SAVES * 8);
+    var k = 0;
+    while (k < REGEX_MAX_SAVES) {
+        store64(saves_scratch + k * 8, 0 - 1);
+        k = k + 1;
+    }
+    var match_saves = alloc(REGEX_MAX_SAVES * 8);
+    var k2 = 0;
+    while (k2 < REGEX_MAX_SAVES) {
+        store64(match_saves + k2 * 8, 0 - 1);
+        k2 = k2 + 1;
+    }
+    var cur = _re_m_cur;
+    var nxt = _re_m_next;
+    store64(cur, 0);
+    store64(nxt, 0);
+    _re_m_gen = _re_m_gen + 1;
+    _re_add_thread(cur, 0, input, input_len, start_pos, saves_scratch, instrs);
+    var pos = start_pos;
+    var done = 0;
+    while (done == 0) {
+        var c = 0 - 1;
+        if (pos < input_len) { c = load8(input + pos); }
+        # v5.7.18: bump gen at the START of each step so the previous step's
+        # dedup marks for nxt-adds don't block this step. Bumping AFTER would
+        # cause init's gen=1 marks to block step-0 loop adds (a regression
+        # caught while testing `([a-z]+)`/`abc` — the body pc never re-entered).
+        _re_m_gen = _re_m_gen + 1;
+        var n_cur = load64(cur);
+        var ti = 0;
+        while (ti < n_cur) {
+            var pc = load64(cur + 8 + ti * 168);
+            var iw0 = load64(instrs + pc * 16);
+            var iop = iw0 & 0xFF;
+            if (iop == REOP_MATCH) {
+                # Leftmost-first: take the first match found, drop lower-priority threads.
+                matched = pos;
+                var ks = 0;
+                while (ks < REGEX_MAX_SAVES) {
+                    store64(match_saves + ks * 8, load64(cur + 8 + ti * 168 + 8 + ks * 8));
+                    ks = ks + 1;
+                }
+                ti = n_cur;
+            }
+            elif (iop == REOP_CHAR) {
+                var want = (iw0 >> 8) & 0xFF;
+                if (c >= 0 && c == want) {
+                    var ks2 = 0;
+                    while (ks2 < REGEX_MAX_SAVES) {
+                        store64(saves_scratch + ks2 * 8, load64(cur + 8 + ti * 168 + 8 + ks2 * 8));
+                        ks2 = ks2 + 1;
+                    }
+                    _re_m_gen = _re_m_gen;
+                    _re_add_thread(nxt, pc + 1, input, input_len, pos + 1, saves_scratch, instrs);
+                }
+            }
+            elif (iop == REOP_ANY) {
+                if (c >= 0) {
+                    var ks3 = 0;
+                    while (ks3 < REGEX_MAX_SAVES) {
+                        store64(saves_scratch + ks3 * 8, load64(cur + 8 + ti * 168 + 8 + ks3 * 8));
+                        ks3 = ks3 + 1;
+                    }
+                    _re_add_thread(nxt, pc + 1, input, input_len, pos + 1, saves_scratch, instrs);
+                }
+            }
+            elif (iop == REOP_CLASS || iop == REOP_NCLASS) {
+                if (c >= 0) {
+                    var ci = (iw0 >> 8) & 0xFF;
+                    var hit = _re_class_get_at(class_base, ci, c);
+                    if (iop == REOP_NCLASS) {
+                        if (hit == 1) { hit = 0; } else { hit = 1; }
+                    }
+                    if (hit == 1) {
+                        var ks4 = 0;
+                        while (ks4 < REGEX_MAX_SAVES) {
+                            store64(saves_scratch + ks4 * 8, load64(cur + 8 + ti * 168 + 8 + ks4 * 8));
+                            ks4 = ks4 + 1;
+                        }
+                        _re_add_thread(nxt, pc + 1, input, input_len, pos + 1, saves_scratch, instrs);
+                    }
+                }
+            }
+            ti = ti + 1;
+        }
+        # Swap cur <-> nxt; reset nxt; bump generation.
+        var swap = cur;
+        cur = nxt;
+        nxt = swap;
+        store64(nxt, 0);
+        # gen is bumped at the top of each step (above), not here.
+        # Re-init lastgen for the new generation: lazy via gen tag — since
+        # _re_m_gen is monotonically increasing, comparison automatically
+        # rejects entries from prior generations. No clearing needed.
+        if (pos > input_len) { done = 1; }
+        elif (load64(cur) == 0) { done = 1; }
+        else { pos = pos + 1; }
+    }
+    if (matched >= 0) {
+        var ks5 = 0;
+        while (ks5 < REGEX_MAX_SAVES) {
+            store64(nfa + REGEX_OFF_SAVES + ks5 * 8, load64(match_saves + ks5 * 8));
+            ks5 = ks5 + 1;
+        }
+        store64(nfa + REGEX_OFF_MATCH_START, load64(match_saves));
+        store64(nfa + REGEX_OFF_MATCH_END,   matched);
+    } else {
+        store64(nfa + REGEX_OFF_MATCH_START, 0 - 1);
+        store64(nfa + REGEX_OFF_MATCH_END,   0 - 1);
+    }
+    return matched;
+}
+
+fn _re_class_get_at(class_base, ci, c): i64 {
+    if (c < 0)   { return 0; }
+    if (c > 255) { return 0; }
+    var off = class_base + ci * 32 + (c >> 3);
+    var b = load8(off);
+    if ((b >> (c & 7)) & 1) { return 1; }
+    return 0;
+}
+
+# === Public API ======================================================
+
+# regex_match — anchored at position 0. Returns 1 on match, 0 on no match.
+fn regex_match(nfa, s): i64 {
+    if (nfa == 0) { return 0; }
+    var len = strlen(s);
+    var r = _re_pike_run(nfa, s, len, 0);
+    if (r >= 0) { return 1; }
+    return 0;
+}
+
+# regex_search — find first match anywhere. Returns start offset, or -1.
+fn regex_search(nfa, s): i64 {
+    if (nfa == 0) { return 0 - 1; }
+    var len = strlen(s);
+    return regex_search_at(nfa, s, len, 0);
+}
+
+# regex_search_at — like regex_search but starts at offset `from`.
+fn regex_search_at(nfa, s, len, from): i64 {
+    if (nfa == 0) { return 0 - 1; }
+    var i = from;
+    while (i <= len) {
+        var r = _re_pike_run(nfa, s, len, i);
+        if (r >= 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# regex_group_start — capture-group n start (group 0 = whole match).
+fn regex_group_start(nfa, n): i64 {
+    if (nfa == 0)        { return 0 - 1; }
+    if (n < 0 || n > 9)  { return 0 - 1; }
+    return load64(nfa + REGEX_OFF_SAVES + n * 16);
+}
+
+# regex_group_end — capture-group n end.
+fn regex_group_end(nfa, n): i64 {
+    if (nfa == 0)        { return 0 - 1; }
+    if (n < 0 || n > 9)  { return 0 - 1; }
+    return load64(nfa + REGEX_OFF_SAVES + n * 16 + 8);
+}

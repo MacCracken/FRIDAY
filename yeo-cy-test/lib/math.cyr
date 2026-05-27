@@ -1,0 +1,509 @@
+# math.cyr — extended math functions for f64
+# Usage: include "lib/math.cyr"
+# Requires: (uses f64 builtins directly, no other includes)
+#
+# Provides: sinh, cosh, tanh, pow, clamp, min, max, lerp, hypot, sign,
+#           trunc, fract, gcd, lcm, fibonacci, binomial, f64_parse
+# All functions operate on f64 bit patterns.
+
+# Constants (f64 bit patterns)
+#
+# Universal mathematical constants (f64 bit patterns).
+# Covers the set every downstream math consumer needs.
+# Literals are in hex for traceability — each byte group maps
+# directly to the IEEE 754 sign/exponent/mantissa split.
+var F64_ONE           = 0x3FF0_0000_0000_0000;   # 1.0
+var F64_TWO           = 0x4000_0000_0000_0000;   # 2.0
+var F64_HALF          = 0x3FE0_0000_0000_0000;   # 0.5
+var F64_ONE_HALF      = 0x3FF8_0000_0000_0000;   # 1.5
+var F64_TWO_HALF      = 0x4004_0000_0000_0000;   # 2.5
+var F64_PI            = 0x4009_21FB_5444_2D18;   # π
+var F64_PI_2          = 0x3FF9_21FB_5444_2D18;   # π/2
+var F64_PI_4          = 0x3FE9_21FB_5444_2D18;   # π/4
+var F64_TAU           = 0x4019_21FB_5444_2D18;   # 2π
+var F64_E             = 0x4005_BF0A_8B14_5769;   # e
+var F64_LN2           = 0x3FE6_2E42_FEFA_39EF;   # ln(2)
+var F64_LN10          = 0x4002_6BB1_BBB5_5516;   # ln(10)
+var F64_LOG2E         = 0x3FF7_1547_652B_82FE;   # 1/ln(2) ≈ 1.4426950408889634 (v5.8.4)
+var F64_FRAC_1_SQRT2  = 0x3FE6_A09E_667F_3BCD;   # 1/√2
+var F64_SQRT2         = 0x3FF6_A09E_667F_3BCD;   # √2
+
+# ============================================================
+# v5.7.31: aarch64 polyfills for f64_exp / f64_ln.
+# ============================================================
+# x86 has native x87 instructions for these (fyl2x, f2xm1, fscale);
+# aarch64 has none. Pre-v5.7.31 the parser hard-rejected f64_exp /
+# f64_ln on aarch64; v5.7.31 redirects them to these stdlib
+# polyfills. Pure-cyrius implementations using v5.7.30's basic
+# f64 ops (FADD/FSUB/FMUL/FDIV/FRINTN/FCVTZS/SCVTF). x86 builds
+# don't use these — the parser keeps emitting native x87 bytes —
+# but the polyfills compile fine on x86 too (no arch dependency
+# in the body) and are kept here for cross-arch consistency.
+#
+# Accuracy target: ~1e-12 relative error for inputs in the range
+# phylax / chi-squared / entropy work ([-50, 50] for exp, (0, 1e6]
+# for ln). Edge cases (overflow at x > 709, underflow at x < -745)
+# are out-of-spec — same behavior as the x87 path, which also
+# saturates / wraps at extremes.
+
+# exp(x) — range-reduce x = n*ln(2) + r, |r| ≤ ln(2)/2 ≈ 0.347.
+# Then exp(x) = 2^n * exp(r). 2^n via integer exponent bit-pack.
+# exp(r) via 7th-order Horner polynomial.
+fn _f64_exp_polyfill(x): i64 {
+    var LOG2E = 0x3FF71547652B82FE;     # 1/ln(2) ≈ 1.4426950408889634
+    var LN2   = 0x3FE62E42FEFA39EF;     # ln(2)   ≈ 0.6931471805599453
+
+    # Range reduction: x = n*ln(2) + r, |r| ≤ ln(2)/2 ≈ 0.347.
+    var n_f = f64_round(f64_mul(x, LOG2E));         # nearest integer (as f64)
+    var r   = f64_sub(x, f64_mul(n_f, LN2));         # |r| ≤ ln(2)/2
+
+    # 11-term Taylor polynomial for exp(r) — at |r| ≤ 0.347, the
+    # truncation r^11/11! ≈ 1.4e-13 absolute, which gives ~few-ulp
+    # relative error post-2^n scaling. Sufficient for phylax-class
+    # statistical work (chi-squared p-values, entropy). Higher
+    # accuracy via Remez optimization or smaller range reduction is
+    # a future polish slot if a consumer demands it.
+    var c10 = 0x3E927E4FB7789F5C;       # 1/10!
+    var c9  = 0x3EC71DE3A556C734;       # 1/9!
+    var c8  = 0x3EFA01A01A01A01A;       # 1/8!
+    var c7  = 0x3F2A01A01A01A01A;       # 1/7!
+    var c6  = 0x3F56C16C16C16C17;       # 1/6! = 1/720
+    var c5  = 0x3F81111111111111;       # 1/5! = 1/120
+    var c4  = 0x3FA5555555555555;       # 1/4! = 1/24
+    var c3  = 0x3FC5555555555555;       # 1/3! = 1/6
+    var c2  = F64_HALF;                  # 1/2! = 1/2
+    var c1  = F64_ONE;                   # 1/1! = 1
+    var c0  = F64_ONE;                   # 1/0! = 1
+
+    # Horner: p = c10; p = c9 + r*p; ... ; p = c0 + r*p
+    # Result is 1 + r + r²/2 + ... + r^10/10!
+    var p = c10;
+    p = f64_add(c9, f64_mul(r, p));
+    p = f64_add(c8, f64_mul(r, p));
+    p = f64_add(c7, f64_mul(r, p));
+    p = f64_add(c6, f64_mul(r, p));
+    p = f64_add(c5, f64_mul(r, p));
+    p = f64_add(c4, f64_mul(r, p));
+    p = f64_add(c3, f64_mul(r, p));
+    p = f64_add(c2, f64_mul(r, p));
+    p = f64_add(c1, f64_mul(r, p));
+    p = f64_add(c0, f64_mul(r, p));
+
+    # 2^n via bit pattern: ((n_int + 1023) << 52) interpreted as f64.
+    # n_int + 1023 is the biased exponent; mantissa = 0 → exact 2^n.
+    var n_int = f64_to(n_f);
+    var two_n_bits = (n_int + 1023) << 52;
+
+    return f64_mul(two_n_bits, p);
+}
+
+# ln(x) — range-reduce via mantissa/exponent split.
+#   x_bits = (sign << 63) | (e_biased << 52) | mantissa
+#   e_int = e_biased - 1023; m = x / 2^e_int (in [1, 2))
+# Then ln(x) = e_int * ln(2) + ln(m).
+# For ln(m), use u = (m - 1) / (m + 1) and the inverse-tanh series:
+#   ln((1+u)/(1-u)) = 2 * (u + u³/3 + u⁵/5 + u⁷/7 + ...)
+# u is small (|u| ≤ ~0.17 since m ∈ [√(1/2), √2]), so 5 terms ≈ 1e-15.
+fn _f64_ln_polyfill(x): i64 {
+    # Extract biased exponent + reset to 0x3FF (= 1.0 exponent),
+    # giving mantissa in [1, 2).
+    var e_raw = (x >> 52) & 0x7FF;
+    var e_int = e_raw - 1023;
+    var m = (x & 0x800FFFFFFFFFFFFF) | 0x3FF0000000000000;
+
+    # Normalize m to [√(1/2), √2) for tighter polynomial range.
+    # If m ≥ √2 (bits 0x3FF6A09E667F3BCD), divide by 2 + bump e.
+    if (m >= 0x3FF6A09E667F3BCD) {
+        m = m - 0x0010000000000000;     # divide-by-2 = subtract 1<<52 from exponent field
+        e_int = e_int + 1;
+    }
+
+    # u = (m - 1) / (m + 1), |u| ≤ ~0.17
+    var u = f64_div(f64_sub(m, F64_ONE), f64_add(m, F64_ONE));
+    var u2 = f64_mul(u, u);
+
+    # ln(m) ≈ 2u * (1 + u²/3 + u⁴/5 + u⁶/7 + u⁸/9 + u^10/11 + u^12/13 + u^14/15)
+    # 8 terms — at |u| ≤ ~0.171 (m ≤ √2), u^17/17 ≈ 4e-16 absolute,
+    # well within ulp budget. 5 terms gave ~10^5 ulp at ln(e); 8
+    # terms gives < 5 ulp.
+    var c_3  = 0x3FD5555555555555;       # 1/3
+    var c_5  = 0x3FC999999999999A;       # 1/5
+    var c_7  = 0x3FC2492492492492;       # 1/7
+    var c_9  = 0x3FBC71C71C71C71C;       # 1/9
+    var c_11 = 0x3FB745D1745D1746;       # 1/11
+    var c_13 = 0x3FB3B13B13B13B14;       # 1/13
+    var c_15 = 0x3FB1111111111111;       # 1/15
+
+    var p = c_15;
+    p = f64_add(c_13, f64_mul(u2, p));
+    p = f64_add(c_11, f64_mul(u2, p));
+    p = f64_add(c_9,  f64_mul(u2, p));
+    p = f64_add(c_7,  f64_mul(u2, p));
+    p = f64_add(c_5,  f64_mul(u2, p));
+    p = f64_add(c_3,  f64_mul(u2, p));
+    p = f64_add(F64_ONE, f64_mul(u2, p));
+    var ln_m = f64_mul(F64_TWO, f64_mul(u, p));
+
+    # Combine: ln(x) = e_int * ln(2) + ln_m
+    var e_f = f64_from(e_int);
+    return f64_add(f64_mul(e_f, F64_LN2), ln_m);
+}
+
+# log2(x) — change of base: log2(x) = ln(x) / ln(2) = ln(x) * (1/ln(2)).
+# v5.8.4: aarch64 polyfill (phylax #1 unblock). x86 has fyl2x for log2;
+# aarch64 doesn't, so this routes through `_f64_ln_polyfill` (parse_expr
+# auto-dispatches `f64_ln` on aarch64) and multiplies by F64_LOG2E. Same
+# accuracy as the underlying ln polyfill (~5 ulp at typical inputs).
+# Phylax's Shannon entropy + chi-squared paths use this; previously
+# blocked aarch64 cross-build via the `f64_log2 is x86-only` hard-reject.
+fn _f64_log2_polyfill(x): i64 {
+    return f64_mul(f64_ln(x), F64_LOG2E);
+}
+
+# sinh(x) = (exp(x) - exp(-x)) / 2
+fn f64_sinh(x): i64 {
+    var ex = f64_exp(x);
+    var enx = f64_exp(f64_neg(x));
+    return f64_div(f64_sub(ex, enx), F64_TWO);
+}
+
+# cosh(x) = (exp(x) + exp(-x)) / 2
+fn f64_cosh(x): i64 {
+    var ex = f64_exp(x);
+    var enx = f64_exp(f64_neg(x));
+    return f64_div(f64_add(ex, enx), F64_TWO);
+}
+
+# tanh(x) = sinh(x) / cosh(x)
+fn f64_tanh(x): i64 {
+    var ex = f64_exp(x);
+    var enx = f64_exp(f64_neg(x));
+    var s = f64_sub(ex, enx);
+    var c = f64_add(ex, enx);
+    return f64_div(s, c);
+}
+
+# pow(base, exp) = exp(exp * ln(base))
+fn f64_pow(base, exp): i64 {
+    return f64_exp(f64_mul(exp, f64_ln(base)));
+}
+
+# clamp(x, lo, hi) — clamp x to [lo, hi]
+fn f64_clamp(x, lo, hi): i64 {
+    if (f64_lt(x, lo) == 1) { return lo; }
+    if (f64_gt(x, hi) == 1) { return hi; }
+    return x;
+}
+
+# min/max for f64
+fn f64_min(a, b): i64 {
+    if (f64_lt(a, b) == 1) { return a; }
+    return b;
+}
+# Return the larger of two f64 values
+fn f64_max(a, b): i64 {
+    if (f64_gt(a, b) == 1) { return a; }
+    return b;
+}
+
+# ================================================================
+# Inverse trigonometry
+# ================================================================
+#
+# v5.7.31: Inverse trig family is x86-only — uses the `f64_atan`
+# builtin (x87 `fpatan`), which has no aarch64 equivalent and
+# isn't polyfilled in v5.7.31 (phylax doesn't need it). On
+# aarch64 builds, this entire section is skipped via `#ifdef
+# CYRIUS_ARCH_X86`. Future polyfill slot if a consumer surfaces a
+# need (mirrors v5.7.30 -> v5.7.31 split for exp/ln).
+#ifdef CYRIUS_ARCH_X86
+# x87 `fpatan` (exposed by Cyrius as the `f64_atan` builtin) is a
+# single-argument arctangent returning a value in [-π/2, π/2]. The
+# helpers below build the rest of the inverse-trig family on top of
+# it via standard identities:
+#
+#   asin(x) = atan(x / √(1 − x²))
+#   acos(x) = π/2 − asin(x)
+#   atan2(y, x) = atan(y / x) corrected per quadrant
+#
+# abaco 1.1.0's ntheory port was carrying the same identities
+# inline but with a broken atan2 (no quadrant fix → wrong in Q2/Q3).
+# This hardens that fix and makes it available to every consumer.
+#
+# Domain notes:
+#   asin / acos: |x| ≤ 1. Outside the domain sqrt yields NaN and
+#     the atan chain propagates it — consistent with C's libm.
+#   atan:  any finite x. Returns value in (-π/2, π/2).
+#   atan2: defined for (y, x) ≠ (0, 0). The (0, 0) case returns 0
+#     by convention (matches C libm).
+
+# asin(x) = atan(x / √(1 − x²))
+fn f64_asin(x): i64 {
+    var one_minus_xx = f64_sub(F64_ONE, f64_mul(x, x));
+    var denom = f64_sqrt(one_minus_xx);
+    return f64_atan(f64_div(x, denom));
+}
+
+# acos(x) = π/2 − asin(x)
+fn f64_acos(x): i64 {
+    return f64_sub(F64_PI_2, f64_asin(x));
+}
+
+var _F64_ZERO = 0;
+
+# Two-argument arctangent with full-plane quadrant handling. Result
+# is in (-π, π]. Quadrant map:
+#   x > 0            : atan(y/x)                   (Q1 / Q4)
+#   x < 0, y ≥ 0     : atan(y/x) + π               (Q2)
+#   x < 0, y < 0     : atan(y/x) − π               (Q3)
+#   x == 0, y > 0    : +π/2
+#   x == 0, y < 0    : −π/2
+#   x == 0, y == 0   : 0  (convention — C libm matches)
+# Zero comparisons use bit equality against the f64 representation
+# of 0.0 (IEEE 754: both +0 and −0 compare equal via f64_eq).
+fn f64_atan2(y, x): i64 {
+    if (f64_eq(x, _F64_ZERO) == 1) {
+        if (f64_eq(y, _F64_ZERO) == 1) { return _F64_ZERO; }
+        if (f64_gt(y, _F64_ZERO) == 1) { return F64_PI_2; }
+        return f64_neg(F64_PI_2);
+    }
+    var q = f64_atan(f64_div(y, x));
+    if (f64_gt(x, _F64_ZERO) == 1) { return q; }
+    # x < 0.
+    if (f64_lt(y, _F64_ZERO) == 1) { return f64_sub(q, F64_PI); }
+    return f64_add(q, F64_PI);
+}
+#endif
+
+# ================================================================
+# Inverse hyperbolic
+# ================================================================
+# Closes the symmetry with `f64_sinh` / `cosh` / `tanh` that's been
+# in this file since day one. Identity-based implementations —
+# accurate enough for most consumers, loses ~1-2 ulp at small |x|
+# for asinh and near ±1 for atanh (classic catastrophic
+# cancellation from `1 − x²` and `ln(1 + small)`). Downstream
+# crates that need sub-ulp accuracy should roll their own
+# range-reduced series; most consumers (abaco, dhvani) don't.
+#
+# Domains:
+#   asinh: all real x.
+#   acosh: x ≥ 1.       Below domain, sqrt(x²−1) propagates NaN.
+#   atanh: |x| < 1.     At ±1 the ln diverges; outside domain it
+#                       propagates NaN via ln of a negative.
+
+# asinh(x) = ln(x + √(x² + 1))
+fn f64_asinh(x): i64 {
+    var x2_plus_1 = f64_add(f64_mul(x, x), F64_ONE);
+    return f64_ln(f64_add(x, f64_sqrt(x2_plus_1)));
+}
+
+# acosh(x) = ln(x + √(x² − 1)), x ≥ 1
+fn f64_acosh(x): i64 {
+    var x2_minus_1 = f64_sub(f64_mul(x, x), F64_ONE);
+    return f64_ln(f64_add(x, f64_sqrt(x2_minus_1)));
+}
+
+# atanh(x) = ½ · ln((1 + x) / (1 − x)), |x| < 1
+fn f64_atanh(x): i64 {
+    var num = f64_add(F64_ONE, x);
+    var den = f64_sub(F64_ONE, x);
+    return f64_mul(F64_HALF, f64_ln(f64_div(num, den)));
+}
+
+# ================================================================
+# f64 UTILITIES
+# ================================================================
+# Extracted from abaco/dsp.cyr — foundational primitives that belong
+# in stdlib, not application code.
+
+# Linear interpolation: lerp(a, b, 0) = a, lerp(a, b, 1) = b
+fn f64_lerp(a, b, t): i64 {
+    return f64_add(a, f64_mul(t, f64_sub(b, a)));
+}
+
+# Hypotenuse: sqrt(x^2 + y^2). No overflow protection (use for normal ranges).
+fn f64_hypot(x, y): i64 {
+    return f64_sqrt(f64_add(f64_mul(x, x), f64_mul(y, y)));
+}
+
+# Sign: -1.0 if x < 0, +1.0 if x > 0, 0.0 if x == 0
+fn f64_sign(x): i64 {
+    var zero = f64_from(0);
+    if (f64_lt(x, zero) == 1) { return f64_neg(f64_from(1)); }
+    if (f64_gt(x, zero) == 1) { return f64_from(1); }
+    return zero;
+}
+
+# Truncate toward zero: trunc(3.7) = 3.0, trunc(-3.7) = -3.0
+fn f64_trunc(x): i64 {
+    var zero = f64_from(0);
+    if (f64_lt(x, zero) == 1) { return f64_ceil(x); }
+    return f64_floor(x);
+}
+
+# Fractional part: fract(3.7) = 0.7
+fn f64_fract(x): i64 {
+    return f64_sub(x, f64_floor(x));
+}
+
+# ================================================================
+# INTEGER UTILITIES
+# ================================================================
+
+# Greatest common divisor (Euclidean algorithm). Handles negatives.
+fn gcd(a, b): i64 {
+    if (a < 0) { a = 0 - a; }
+    if (b < 0) { b = 0 - b; }
+    while (b != 0) {
+        var t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+# Least common multiple.
+fn lcm(a, b): i64 {
+    if (a == 0 || b == 0) { return 0; }
+    var g = gcd(a, b);
+    var result = (a / g) * b;
+    if (result < 0) { result = 0 - result; }
+    return result;
+}
+
+# Fibonacci number (iterative). Returns -1 if n > 92 (overflow).
+fn fibonacci(n): i64 {
+    if (n == 0) { return 0; }
+    if (n > 92) { return 0 - 1; }
+    var a = 0;
+    var b = 1;
+    var i = 2;
+    while (i <= n) {
+        var next = a + b;
+        a = b;
+        b = next;
+        i = i + 1;
+    }
+    return b;
+}
+
+# Binomial coefficient C(n, k). Uses symmetry + iterative multiply to avoid overflow.
+fn binomial(n, k): i64 {
+    if (k > n) { return 0; }
+    if (k > n - k) { k = n - k; }
+    var result = 1;
+    var i = 0;
+    while (i < k) {
+        result = result * (n - i) / (i + 1);
+        i = i + 1;
+    }
+    return result;
+}
+
+# ================================================================
+# f64 PARSING
+# ================================================================
+# Parse a null-terminated string to an f64 bit pattern.
+# Returns the f64 bit pattern, or 0 on failure.
+# Handles: optional sign, integer part, optional fraction,
+# optional e/E exponent with optional sign, NaN, Inf, -Inf.
+#
+# Parse a null-terminated cstring to an f64 bit pattern (0 on failure)
+fn f64_parse(s): i64 {
+    var i = 0;
+    var neg = 0;
+
+    # Skip leading whitespace
+    while (load8(s + i) == 32 || load8(s + i) == 9) { i = i + 1; }
+
+    # Sign
+    if (load8(s + i) == 45) { neg = 1; i = i + 1; }
+    elif (load8(s + i) == 43) { i = i + 1; }
+
+    # NaN
+    if (load8(s + i) == 78 || load8(s + i) == 110) {
+        if ((load8(s+i+1) == 97 || load8(s+i+1) == 65) && (load8(s+i+2) == 78 || load8(s+i+2) == 110)) {
+            return 0x7FF8000000000000;
+        }
+    }
+    # Inf
+    if (load8(s + i) == 73 || load8(s + i) == 105) {
+        if ((load8(s+i+1) == 110 || load8(s+i+1) == 78) && (load8(s+i+2) == 102 || load8(s+i+2) == 70)) {
+            if (neg == 1) { return 0xFFF0000000000000; }
+            return 0x7FF0000000000000;
+        }
+    }
+
+    # Integer part
+    var has_digits = 0;
+    var result = f64_from(0);
+    var ten = f64_from(10);
+    while (load8(s + i) >= 48 && load8(s + i) <= 57) {
+        result = f64_add(f64_mul(result, ten), f64_from(load8(s + i) - 48));
+        has_digits = 1;
+        i = i + 1;
+    }
+
+    # Fractional part
+    if (load8(s + i) == 46) {
+        i = i + 1;
+        var frac_scale = f64_from(1);
+        while (load8(s + i) >= 48 && load8(s + i) <= 57) {
+            frac_scale = f64_div(frac_scale, ten);
+            result = f64_add(result, f64_mul(f64_from(load8(s + i) - 48), frac_scale));
+            has_digits = 1;
+            i = i + 1;
+        }
+    }
+
+    if (has_digits == 0) { return 0; }
+
+    # Exponent
+    if (load8(s + i) == 101 || load8(s + i) == 69) {
+        i = i + 1;
+        var exp_neg = 0;
+        if (load8(s + i) == 45) { exp_neg = 1; i = i + 1; }
+        elif (load8(s + i) == 43) { i = i + 1; }
+        var exp_val = 0;
+        while (load8(s + i) >= 48 && load8(s + i) <= 57) {
+            exp_val = exp_val * 10 + (load8(s + i) - 48);
+            i = i + 1;
+        }
+        # Apply exponent: result * 10^exp
+        var exp_scale = f64_from(1);
+        var ei = 0;
+        while (ei < exp_val) {
+            exp_scale = f64_mul(exp_scale, ten);
+            ei = ei + 1;
+        }
+        if (exp_neg == 1) {
+            result = f64_div(result, exp_scale);
+        } else {
+            result = f64_mul(result, exp_scale);
+        }
+    }
+
+    if (neg == 1) { result = f64_neg(result); }
+    return result;
+}
+
+# Parse with success flag. Writes f64 result to *out, returns 1 on
+# success, 0 on failure (out unchanged on failure).
+fn f64_parse_ok(s, out): i64 {
+    var i = 0;
+    while (load8(s + i) == 32 || load8(s + i) == 9) { i = i + 1; }
+    # Reject empty / whitespace-only
+    if (load8(s + i) == 0) { return 0; }
+    # Check for at least one digit or NaN/Inf after sign
+    var ci = i;
+    if (load8(s + ci) == 45 || load8(s + ci) == 43) { ci = ci + 1; }
+    var c = load8(s + ci);
+    if (c < 48 || c > 57) {
+        # Allow NaN/Inf
+        if (c != 78 && c != 110 && c != 73 && c != 105 && c != 46) { return 0; }
+    }
+    var val = f64_parse(s);
+    store64(out, val);
+    return 1;
+}

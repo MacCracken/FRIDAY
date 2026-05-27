@@ -1,0 +1,16 @@
+/build/
+*.core
+
+# runtime artifacts
+*.patra
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+.env.*
+*.pem
+*.key

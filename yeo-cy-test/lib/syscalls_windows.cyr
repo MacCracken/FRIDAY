@@ -1,0 +1,140 @@
+# syscalls_windows.cyr — Win32 API wrappers for Cyrius PE targets.
+# Usage: include "lib/syscalls.cyr" (selector picks this peer when
+#        CYRIUS_TARGET_WIN is defined by cycc_win.cyr; do NOT include
+#        this file directly).
+#
+# Shipped v5.5.0 as the Windows-side counterpart to
+# lib/syscalls_x86_64_linux.cyr and lib/syscalls_aarch64_linux.cyr.
+# Covers the syscall surface that the cyrius PE backend reroutes at
+# parse time (syscall(N, ...) → WriteFile / ReadFile / VirtualAlloc
+# / ExitProcess etc. via the IAT).
+#
+# DESIGN NOTE: the SysNr constants below match the LINUX x86_64
+# syscall numbers, not Win32 ordinals. This is intentional — the
+# cyrius PE backend reroutes `syscall(N, ...)` calls based on N,
+# mapping them to the appropriate kernel32.dll / ntdll.dll / etc.
+# import at emit time. Keeping the numbers Linux-compatible means
+# user code written to the `sys_write(fd, buf, len)` surface
+# compiles on both Linux ELF and Windows PE without source changes.
+#
+# Syscalls WITHOUT a Win32 equivalent (fork, clone, futex, epoll,
+# signalfd, etc.) are deliberately omitted — attempting to use
+# them on Windows produces an undefined-syscall warning at compile
+# time (escalatable to a hard error via `cycc_win --strict`).
+
+# ================================================================
+# Syscall numbers — cyrius cross-platform convention
+# ================================================================
+# These match Linux x86_64 numbers so cross-platform stdlib code
+# can use a single constant name. The PE backend reroutes at emit.
+enum SysNr {
+    SYS_READ = 0;       # → ReadFile (via GetStdHandle for fd 0)
+    SYS_WRITE = 1;      # → WriteFile (via GetStdHandle for fd 1/2)
+    SYS_OPEN = 2;       # → CreateFileW
+    SYS_CLOSE = 3;      # → CloseHandle
+    SYS_LSEEK = 8;      # → SetFilePointerEx
+    SYS_MMAP = 9;       # → VirtualAlloc(MEM_COMMIT|MEM_RESERVE)
+    SYS_BRK = 12;       # → VirtualAlloc (grow-at-end via committed pages)
+    SYS_MUNMAP = 11;    # → VirtualFree(MEM_RELEASE)
+    SYS_EXIT = 60;      # → ExitProcess
+    SYS_EXIT_GROUP = 231; # → ExitProcess (aliased — Windows has no process group)
+}
+
+# File descriptors mirror Linux convention. GetStdHandle maps
+# STD_INPUT_HANDLE (-10) / STD_OUTPUT_HANDLE (-11) / STD_ERROR_HANDLE
+# (-12) to these inside the PE reroute.
+enum FdNr {
+    STDIN_FD = 0;
+    STDOUT_FD = 1;
+    STDERR_FD = 2;
+}
+
+# Standard open flags (Linux-shaped; PE backend maps to Win32).
+# Full fcntl.h subset — arithmetic on these is preserved in the
+# reroute so `O_WRONLY | O_CREAT | O_TRUNC` computes correctly
+# before translation to CreateFileW's dwDesiredAccess /
+# dwCreationDisposition pair.
+enum OFlags {
+    O_RDONLY = 0;
+    O_WRONLY = 1;
+    O_RDWR = 2;
+    O_CREAT = 64;       # 0100
+    O_EXCL = 128;       # 0200
+    O_TRUNC = 512;      # 01000
+    O_APPEND = 1024;    # 02000
+}
+
+# ================================================================
+# Wrapper fns — the public surface
+# ================================================================
+# Thin wrappers around `syscall(N, ...)`. Parse-time rerouting in
+# src/backend/pe/emit.cyr picks up each SYS_* and emits the Win32
+# equivalent through the IAT.
+
+# Write `count` bytes from `buf` to descriptor `fd`. Rerouted to
+# kernel32!WriteFile via the PE IAT at emit time (v5.4.7 reroute).
+# For fd 1/2 the PE backend inserts a GetStdHandle(-11/-12) call
+# first so the WriteFile `hFile` arg is a real Windows handle.
+fn sys_write(fd, buf, count) {
+    return syscall(SYS_WRITE, fd, buf, count);
+}
+
+# Read up to `count` bytes from `fd` into `buf`. Rerouted to
+# kernel32!ReadFile by the PE backend. GetStdHandle(-10) is
+# inserted for fd 0 (stdin). Returns bytes read or -1 on error.
+fn sys_read(fd, buf, count) {
+    return syscall(SYS_READ, fd, buf, count);
+}
+
+# Open a file and return a descriptor. Rerouted to
+# kernel32!CreateFileW; `flags` (Linux-shaped) is decomposed into
+# Win32 `dwDesiredAccess` + `dwCreationDisposition` inside the
+# reroute. `mode` is passed as the security-attributes hint
+# (usually 0). Returns a handle usable by sys_read/write/close or
+# -1 on failure.
+fn sys_open(path, flags, mode) {
+    return syscall(SYS_OPEN, path, flags, mode);
+}
+
+# Close the descriptor `fd`. Rerouted to kernel32!CloseHandle.
+# Returns 0 on success, -1 on failure.
+fn sys_close(fd) {
+    return syscall(SYS_CLOSE, fd);
+}
+
+# Seek within `fd`. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
+# Rerouted to kernel32!SetFilePointerEx (the 64-bit-capable form).
+# Returns the new offset or -1 on failure.
+fn sys_lseek(fd, offset, whence) {
+    return syscall(SYS_LSEEK, fd, offset, whence);
+}
+
+# Terminate the process with exit code `code`. Rerouted to
+# kernel32!ExitProcess (v5.4.4 reroute). Never returns.
+fn sys_exit(code) {
+    syscall(SYS_EXIT, code);
+    return 0;   # unreachable
+}
+
+# VirtualAlloc-backed allocation. The PE reroute intercepts
+# syscall(SYS_MMAP, ...) and emits a VirtualAlloc call with
+# MEM_COMMIT | MEM_RESERVE + PAGE_READWRITE.
+fn sys_mmap(addr, length, prot, flags, fd, offset) {
+    return syscall(SYS_MMAP, addr, length, prot, flags, fd, offset);
+}
+
+# Release a VirtualAlloc'd region. Rerouted to kernel32!VirtualFree
+# with MEM_RELEASE. `length` is ignored for MEM_RELEASE per Win32
+# semantics (the whole reservation is released), but the Linux-
+# compat surface keeps it for source-level portability.
+fn sys_munmap(addr, length) {
+    return syscall(SYS_MUNMAP, addr, length);
+}
+
+# brk-shaped allocator anchor. Reroutes to VirtualAlloc-based
+# growable region so lib/alloc.cyr's bump logic works unchanged.
+# See lib/alloc_windows.cyr for the Windows-specific alloc_init
+# that bootstraps the heap.
+fn sys_brk(addr) {
+    return syscall(SYS_BRK, addr);
+}

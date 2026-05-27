@@ -1,0 +1,43 @@
+# random.cyr — kernel CSPRNG access (Linux `getrandom(2)`)
+#
+# Convenience layer over `sys_getrandom` from the syscall-
+# selector peer. Use this rather than `/dev/urandom` + open/read/
+# close — getrandom is the one-syscall path, blocks on first
+# call until the kernel CSPRNG is seeded, and works in
+# environments where /dev/urandom isn't accessible (early boot,
+# chroot, landlocked process).
+#
+# Added v5.7.35 (agnosys luks-surfaced).
+
+# Flags accepted by `sys_getrandom(buf, len, flags)`. Bitwise-or
+# combinable. The default (flags = 0) is "block until seeded,
+# read from the kernel CSPRNG" — what callers want 99% of the
+# time. Use random_bytes() for that case.
+enum GrndFlag {
+    GRND_NONBLOCK = 1;     # 0x0001 — return -EAGAIN if not yet seeded
+    GRND_RANDOM = 2;       # 0x0002 — draw from /dev/random pool (blocks)
+    GRND_INSECURE = 4;     # 0x0004 — non-blocking, no quality guarantee
+}
+
+# Fill `buf` with `len` bytes from the kernel CSPRNG. Blocks
+# the calling thread until the kernel pool is seeded (typical:
+# milliseconds at boot, immediate after). Returns the number of
+# bytes filled (always == len on success since this loops
+# internally) or -errno on permanent failure.
+#
+# Uses flags = 0 — for non-blocking or /dev/random behavior,
+# call sys_getrandom directly with the GrndFlag constants.
+#
+# Note: getrandom can return short reads if the request is
+# > 256 bytes. random_bytes loops until the full request is
+# satisfied or a real error surfaces.
+fn random_bytes(buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var n = sys_getrandom(buf + off, len - off, 0);
+        if (n < 0) { return n; }
+        if (n == 0) { return off; }
+        off = off + n;
+    }
+    return off;
+}

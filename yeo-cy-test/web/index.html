@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yeo-cy-test — Notes</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        max-width: 36rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+      }
+      h1 { margin-bottom: 0; }
+      .sub { color: #888; margin-top: 0.25rem; }
+      form { display: flex; gap: 0.5rem; margin: 1.5rem 0; }
+      input { flex: 1; padding: 0.5rem 0.75rem; font: inherit; }
+      button { padding: 0.5rem 1rem; font: inherit; cursor: pointer; }
+      ul { list-style: none; padding: 0; }
+      .note {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid #8884;
+      }
+      .note time { color: #888; font-size: 0.85em; white-space: nowrap; }
+      footer { margin-top: 1.5rem; color: #888; font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>yeo-cy-test</h1>
+      <p class="sub">Cyrius backend · patra storage · TS/TSX-validated frontend</p>
+      <form id="f">
+        <input id="b" placeholder="write a note…" autocomplete="off" required />
+        <button>Add</button>
+      </form>
+      <ul id="list"></ul>
+      <footer id="status"></footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

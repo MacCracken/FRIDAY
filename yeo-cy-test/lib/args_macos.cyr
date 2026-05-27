@@ -1,0 +1,57 @@
+# args_macos.cyr — command-line argument access on macOS arm64
+# Usage: include "lib/args.cyr" (dispatches here under CYRIUS_TARGET_MACOS)
+#
+# The Mach-O arm64 entry prologue emitted by main_aarch64.cyr (v5.5.17)
+# saves the incoming Darwin ABI argc/argv registers onto the stack and
+# preserves a pointer in x28:
+#
+#     stp x0, x1, [sp, #-16]!   ; push argc/argv
+#     mov x28, sp                ; x28 = base pointer
+#
+# x28 is callee-saved per AAPCS64 and the cyrius aarch64 backend
+# doesn't touch it, so the pointer is durable for the program's
+# lifetime. argc()/argv(n) below read through it via inline asm.
+#
+# The alternative would be calling `_NSGetArgc` / `_NSGetArgv` in
+# libSystem (2 more `__got` slots, extra parse-time dispatches),
+# but the x28-register approach needs zero new imports and the
+# same 4-byte save at entry covers all access patterns.
+
+# Return the argv base pointer that the entry prologue parked in x28.
+# Inline asm — mirrors lib/fnptr.cyr's pattern for stashing a register
+# into a local slot via [x29, #-8].
+fn _macho_argv_base() {
+    var result = 0;
+    asm {
+        0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
+        0xA0; 0x83; 0x1F; 0xF8;    # stur x0, [x29, #-8]  (result)
+    }
+    return result;
+}
+
+# On Linux the equivalent fn reads /proc/self/cmdline; on macOS the
+# entry prologue has already done the work, so args_init is a no-op.
+# Kept in the public API so caller code stays portable.
+fn args_init() {
+    return 0;
+}
+
+# argc is the 64-bit value at [x28, #0]. The entry `stp x0, x1, [sp, #-16]!`
+# stored the full 64-bit x0 (argc's low bits plus any zero-extension
+# Darwin guaranteed); the upper bits are zero per C int widening.
+fn argc() {
+    var base = _macho_argv_base();
+    return load64(base);
+}
+
+# argv(n) returns a pointer to the nth NUL-terminated string argument.
+# argv itself is a `char **` stored at [x28, #8]; dereference it as an
+# 8-byte-per-entry pointer array.
+fn argv(n) {
+    if (n < 0) { return 0; }
+    var base = _macho_argv_base();
+    var cnt = load64(base);
+    if (n >= cnt) { return 0; }
+    var argvp = load64(base + 8);
+    return load64(argvp + n * 8);
+}

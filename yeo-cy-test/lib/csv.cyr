@@ -1,0 +1,97 @@
+# csv.cyr — RFC 4180 CSV parser and writer
+# Usage: include "lib/csv.cyr"
+# Requires: alloc.cyr, string.cyr, vec.cyr, str.cyr
+
+# Parse a CSV line into a vec of field strings (C strings).
+# Handles quoted fields, escaped quotes (""), and commas within quotes.
+fn csv_parse_line(line): i64 {
+    var fields = vec_new();
+    var len = strlen(line);
+    var pos = 0;
+    while (pos < len) {
+        var field = alloc(1024);
+        var fi = 0;
+        if (pos < len) {
+            if (load8(line + pos) == 34) {
+                # Quoted field
+                pos = pos + 1;
+                var qgo = 1;
+                while (qgo == 1) {
+                    if (pos >= len) { qgo = 0; }
+                    elif (load8(line + pos) == 34) {
+                        if (pos + 1 < len) {
+                            if (load8(line + pos + 1) == 34) {
+                                # Escaped quote
+                                store8(field + fi, 34); fi = fi + 1;
+                                pos = pos + 2;
+                            } else { pos = pos + 1; qgo = 0; }
+                        } else { pos = pos + 1; qgo = 0; }
+                    } else {
+                        store8(field + fi, load8(line + pos));
+                        fi = fi + 1; pos = pos + 1;
+                    }
+                }
+                # Skip comma after closing quote
+                if (pos < len) { if (load8(line + pos) == 44) { pos = pos + 1; } }
+            } else {
+                # Unquoted field — read until comma or end
+                while (pos < len) {
+                    var c = load8(line + pos);
+                    if (c == 44) { pos = pos + 1; break; }
+                    store8(field + fi, c);
+                    fi = fi + 1; pos = pos + 1;
+                }
+            }
+        }
+        store8(field + fi, 0);
+        vec_push(fields, field);
+    }
+    return fields;
+}
+
+# Escape a field for CSV output (quote if needed)
+fn csv_escape(field): i64 {
+    var len = strlen(field);
+    var needs_quote = 0;
+    var i = 0;
+    while (i < len) {
+        var c = load8(field + i);
+        if (c == 44) { needs_quote = 1; }
+        if (c == 34) { needs_quote = 1; }
+        if (c == 10) { needs_quote = 1; }
+        i = i + 1;
+    }
+    if (needs_quote == 0) { return field; }
+    # Quote and escape internal quotes
+    var out = alloc(len * 2 + 3);
+    var oi = 0;
+    store8(out + oi, 34); oi = oi + 1;
+    i = 0;
+    while (i < len) {
+        var c = load8(field + i);
+        if (c == 34) { store8(out + oi, 34); oi = oi + 1; }
+        store8(out + oi, c); oi = oi + 1;
+        i = i + 1;
+    }
+    store8(out + oi, 34); oi = oi + 1;
+    store8(out + oi, 0);
+    return out;
+}
+
+# Write a vec of fields as a CSV line (returns null-terminated string)
+fn csv_write_line(fields): i64 {
+    var buf = alloc(4096);
+    var pos = 0;
+    var i = 0;
+    while (i < vec_len(fields)) {
+        if (i > 0) { store8(buf + pos, 44); pos = pos + 1; }
+        var escaped = csv_escape(vec_get(fields, i));
+        var elen = strlen(escaped);
+        memcpy(buf + pos, escaped, elen);
+        pos = pos + elen;
+        i = i + 1;
+    }
+    store8(buf + pos, 10); pos = pos + 1;
+    store8(buf + pos, 0);
+    return buf;
+}

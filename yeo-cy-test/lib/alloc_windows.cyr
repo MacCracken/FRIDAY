@@ -1,0 +1,87 @@
+# alloc_windows.cyr — VirtualAlloc-backed bump allocator for
+# Cyrius PE targets (Windows x86_64).
+# Usage: include via lib/alloc.cyr's selector (do NOT include
+#        this file directly — go through lib/alloc.cyr).
+#
+# Shipped v5.5.0. Linux's lib/alloc.cyr uses brk (syscall 12)
+# which has no native Windows equivalent (Windows heaps are
+# HeapAlloc / VirtualAlloc — region-oriented, not the one
+# monotonically-growing brk region). Rather than teach cyrius's
+# PE reroute to fake brk via repeated VirtualAlloc commits, we
+# ship a Windows-shaped allocator with the same public surface
+# (alloc_init / alloc / alloc_reset / ALLOC_MAX).
+#
+# DESIGN: one big reservation at alloc_init (16 MB default),
+# bump inside it. Matches lib/alloc.cyr's existing "no individual
+# free" contract — programs that outgrow 16 MB should use
+# `lib/freelist.cyr` or spawn a fresh arena. The reservation
+# size can be tuned per program via environment (future work;
+# not wired yet).
+
+var _heap_base = 0;
+var _heap_ptr = 0;
+var _heap_end = 0;
+
+# Windows heap reservation size. 16 MB — matches the historical
+# Linux heap ceiling most cyrius-compiled programs use. Grow
+# discipline: if a downstream program needs more, open a GitHub
+# issue; don't silently bump (bigger initial commit = slower
+# startup + more RSS).
+var _WIN_HEAP_SIZE = 0x1000000;
+
+# Initialize the heap. On Windows, syscall(12, ...) is rerouted
+# by the PE backend to VirtualAlloc. First call with addr=0 gets
+# a fresh reservation of _WIN_HEAP_SIZE bytes (MEM_COMMIT |
+# MEM_RESERVE, PAGE_READWRITE). Returns the base address; bump
+# allocation proceeds upward inside that region.
+#
+# Second/subsequent `syscall(12, addr)` calls are treated as
+# no-op by the PE reroute (Windows can't grow a committed
+# region in-place). `alloc()` below detects overflow and
+# returns 0 rather than silently corrupting.
+fn alloc_init() {
+    # Pass the desired size as the addr arg; PE reroute
+    # recognises the first-call shape and issues a
+    # VirtualAlloc(NULL, size, MEM_COMMIT|MEM_RESERVE, PAGE_RW).
+    _heap_base = syscall(12, _WIN_HEAP_SIZE);
+    _heap_end = _heap_base + _WIN_HEAP_SIZE;
+    _heap_ptr = _heap_base;
+    return _heap_base;
+}
+
+# Maximum single allocation (256 MB — same as Linux peer, will
+# fail at runtime if >16 MB is requested from a single allocation
+# since the reservation is 16 MB).
+var ALLOC_MAX = 0x10000000;
+
+# Allocate size bytes, 8-byte aligned. Returns 0 on overflow /
+# out-of-region.
+fn alloc(size) {
+    # v5.8.37 — lazy-init the heap if alloc_init() was never called.
+    # Mirrors the Linux + macOS branches; alloc_init() is now
+    # optional. See lib/alloc.cyr header for the full migration note.
+    if (_heap_base == 0) { alloc_init(); }
+    if (size <= 0) { return 0; }
+    if (size > ALLOC_MAX) { return 0; }
+    size = (size + 7) & (0 - 8);
+    var ptr = _heap_ptr;
+    var new_ptr = ptr + size;
+    # Overflow check: wrapped pointer = arithmetic overflow.
+    if (new_ptr < ptr) { return 0; }
+    # Out-of-region: no grow on Windows.
+    if (new_ptr > _heap_end) { return 0; }
+    _heap_ptr = new_ptr;
+    return ptr;
+}
+
+# Reset the bump pointer back to base. All previously-allocated
+# memory is invalidated (same contract as Linux peer).
+fn alloc_reset() {
+    _heap_ptr = _heap_base;
+    return 0;
+}
+
+# Bytes used from the heap.
+fn alloc_used() {
+    return _heap_ptr - _heap_base;
+}

@@ -1,0 +1,177 @@
+# base64.cyr — RFC 4648 Base64 encoding/decoding (standard + URL-safe)
+# Usage: include "lib/base64.cyr"
+# Requires: alloc.cyr, string.cyr
+
+var _b64_enc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+# RFC 4648 §5 — URL- and filename-safe alphabet. Differs from standard
+# at positions 62/63 only (`+/` → `-_`); padding `=` is also typically
+# omitted in URL-safe usage (JWT, OAuth state, capability URLs).
+var _b64u_enc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+# Encode buf[0..len] to base64. Returns null-terminated string.
+fn base64_encode(buf, len): i64 {
+    var out_len = ((len + 2) / 3) * 4;
+    var out = alloc(out_len + 1);
+    var si = 0;
+    var di = 0;
+    while (si < len) {
+        var b0 = load8(buf + si);
+        var b1 = 0; if (si + 1 < len) { b1 = load8(buf + si + 1); }
+        var b2 = 0; if (si + 2 < len) { b2 = load8(buf + si + 2); }
+        store8(out + di, load8(_b64_enc + (b0 >> 2)));
+        store8(out + di + 1, load8(_b64_enc + ((b0 & 3) << 4 | (b1 >> 4))));
+        if (si + 1 < len) {
+            store8(out + di + 2, load8(_b64_enc + ((b1 & 15) << 2 | (b2 >> 6))));
+        } else { store8(out + di + 2, 61); }
+        if (si + 2 < len) {
+            store8(out + di + 3, load8(_b64_enc + (b2 & 63)));
+        } else { store8(out + di + 3, 61); }
+        si = si + 3;
+        di = di + 4;
+    }
+    store8(out + di, 0);
+    return out;
+}
+
+# Decode base64 string to buffer. Returns {data_ptr, length} as alloc'd pair.
+fn base64_decode(encoded, enc_len): i64 {
+    # Build decode table
+    var dtbl = alloc(256);
+    memset(dtbl, 255, 256);
+    var i = 0;
+    while (i < 64) {
+        store8(dtbl + load8(_b64_enc + i), i);
+        i = i + 1;
+    }
+    var out_len = (enc_len / 4) * 3;
+    if (enc_len > 0) {
+        if (load8(encoded + enc_len - 1) == 61) { out_len = out_len - 1; }
+        if (enc_len > 1) { if (load8(encoded + enc_len - 2) == 61) { out_len = out_len - 1; } }
+    }
+    var out = alloc(out_len + 1);
+    var si = 0;
+    var di = 0;
+    while (si < enc_len) {
+        var a = load8(dtbl + load8(encoded + si));
+        var b = 0; if (si + 1 < enc_len) { b = load8(dtbl + load8(encoded + si + 1)); }
+        var c = 0; if (si + 2 < enc_len) { c = load8(dtbl + load8(encoded + si + 2)); }
+        var d = 0; if (si + 3 < enc_len) { d = load8(dtbl + load8(encoded + si + 3)); }
+        if (di < out_len) { store8(out + di, (a << 2) | (b >> 4)); }
+        if (di + 1 < out_len) { store8(out + di + 1, ((b & 15) << 4) | (c >> 2)); }
+        if (di + 2 < out_len) { store8(out + di + 2, ((c & 3) << 6) | d); }
+        si = si + 4;
+        di = di + 3;
+    }
+    store8(out + out_len, 0);
+    # Return {ptr, len} pair
+    var result = alloc(16);
+    store64(result, out);
+    store64(result + 8, out_len);
+    return result;
+}
+
+# ================================================================
+# RFC 4648 §5 URL-safe base64 ("base64url"). Differences vs standard:
+#   - alphabet: `+` → `-`, `/` → `_`
+#   - padding `=` typically omitted; both encoders here omit it
+#
+# Used by: JWT (RFC 7515 §3.5), OAuth 2.0 PKCE / state, capability
+# URLs, and any context where the encoded value travels through URL
+# path/query without further escaping.
+# ================================================================
+
+# Encode buf[0..len] to base64url (no padding). Returns null-terminated
+# cstr. Output length is exactly ceil(len*4/3) bytes plus the NUL.
+fn base64url_encode(buf, len): i64 {
+    var n_full = (len / 3) * 4;
+    var rem = len % 3;
+    var out_len = n_full;
+    if (rem == 1) { out_len = out_len + 2; }
+    if (rem == 2) { out_len = out_len + 3; }
+    var out = alloc(out_len + 1);
+    var si = 0;
+    var di = 0;
+    while (si + 3 <= len) {
+        var b0 = load8(buf + si);
+        var b1 = load8(buf + si + 1);
+        var b2 = load8(buf + si + 2);
+        store8(out + di,     load8(_b64u_enc + (b0 >> 2)));
+        store8(out + di + 1, load8(_b64u_enc + ((b0 & 3) << 4 | (b1 >> 4))));
+        store8(out + di + 2, load8(_b64u_enc + ((b1 & 15) << 2 | (b2 >> 6))));
+        store8(out + di + 3, load8(_b64u_enc + (b2 & 63)));
+        si = si + 3;
+        di = di + 4;
+    }
+    if (rem == 1) {
+        var t0 = load8(buf + si);
+        store8(out + di,     load8(_b64u_enc + (t0 >> 2)));
+        store8(out + di + 1, load8(_b64u_enc + ((t0 & 3) << 4)));
+    }
+    if (rem == 2) {
+        var u0 = load8(buf + si);
+        var u1 = load8(buf + si + 1);
+        store8(out + di,     load8(_b64u_enc + (u0 >> 2)));
+        store8(out + di + 1, load8(_b64u_enc + ((u0 & 3) << 4 | (u1 >> 4))));
+        store8(out + di + 2, load8(_b64u_enc + ((u1 & 15) << 2)));
+    }
+    store8(out + out_len, 0);
+    return out;
+}
+
+# Decode base64url cstr (with or without `=` padding) of length enc_len.
+# Returns {data_ptr, decoded_len} as a 16-byte alloc'd pair, same shape
+# as base64_decode. Returns 0 on invalid input character.
+fn base64url_decode(encoded, enc_len): i64 {
+    var dtbl = alloc(256);
+    memset(dtbl, 255, 256);
+    var i = 0;
+    while (i < 64) {
+        store8(dtbl + load8(_b64u_enc + i), i);
+        i = i + 1;
+    }
+    # Strip trailing padding if present (compatibility with implementations
+    # that include it despite the spec).
+    var elen = enc_len;
+    while (elen > 0 && load8(encoded + elen - 1) == 61) { elen = elen - 1; }
+
+    # Output length: (full_quads * 3) + tail bytes (1 char→0, 2→1, 3→2)
+    var quads = elen / 4;
+    var rem = elen - (quads * 4);
+    var out_len = quads * 3;
+    if (rem == 2) { out_len = out_len + 1; }
+    if (rem == 3) { out_len = out_len + 2; }
+    var out = alloc(out_len + 1);
+    var si = 0;
+    var di = 0;
+    while (si + 4 <= elen) {
+        var a = load8(dtbl + load8(encoded + si));
+        var b = load8(dtbl + load8(encoded + si + 1));
+        var c = load8(dtbl + load8(encoded + si + 2));
+        var d = load8(dtbl + load8(encoded + si + 3));
+        if (a == 255 || b == 255 || c == 255 || d == 255) { return 0; }
+        store8(out + di,     ((a << 2) | (b >> 4)) & 0xFF);
+        store8(out + di + 1, (((b & 15) << 4) | (c >> 2)) & 0xFF);
+        store8(out + di + 2, (((c & 3) << 6) | d) & 0xFF);
+        si = si + 4;
+        di = di + 3;
+    }
+    if (rem == 2) {
+        var ta = load8(dtbl + load8(encoded + si));
+        var tb = load8(dtbl + load8(encoded + si + 1));
+        if (ta == 255 || tb == 255) { return 0; }
+        store8(out + di, ((ta << 2) | (tb >> 4)) & 0xFF);
+    }
+    if (rem == 3) {
+        var ua = load8(dtbl + load8(encoded + si));
+        var ub = load8(dtbl + load8(encoded + si + 1));
+        var uc = load8(dtbl + load8(encoded + si + 2));
+        if (ua == 255 || ub == 255 || uc == 255) { return 0; }
+        store8(out + di,     ((ua << 2) | (ub >> 4)) & 0xFF);
+        store8(out + di + 1, (((ub & 15) << 4) | (uc >> 2)) & 0xFF);
+    }
+    store8(out + out_len, 0);
+    var result = alloc(16);
+    store64(result, out);
+    store64(result + 8, out_len);
+    return result;
+}

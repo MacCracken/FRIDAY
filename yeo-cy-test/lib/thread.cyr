@@ -1,0 +1,408 @@
+# thread.cyr — thread creation, joining, and synchronization
+# Usage: include "lib/thread.cyr"
+# Requires: syscalls.cyr, alloc.cyr, atomic.cyr (transitively via mutex)
+#
+# Threads share the process address space (CLONE_VM).
+# Each thread gets its own stack via mmap.
+# Join waits via futex on the thread's tid.
+#
+# >>> include "lib/syscalls.cyr"
+# >>> include "lib/alloc.cyr"
+# >>> include "lib/thread.cyr"
+
+# v5.5.31: mutex_lock / mutex_unlock use atomic_cas for race-free
+# acquisition. Explicit include so existing callers of thread.cyr
+# don't have to know about atomic.cyr (include-once dedupes the
+# double-include if callers already pulled it in).
+include "lib/atomic.cyr"
+
+# Stack size per thread (64KB default)
+var THREAD_STACK_SIZE = 65536;
+
+# Per-thread TLS block size (serves thread_local_get/set slots via
+# %fs on x86_64 or TPIDR_EL0 on aarch64; installed by kernel via
+# CLONE_SETTLS before the child trampoline runs).
+var THREAD_TLS_SIZE = 4096;
+
+# Thread struct: { tid: i64, stack_base: i64, stack_size: i64 } = 24 bytes
+var THREAD_SIZE = 24;
+
+# Allocate stack via mmap (returns base address or MAP_FAILED)
+fn mmap_stack(size): i64 {
+    var prot = PROT_READ | PROT_WRITE;
+    var flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    var r = syscall(SYS_MMAP, 0, size, prot, flags, 0 - 1, 0);
+    return r;
+}
+
+# Free stack via munmap
+fn munmap_stack(addr, size): i64 {
+    return syscall(SYS_MUNMAP, addr, size);
+}
+
+# Issue the CLONE syscall and dispatch the child branch entirely
+# in inline asm. Returns child tid (parent) or never returns
+# (child exits via SYS_EXIT after fn(arg) completes).
+#
+# Why a dedicated helper instead of inlining in thread_create:
+# after `clone(CLONE_VM)`, the child shares the address space with
+# the parent but RBP still points at the parent's stack frame
+# (kernel only updates RSP to the child_stack we pass). cycc emits
+# every local read/write as `[rbp-N]`, so any post-clone cyrius
+# code in the child reads/writes the parent's stack slots — which
+# the parent has already overwritten on its way through
+# `store64(t, r); return t;`. The race crashed every
+# `thread_create + thread_join` (filed by majra in
+# docs/development/issues/majra-cbarrier-arrive-and-wait-crash.md;
+# investigated v5.4.9, fixed v5.4.10).
+#
+# The fix: do the entire clone + child-trampoline in one inline
+# asm block. Pre-syscall reads of params from `[rbp-N]` happen
+# only in the parent (clone hasn't forked yet). Post-syscall, the
+# child never touches RBP again — only RSP (kernel-set to
+# child_stack, which has [fp][arg] at the top from the parent's
+# pre-clone stores) and RAX (per-thread). Parent's post-syscall
+# store of `ret` lands in the parent's own frame (RBP valid).
+fn _thread_spawn(flags, child_stack, t, tls): i64 {
+    var ret = 0;
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        # --- pre-syscall: marshal params from cyrius locals ---
+        # Layout in this fn's frame (cyrius convention):
+        #   [rbp-8]  flags          [rbp-24] t
+        #   [rbp-16] child_stack    [rbp-32] tls
+        #                            [rbp-40] ret
+        0x48; 0x8B; 0x7D; 0xF8;        # mov rdi, [rbp-8]   ; flags
+        0x48; 0x8B; 0x75; 0xF0;        # mov rsi, [rbp-16]  ; child_stack
+        0x48; 0x8B; 0x55; 0xE8;        # mov rdx, [rbp-24]  ; t (parent_tid)
+        0x4C; 0x8B; 0x55; 0xE8;        # mov r10, [rbp-24]  ; t (child_tid — syscall ABI uses r10 for arg4)
+        0x4C; 0x8B; 0x45; 0xE0;        # mov r8, [rbp-32]   ; tls (FS base if CLONE_SETTLS)
+        0xB8; 0x38; 0x00; 0x00; 0x00;  # mov eax, 56        ; SYS_CLONE (zero-extends to rax)
+        0x0F; 0x05;                    # syscall            ; rax = child_tid (parent) | 0 (child) | -errno
+
+        # --- post-syscall: dispatch on rax ---
+        0x48; 0x85; 0xC0;              # test rax, rax
+        0x75; 0x0E;                    # jnz +14            ; -> parent_path
+
+        # --- child path: rsp = child_stack (kernel-set), no rbp use ---
+        0x58;                          # pop rax            ; fp     (top of child_stack)
+        0x5F;                          # pop rdi            ; arg    (next slot — first SysV arg)
+        0xFF; 0xD0;                    # call rax           ; fn(arg); rax = result (discarded)
+        0xB8; 0x3C; 0x00; 0x00; 0x00;  # mov eax, 60        ; SYS_EXIT
+        0x48; 0x31; 0xFF;              # xor rdi, rdi       ; status = 0
+        0x0F; 0x05;                    # syscall            ; never returns
+
+        # --- parent path: rax already holds child_tid (or -errno) ---
+        0x48; 0x89; 0x45; 0xD8;        # mov [rbp-40], rax  ; ret = rax
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        # --- pre-syscall: marshal params from cyrius locals ---
+        # Frame layout (cyrius convention, x29 = FP):
+        #   [x29-8]  flags          [x29-24] t (parent_tidptr / child_tidptr)
+        #   [x29-16] child_stack    [x29-32] tls
+        #                            [x29-40] ret
+        #
+        # aarch64 Linux clone arg order (differs from x86_64!):
+        #   x0 = flags, x1 = newsp, x2 = parent_tidptr,
+        #   x3 = tls,   x4 = child_tidptr
+        # We pass t for both parent_tidptr (x2) and child_tidptr (x4);
+        # x3 = tls (from param, kernel installs into TPIDR_EL0 if CLONE_SETTLS).
+        0xA0; 0x83; 0x5F; 0xF8;        # ldur x0, [x29, #-8]    ; flags
+        0xA1; 0x03; 0x5F; 0xF8;        # ldur x1, [x29, #-16]   ; child_stack
+        0xA2; 0x83; 0x5E; 0xF8;        # ldur x2, [x29, #-24]   ; t (parent_tidptr)
+        0xA3; 0x03; 0x5E; 0xF8;        # ldur x3, [x29, #-32]   ; tls
+        0xA4; 0x83; 0x5E; 0xF8;        # ldur x4, [x29, #-24]   ; t (child_tidptr)
+        0x88; 0x1B; 0x80; 0xD2;        # mov x8, #220           ; SYS_CLONE
+        0x01; 0x00; 0x00; 0xD4;        # svc #0                 ; x0 = child_tid (parent) | 0 (child) | -errno
+
+        # --- post-syscall: dispatch on x0 ---
+        0xC0; 0x00; 0x00; 0xB5;        # cbnz x0, +24           ; -> parent_path (skip 5 child instrs)
+
+        # --- child path: sp = child_stack (kernel-set), no rbp/x29 use ---
+        # child_stack layout (written by parent's thread_create):
+        #   [sp]    fp   (call target)
+        #   [sp+8]  arg  (first arg per AAPCS64)
+        #
+        # Use LDP (pair, 16 bytes at once) rather than two LDRs.
+        # aarch64 enforces a 16-byte SP alignment check when SP is
+        # the base register for memory ops; two LDRs of 8 bytes
+        # each would leave SP at an 8-byte-but-not-16-byte offset
+        # mid-sequence and the second LDR SIGBUSs. LDP stays in
+        # 16-byte steps so the alignment check never trips.
+        0xE9; 0x03; 0xC1; 0xA8;        # ldp x9, x0, [sp], #16  ; fp→x9, arg→x0, sp+=16
+        0x20; 0x01; 0x3F; 0xD6;        # blr x9                 ; fn(arg); x0 = result (discarded)
+        0x00; 0x00; 0x80; 0xD2;        # mov x0, #0             ; status = 0
+        0xA8; 0x0B; 0x80; 0xD2;        # mov x8, #93            ; SYS_EXIT (aarch64)
+        0x01; 0x00; 0x00; 0xD4;        # svc #0                 ; never returns
+
+        # --- parent path: x0 already holds child_tid (or -errno) ---
+        0xA0; 0x83; 0x1D; 0xF8;        # stur x0, [x29, #-40]   ; ret = x0
+    }
+    #endif
+    return ret;
+}
+
+# Create a new thread running fn(arg).
+# Returns pointer to thread struct, or 0 on failure.
+# The function pointer must be obtained via &fn_name.
+fn thread_create(fp, arg): i64 {
+    alloc_init();
+    var t = alloc(THREAD_SIZE);
+    var ssize = THREAD_STACK_SIZE;
+    var sbase = mmap_stack(ssize);
+    if (sbase < 0) { return 0; }
+    store64(t + 8, sbase);
+    store64(t + 16, ssize);
+    # Stack grows down: child_stack = base + size
+    var child_stack = sbase + ssize;
+    # Store function pointer and arg at top of child stack so the
+    # asm trampoline in _thread_spawn can pop them after clone.
+    child_stack = child_stack - 8;
+    store64(child_stack, arg);
+    child_stack = child_stack - 8;
+    store64(child_stack, fp);
+    # Per-thread TLS block. The kernel installs `tls` into the
+    # child's %fs (x86_64) or TPIDR_EL0 (aarch64) before the child
+    # trampoline runs, so worker threads get working
+    # `thread_local_get/set` slots with no explicit init call.
+    # Unconditional 4KB alloc — negligible per-thread cost, and
+    # lets every worker share the same ABI.
+    var tls = alloc(THREAD_TLS_SIZE);
+    if (tls == 0) {
+        munmap_stack(sbase, ssize);
+        return 0;
+    }
+    var zi = 0;
+    while (zi < THREAD_TLS_SIZE) {
+        store8(tls + zi, 0);
+        zi = zi + 1;
+    }
+    # Clone flags for thread
+    var flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND;
+    flags = flags | CLONE_THREAD | CLONE_SYSVSEM;
+    flags = flags | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID;
+    flags = flags | CLONE_SETTLS;
+    # clone(flags, child_stack, &parent_tid, &child_tid, tls)
+    # parent_tid + child_tid both alias t+0; CLONE_CHILD_CLEARTID
+    # makes the kernel zero it on thread exit and futex-wake any
+    # joiner (used by thread_join below). CLONE_SETTLS installs
+    # the per-thread TLS block at clone time.
+    var r = _thread_spawn(flags, child_stack, t, tls);
+    if (r < 0) {
+        munmap_stack(sbase, ssize);
+        return 0;
+    }
+    # CLONE_PARENT_SETTID has already stored the child tid at
+    # t+0 — don't explicitly overwrite with r here. Doing so
+    # races with CLONE_CHILD_CLEARTID's kernel-side clear: if
+    # the child exits between _thread_spawn returning and our
+    # store running, our store stomps the kernel's 0 with the
+    # original tid, and any subsequent thread_join sees a
+    # non-zero tid forever.
+    return t;
+}
+
+# Wait for thread to finish (blocks via futex).
+# Returns 0 on success.
+#
+# IMPORTANT: this FUTEX_WAIT must NOT include FUTEX_PRIVATE_FLAG.
+# Kernel's CLONE_CHILD_CLEARTID action does a SHARED (non-private)
+# futex_wake on exit; a FUTEX_WAIT_PRIVATE waiter sits on the
+# private hash bucket and never sees that wake. Pre-v5.4.10 thread
+# tests didn't exist, so the mismatch shipped silently — every
+# `thread_create + thread_join` after the v5.4.10 child-trampoline
+# fix exposed it as a permanent hang. Verified empirically:
+# FUTEX_WAIT (= 0) wakes correctly, FUTEX_WAIT|FUTEX_PRIVATE_FLAG
+# (= 128) hangs.
+fn thread_join(t): i64 {
+    if (t == 0) { return 0 - 1; }
+    # CLONE_CHILD_CLEARTID: kernel sets tid to 0 and does futex_wake on exit
+    while (load64(t) != 0) {
+        # Atomic check inside the kernel: if *t == load64(t), park;
+        # else return immediately. Re-reading directly via
+        # load64(t) each iteration (rather than caching into a
+        # local) keeps the FUTEX_WAIT expected-val in lockstep
+        # with the condition check.
+        syscall(SYS_FUTEX, t, FUTEX_WAIT, load64(t), 0, 0, 0);
+    }
+    # Free the thread stack
+    munmap_stack(load64(t + 8), load64(t + 16));
+    return 0;
+}
+
+# Get current thread ID
+fn gettid(): i64 {
+    return syscall(SYS_GETTID);
+}
+
+# Mutex: futex-based lock. 0=unlocked, 1=locked.
+# Layout: { state: i64 } = 8 bytes
+#
+# Pre-v5.5.31 used a 3-state (0/1/2) scheme with a plain load +
+# store fast path — racy: two threads could both observe state 0
+# and both "acquire" the lock. v5.5.31 replaces the load+store
+# with `atomic_cas` (lock cmpxchg / ldxr-stxr) for correctness,
+# and collapses to 2-state. Trade-off: unconditional FUTEX_WAKE
+# on every unlock (one syscall even when nobody's waiting) in
+# exchange for drop-dead-simple correctness. Works-in-practice
+# mutex fast-path is now correct-by-construction.
+var MUTEX_SIZE = 8;
+
+# Create a new mutex (unlocked)
+fn mutex_new(): i64 {
+    alloc_init();
+    var m = alloc(MUTEX_SIZE);
+    store64(m, 0);
+    return m;
+}
+
+# Lock mutex. Blocks via futex when contended.
+fn mutex_lock(m): i64 {
+    while (atomic_cas(m, 0, 1) == 0) {
+        # Someone else holds the lock. FUTEX_WAIT atomically
+        # checks `*m == 1` against the kernel — if the holder
+        # just released (m == 0), the syscall returns EAGAIN
+        # and we retry CAS. No lost wakeup window.
+        syscall(SYS_FUTEX, m, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    }
+    # Acquire barrier: prevent critical-section loads/stores from
+    # being reordered BEFORE the CAS. aarch64's weak memory model
+    # allows this without an explicit fence; x86 TSO implies it
+    # via `lock cmpxchg` but atomic_fence is a cheap no-op there.
+    atomic_fence();
+    return 0;
+}
+
+# Unlock mutex. Always wakes exactly one waiter (if any);
+# kernel no-ops the wake when the futex has no waiters.
+fn mutex_unlock(m): i64 {
+    # Release barrier: flush critical-section writes before the
+    # lock-release store. Without this on aarch64, a holder's
+    # writes inside the critical section can be reordered after
+    # `atomic_store(m, 0)` — a subsequent acquirer then reads
+    # stale state and silently loses updates.
+    atomic_fence();
+    atomic_store(m, 0);
+    syscall(SYS_FUTEX, m, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    return 0;
+}
+
+# Channel: bounded MPSC channel using mutex + futex
+# Layout: { buf, cap, head, tail, count, mutex, closed } = 56 bytes
+var CHAN_SIZE = 56;
+
+# Create a channel with given capacity
+fn chan_new(cap): i64 {
+    alloc_init();
+    var ch = alloc(CHAN_SIZE);
+    var buf = alloc(cap * 8);
+    store64(ch, buf);
+    store64(ch + 8, cap);
+    store64(ch + 16, 0);
+    store64(ch + 24, 0);
+    store64(ch + 32, 0);
+    store64(ch + 40, mutex_new());
+    store64(ch + 48, 0);
+    return ch;
+}
+
+# Send a value to the channel. Blocks if full. Returns 0 on success, -1 if closed.
+fn chan_send(ch, val): i64 {
+    var mtx = load64(ch + 40);
+    var go = 1;
+    while (go == 1) {
+        mutex_lock(mtx);
+        if (load64(ch + 48) != 0) { mutex_unlock(mtx); return 0 - 1; }
+        var count = load64(ch + 32);
+        var cap = load64(ch + 8);
+        if (count < cap) {
+            var buf = load64(ch);
+            var tail = load64(ch + 24);
+            store64(buf + tail * 8, val);
+            store64(ch + 24, (tail + 1) % cap);
+            store64(ch + 32, count + 1);
+            mutex_unlock(mtx);
+            # Wake one receiver
+            syscall(SYS_FUTEX, ch + 32, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+            go = 0;
+        } else {
+            mutex_unlock(mtx);
+            # Wait for space
+            syscall(SYS_FUTEX, ch + 32, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, count, 0, 0, 0);
+        }
+    }
+    return 0;
+}
+
+# Receive a value from the channel. Blocks if empty. Returns value, or 0 if closed.
+fn chan_recv(ch): i64 {
+    var mtx = load64(ch + 40);
+    var go = 1;
+    var result = 0;
+    while (go == 1) {
+        mutex_lock(mtx);
+        var count = load64(ch + 32);
+        if (count > 0) {
+            var buf = load64(ch);
+            var head = load64(ch + 16);
+            var cap = load64(ch + 8);
+            result = load64(buf + head * 8);
+            store64(ch + 16, (head + 1) % cap);
+            store64(ch + 32, count - 1);
+            mutex_unlock(mtx);
+            # Wake one sender
+            syscall(SYS_FUTEX, ch + 32, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+            go = 0;
+        } else {
+            if (load64(ch + 48) != 0) { mutex_unlock(mtx); return 0; }
+            mutex_unlock(mtx);
+            syscall(SYS_FUTEX, ch + 32, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 0, 0, 0, 0);
+        }
+    }
+    return result;
+}
+
+# Close the channel (no more sends, receivers get 0)
+fn chan_close(ch): i64 {
+    var mtx = load64(ch + 40);
+    mutex_lock(mtx);
+    store64(ch + 48, 1);
+    mutex_unlock(mtx);
+    # Wake all waiters
+    syscall(SYS_FUTEX, ch + 32, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1000, 0, 0, 0);
+    return 0;
+}
+
+# Non-blocking receive. Returns:
+#   value > 0  → message dequeued (callers using 0-as-sentinel
+#                should avoid sending 0 through chan_send).
+#   value = 0  → channel empty OR closed-and-empty (caller can
+#                disambiguate by checking *(ch + 48) == 1).
+#
+# Pattern (bote streaming dispatch — drain a worker's progress
+# channel without blocking the transport thread):
+#   while (chan_try_recv(progress) != 0) {
+#       emit_jsonrpc_notification(...);
+#   }
+#   # ... go do other transport work, come back later ...
+fn chan_try_recv(ch): i64 {
+    var mtx = load64(ch + 40);
+    mutex_lock(mtx);
+    var count = load64(ch + 32);
+    if (count == 0) {
+        mutex_unlock(mtx);
+        return 0;
+    }
+    var buf = load64(ch);
+    var head = load64(ch + 16);
+    var cap = load64(ch + 8);
+    var result = load64(buf + head * 8);
+    store64(ch + 16, (head + 1) % cap);
+    store64(ch + 32, count - 1);
+    mutex_unlock(mtx);
+    # Wake one sender (if it was waiting on full-buffer condition).
+    syscall(SYS_FUTEX, ch + 32, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    return result;
+}

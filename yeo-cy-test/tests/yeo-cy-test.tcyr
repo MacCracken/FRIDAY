@@ -1,0 +1,13 @@
+# yeo-cy-test test suite
+# Stdlib auto-included via cyrius.cyml
+
+fn main() {
+    alloc_init();
+    test_group("smoke");
+    assert(1, "true is true");
+    assert_eq(1 + 1, 2, "math works");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

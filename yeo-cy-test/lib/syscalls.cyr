@@ -1,0 +1,45 @@
+# syscalls.cyr — Linux syscall wrappers (arch-dispatched)
+# Usage: include "lib/syscalls.cyr"
+#
+# This file is the public include point for Linux syscalls. It
+# delegates to the per-arch peer based on the compile-time arch
+# macro that cycc sets via PP_PREDEFINE in main.cyr / main_aarch64.cyr.
+# Consumers see a single file; the right syscall numbers, struct
+# layouts, and at-family wrappers come along automatically.
+#
+# Per-arch peers (do NOT include them directly — go through here):
+#   lib/syscalls_x86_64_linux.cyr   — x86_64 syscall numbers,
+#                                     bare stat(2)/open(2)/etc.,
+#                                     `arch/x86/include/uapi/asm/stat.h`
+#                                     struct layout (st_mode @ 24).
+#   lib/syscalls_aarch64_linux.cyr  — aarch64 generic-table numbers,
+#                                     at-family wrappers
+#                                     (openat / newfstatat / mkdirat /
+#                                     unlinkat / pipe2 / clone(SIGCHLD)),
+#                                     `include/uapi/asm-generic/stat.h`
+#                                     struct layout (st_mode @ 16).
+#
+# Splitting from the v5.4.10 monolith fixes the yukti aarch64
+# regression filed 2026-04-19 (yukti/docs/development/issues/
+# 2026-04-19-aarch64-syscall-portability.md): cross-built aarch64
+# binaries were inheriting x86_64 syscall numbers verbatim, so
+# `syscall(SYS_STAT, ...)` invoked `pivot_root` on aarch64 instead
+# of `stat`. Per-arch peers eliminate the silent number drift.
+#
+# `#ifplat` directive available (v5.4.19) but call sites stay on
+# `#ifdef` until codegen regression diagnosed; new consumers may use.
+#
+# cycc / cycc_aarch64 predefine CYRIUS_TARGET_LINUX; cycc_win predefines
+# CYRIUS_TARGET_WIN. Mutually exclusive per compile; no #else needed.
+# See CHANGELOG [5.4.11], [5.4.19], [5.5.0].
+#ifdef CYRIUS_TARGET_WIN
+include "lib/syscalls_windows.cyr"
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+include "lib/syscalls_x86_64_linux.cyr"
+#endif
+#ifdef CYRIUS_ARCH_AARCH64
+include "lib/syscalls_aarch64_linux.cyr"
+#endif
+#endif

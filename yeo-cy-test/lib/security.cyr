@@ -1,0 +1,55 @@
+# security.cyr — Linux landlock unprivileged sandboxing
+#
+# Landlock (Linux 5.13+) lets a process voluntarily restrict
+# its own filesystem access without needing root or capability
+# privileges. Once a ruleset is applied via
+# sys_landlock_restrict_self, the calling thread (and its
+# children, by clone(2) inheritance) can no longer access
+# resources outside the ruleset — and cannot relax the
+# restriction. Use it for daemon hardening, sandbox-first CLI
+# tools, or zero-trust execution paths.
+#
+# Three syscalls in sequence:
+#   1. sys_landlock_create_ruleset — declare which access
+#      classes the ruleset will gate, get a ruleset_fd back.
+#   2. sys_landlock_add_rule — for each path beneath the
+#      ruleset's purview, add a rule allowing the bits the
+#      caller needs.
+#   3. sys_landlock_restrict_self — apply.
+#
+# Same syscall numbers on x86_64 and aarch64 (444/445/446
+# since they were added in 5.13 to the unified syscall table).
+#
+# Added v5.7.35 (agnosys security-surfaced).
+
+# Filesystem access classes, as bit flags for both
+# `landlock_ruleset_attr.handled_access_fs` (which classes the
+# ruleset gates) and `landlock_path_beneath_attr.allowed_access`
+# (which subset is permitted under a specific path).
+#
+# Track upstream linux/landlock.h. Cyrius pins the 5.13 set
+# (EXECUTE through MAKE_SYM); newer kernels add bits but the
+# 5.13 surface is universally available and covers the
+# agnosys consumer.
+enum LandlockAccessFs {
+    LANDLOCK_ACCESS_FS_EXECUTE = 1;            # 0x01
+    LANDLOCK_ACCESS_FS_WRITE_FILE = 2;         # 0x02
+    LANDLOCK_ACCESS_FS_READ_FILE = 4;          # 0x04
+    LANDLOCK_ACCESS_FS_READ_DIR = 8;           # 0x08
+    LANDLOCK_ACCESS_FS_REMOVE_DIR = 16;        # 0x10
+    LANDLOCK_ACCESS_FS_REMOVE_FILE = 32;       # 0x20
+    LANDLOCK_ACCESS_FS_MAKE_CHAR = 64;         # 0x40
+    LANDLOCK_ACCESS_FS_MAKE_DIR = 128;         # 0x80
+    LANDLOCK_ACCESS_FS_MAKE_REG = 256;         # 0x100
+    LANDLOCK_ACCESS_FS_MAKE_SOCK = 512;        # 0x200
+    LANDLOCK_ACCESS_FS_MAKE_FIFO = 1024;       # 0x400
+    LANDLOCK_ACCESS_FS_MAKE_BLOCK = 2048;      # 0x800
+    LANDLOCK_ACCESS_FS_MAKE_SYM = 4096;        # 0x1000
+}
+
+# Rule type passed to sys_landlock_add_rule. Currently only
+# PATH_BENEATH is universally available; NET_PORT (6.7+) is
+# kernel-version-gated and not exposed here yet.
+enum LandlockRuleType {
+    LANDLOCK_RULE_PATH_BENEATH = 1;
+}

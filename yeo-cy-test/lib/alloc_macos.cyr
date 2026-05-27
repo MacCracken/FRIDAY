@@ -1,0 +1,117 @@
+# alloc_macos.cyr — heap allocator using mmap (macOS)
+# Drop-in replacement for alloc.cyr on macOS (which has no brk syscall).
+# API-compatible: alloc_init(), alloc(size), alloc_reset(), alloc_used().
+#
+# Uses mmap(MAP_PRIVATE|MAP_ANON) for memory. Grows in 1MB chunks.
+#
+# Self-contained (no `lib/syscalls.cyr` dep). Uses Linux syscall
+# numbers 9/11 inline; aarch64 Mach-O ESYSXLAT translates to BSD-arm64
+# equivalents at emit time. See CHANGELOG [5.5.16].
+
+var _heap_base = 0;
+var _heap_ptr = 0;
+var _heap_end = 0;
+
+# Maximum single allocation size (256MB) — matches alloc.cyr
+var ALLOC_MAX = 0x10000000;
+
+# Initialize the heap allocator (must call before any alloc)
+fn alloc_init() {
+    # mmap(addr=0, len=1MB, prot=RW, flags=MAP_PRIVATE|MAP_ANON, fd=-1, offset=0)
+    _heap_base = syscall(9, 0, 0x100000, 3, 0x1002, 0 - 1, 0);
+    if (_heap_base < 0) {
+        syscall(1, 2, "alloc_init: mmap failed\n", 24);
+        syscall(60, 1);
+    }
+    _heap_end = _heap_base + 0x100000;
+    _heap_ptr = _heap_base;
+    return _heap_base;
+}
+
+# Allocate size bytes from the heap, 8-byte aligned
+fn alloc(size) {
+    # v5.8.37 — lazy-init the heap if alloc_init() was never called.
+    # Mirrors the Linux branch in lib/alloc.cyr; alloc_init() is now
+    # optional. See lib/alloc.cyr header for the full migration note.
+    if (_heap_base == 0) { alloc_init(); }
+    if (size <= 0) { return 0; }
+    if (size > ALLOC_MAX) { return 0; }
+    # Align to 8 bytes
+    size = (size + 7) & (0 - 8);
+    var ptr = _heap_ptr;
+    var new_ptr = ptr + size;
+    # Overflow check
+    if (new_ptr < ptr) { return 0; }
+    _heap_ptr = new_ptr;
+    # Loop per-1MB mmaps; mmap hint contract is stricter than brk
+    # (big single mmap may return a different base, breaking the
+    # contiguity guard). See CHANGELOG [5.6.34].
+    while (_heap_end < _heap_ptr) {
+        var result = syscall(9, _heap_end, 0x100000, 3, 0x1002, 0 - 1, 0);
+        if (result < 0) {
+            _heap_ptr = ptr;
+            return 0;
+        }
+        # If kernel gave us a different address, the heap is non-contiguous — fail
+        if (result != _heap_end) {
+            syscall(11, result, 0x100000);
+            _heap_ptr = ptr;
+            return 0;
+        }
+        _heap_end = _heap_end + 0x100000;
+    }
+    return ptr;
+}
+
+# Reset the heap, freeing all allocations at once
+fn alloc_reset() {
+    _heap_ptr = _heap_base;
+    return 0;
+}
+
+# Return the number of heap bytes currently in use
+fn alloc_used() {
+    return _heap_ptr - _heap_base;
+}
+
+# ================================================================
+# Arena allocator — independent memory pools (same API as alloc.cyr)
+# ================================================================
+
+# Create a new arena with the given capacity (bytes)
+fn arena_new(capacity) {
+    var a = alloc(24);
+    var base = alloc(capacity);
+    store64(a, base);
+    store64(a + 8, base);
+    store64(a + 16, base + capacity);
+    return a;
+}
+
+# Allocate size bytes from the arena, 8-byte aligned. Returns 0 on overflow.
+fn arena_alloc(a, size) {
+    if (size <= 0) { return 0; }
+    size = (size + 7) & (0 - 8);
+    var ptr = load64(a + 8);
+    var new_ptr = ptr + size;
+    if (new_ptr < ptr) { return 0; }
+    if (new_ptr > load64(a + 16)) { return 0; }
+    store64(a + 8, new_ptr);
+    return ptr;
+}
+
+# Reset the arena — all allocations from this arena are freed
+fn arena_reset(a) {
+    store64(a + 8, load64(a));
+    return 0;
+}
+
+# Return bytes used in the arena
+fn arena_used(a) {
+    return load64(a + 8) - load64(a);
+}
+
+# Return bytes remaining in the arena
+fn arena_remaining(a) {
+    return load64(a + 16) - load64(a + 8);
+}

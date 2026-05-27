@@ -1,0 +1,33 @@
+# syscalls_macos.cyr — macOS x86_64 BSD syscall numbers
+# Usage: include "lib/syscalls_macos.cyr"
+# All macOS x86_64 syscalls use 0x2000000 | bsd_nr prefix.
+#
+# NOTE: macOS has no brk syscall. Use lib/alloc_macos.cyr (mmap-based)
+# instead of lib/alloc.cyr for macOS targets.
+
+var SYS_EXIT    = 0x2000001;
+var SYS_READ    = 0x2000003;
+var SYS_WRITE   = 0x2000004;
+var SYS_OPEN    = 0x2000005;
+var SYS_CLOSE   = 0x2000006;
+var SYS_UNLINK  = 0x200000A;
+var SYS_LSEEK   = 0x2000013;
+var SYS_MMAP    = 0x20000C5;
+var SYS_MUNMAP  = 0x2000049;
+var SYS_MPROTECT = 0x200004A;
+var SYS_STAT    = 0x2000152;
+var SYS_FSTAT   = 0x2000153;
+var SYS_GETPID  = 0x2000014;
+var SYS_KILL    = 0x2000025;
+var SYS_SOCKET  = 0x2000061;
+var SYS_CONNECT = 0x2000062;
+var SYS_BIND    = 0x2000068;
+var SYS_LISTEN  = 0x200006A;
+var SYS_ACCEPT  = 0x200001E;
+
+# mmap constants (same as Linux)
+var MAP_PRIVATE = 0x02;
+var MAP_ANON    = 0x1000;
+var PROT_READ   = 0x01;
+var PROT_WRITE  = 0x02;
+var PROT_EXEC   = 0x04;

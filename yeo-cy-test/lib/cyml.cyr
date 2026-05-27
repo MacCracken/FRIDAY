@@ -1,0 +1,418 @@
+# cyml.cyr — CYML parser (TOML header + markdown body)
+# Usage: include "lib/cyml.cyr"
+# Requires: string.cyr, alloc.cyr
+#
+# CYML is TOML above `---`, markdown below.
+# Single-entry: one header, one body.
+# Multi-entry: file-level TOML, then [[entries]] with per-entry header+body.
+# Parser returns zero-copy pointers into the input buffer.
+
+# v5.8.30 — Result-returning *_r variant for the file-loading
+# parser (`cyml_parse_file_r`). Bare `cyml_parse(data, len)` keeps
+# its current shape — it can't really fail (always returns a doc
+# with entry_count >= 0), so no Result variant is needed for it.
+include "lib/result.cyr"
+include "lib/io.cyr"
+
+# v5.8.30 — CymlError variants. Same shape as Json/TomlError:
+# `CymlIoErr` for any IoError raised while reading the source
+# file; `CymlOther` is the catch-all. Variant-name prefix `Cyml`
+# to keep these out of the `Io*` / `Json*` / `Toml*` namespace.
+enum CymlError {
+    CymlIoErr;
+    CymlOther;
+}
+
+# v5.8.36 — Allocator-as-first-arg variant of cyml_entry_new.
+# Allocates the 32-byte entry header via `a`. Returns 0 on OOM.
+fn cyml_entry_new_a(a, hp, hl, bp, bl): i64 {
+    var e = alloc_via(a, 32);
+    if (e == 0) { return 0; }
+    store64(e, hp);
+    store64(e + 8, hl);
+    store64(e + 16, bp);
+    store64(e + 24, bl);
+    return e;
+}
+
+# CymlEntry: { header_ptr, header_len, body_ptr, body_len }
+# 32 bytes per entry. v5.8.36 wrapper.
+fn cyml_entry_new(hp, hl, bp, bl): i64 {
+    return cyml_entry_new_a(default_alloc(), hp, hl, bp, bl);
+}
+
+# Get TOML header pointer from a CymlEntry
+fn cyml_entry_header(e) : i64 { return load64(e); }
+# Get TOML header byte length from a CymlEntry
+fn cyml_entry_header_len(e) : i64 { return load64(e + 8); }
+# Get markdown body pointer from a CymlEntry
+fn cyml_entry_body(e) : i64 { return load64(e + 16); }
+# Get markdown body byte length from a CymlEntry
+fn cyml_entry_body_len(e) : i64 { return load64(e + 24); }
+
+# v5.8.36 — Allocator-as-first-arg variant of cyml_doc_new.
+# Allocates the 32-byte doc struct via `a`. Returns 0 on OOM.
+fn cyml_doc_new_a(a): i64 {
+    var d = alloc_via(a, 32);
+    if (d == 0) { return 0; }
+    store64(d, 0);
+    store64(d + 8, 0);
+    store64(d + 16, 0);
+    store64(d + 24, 0);
+    return d;
+}
+
+# CymlDoc: { file_header_ptr, file_header_len, entries_ptr, entry_count }
+# 32 bytes. v5.8.36 wrapper.
+fn cyml_doc_new(): i64 {
+    return cyml_doc_new_a(default_alloc());
+}
+
+# Get file-level TOML header pointer from a CymlDoc
+fn cyml_doc_header(d) : i64 { return load64(d); }
+# Get file-level TOML header byte length from a CymlDoc
+fn cyml_doc_header_len(d) : i64 { return load64(d + 8); }
+# Get entries array pointer from a CymlDoc
+fn cyml_doc_entries(d) : i64 { return load64(d + 16); }
+# Get number of entries in a CymlDoc
+fn cyml_doc_entry_count(d) : i64 { return load64(d + 24); }
+
+# Get entry N from a doc (returns CymlEntry pointer)
+fn cyml_doc_entry(d, n): i64 {
+    return load64(load64(d + 16) + n * 8);
+}
+
+# Check if data[pos..] starts with "\n---\n" (or "---\n" at pos==0)
+fn _cyml_is_delim(data, len, pos): i64 {
+    if (pos == 0) {
+        if (pos + 4 <= len) {
+            if (load8(data) == 45 && load8(data+1) == 45 && load8(data+2) == 45 && load8(data+3) == 10) {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if (pos + 5 > len) { return 0; }
+    if (load8(data + pos) != 10) { return 0; }
+    if (load8(data + pos + 1) != 45) { return 0; }
+    if (load8(data + pos + 2) != 45) { return 0; }
+    if (load8(data + pos + 3) != 45) { return 0; }
+    if (load8(data + pos + 4) != 10) { return 0; }
+    return 1;
+}
+
+# Check if data[pos..] starts with "\n[[entries]]\n" (or "[[entries]]\n" at pos==0)
+fn _cyml_is_entries(data, len, pos): i64 {
+    # "[[entries]]" = 11 chars + newline before and after
+    if (pos == 0) {
+        if (len < 12) { return 0; }
+        if (load8(data) != 91) { return 0; }       # [
+        if (load8(data+1) != 91) { return 0; }     # [
+        if (load8(data+2) != 101) { return 0; }    # e
+        if (load8(data+3) != 110) { return 0; }    # n
+        if (load8(data+4) != 116) { return 0; }    # t
+        if (load8(data+5) != 114) { return 0; }    # r
+        if (load8(data+6) != 105) { return 0; }    # i
+        if (load8(data+7) != 101) { return 0; }    # e
+        if (load8(data+8) != 115) { return 0; }    # s
+        if (load8(data+9) != 93) { return 0; }     # ]
+        if (load8(data+10) != 93) { return 0; }    # ]
+        if (load8(data+11) != 10) { return 0; }    # \n
+        return 1;
+    }
+    if (pos + 13 > len) { return 0; }
+    if (load8(data+pos) != 10) { return 0; }       # \n
+    if (load8(data+pos+1) != 91) { return 0; }     # [
+    if (load8(data+pos+2) != 91) { return 0; }     # [
+    if (load8(data+pos+3) != 101) { return 0; }    # e
+    if (load8(data+pos+4) != 110) { return 0; }    # n
+    if (load8(data+pos+5) != 116) { return 0; }    # t
+    if (load8(data+pos+6) != 114) { return 0; }    # r
+    if (load8(data+pos+7) != 105) { return 0; }    # i
+    if (load8(data+pos+8) != 101) { return 0; }    # e
+    if (load8(data+pos+9) != 115) { return 0; }    # s
+    if (load8(data+pos+10) != 93) { return 0; }    # ]
+    if (load8(data+pos+11) != 93) { return 0; }    # ]
+    if (load8(data+pos+12) != 10) { return 0; }    # \n
+    return 1;
+}
+
+# Trim leading/trailing whitespace from a (ptr, len) pair.
+# Returns new length (ptr adjusted in-place via out params).
+fn _cyml_trim(ptr, len, out_ptr, out_len): i64 {
+    var s = 0;
+    while (s < len) {
+        var c = load8(ptr + s);
+        if (c == 32 || c == 10 || c == 13 || c == 9) {
+            s = s + 1;
+        } else { break; }
+    }
+    var e = len;
+    while (e > s) {
+        var c = load8(ptr + e - 1);
+        if (c == 32 || c == 10 || c == 13 || c == 9) {
+            e = e - 1;
+        } else { break; }
+    }
+    store64(out_ptr, ptr + s);
+    store64(out_len, e - s);
+    return 0;
+}
+
+# Parse a CYML buffer. Returns a CymlDoc pointer.
+# data = pointer to buffer, len = byte length.
+fn cyml_parse(data, len): i64 {
+    var doc = cyml_doc_new();
+    # Collect entry positions: up to 256 entries
+    var entry_starts[256];  # byte offsets of [[entries]] markers
+    var entry_count = 0;
+
+    # Scan for [[entries]] markers
+    var i = 0;
+    while (i < len) {
+        if (_cyml_is_entries(data, len, i) == 1) {
+            store64(&entry_starts + entry_count * 8, i);
+            entry_count = entry_count + 1;
+            if (entry_count >= 256) { i = len; }
+            else {
+                if (i == 0) { i = 12; }
+                else { i = i + 13; }
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+
+    if (entry_count == 0) {
+        # Single-entry file: find --- delimiter
+        var delim_pos = 0 - 1;
+        var di = 0;
+        while (di < len) {
+            if (_cyml_is_delim(data, len, di) == 1) {
+                delim_pos = di;
+                di = len;
+            } else {
+                di = di + 1;
+            }
+        }
+        if (delim_pos < 0) {
+            # No delimiter — entire file is header, no body
+            store64(doc, data);
+            store64(doc + 8, len);
+            store64(doc + 24, 0);
+            return doc;
+        }
+        # Header = data[0..delim_pos], body = data[delim_pos+4/5..end]
+        var hp = 0; var hl = 0; var bp = 0; var bl = 0;
+        _cyml_trim(data, delim_pos, &hp, &hl);
+        var body_start = delim_pos + 4;
+        if (delim_pos > 0) { body_start = delim_pos + 5; }
+        _cyml_trim(data + body_start, len - body_start, &bp, &bl);
+
+        store64(doc, hp);
+        store64(doc + 8, hl);
+        # Single entry stored as entries[0]
+        var entries = alloc(8);
+        store64(entries, cyml_entry_new(hp, hl, bp, bl));
+        store64(doc + 16, entries);
+        store64(doc + 24, 1);
+        return doc;
+    }
+
+    # Multi-entry file
+    # File header = data[0..first_entry_start]
+    var first_entry = load64(&entry_starts);
+    if (first_entry > 0) {
+        var fhp = 0; var fhl = 0;
+        _cyml_trim(data, first_entry, &fhp, &fhl);
+        store64(doc, fhp);
+        store64(doc + 8, fhl);
+    }
+
+    var entries = alloc(entry_count * 8);
+    var ei = 0;
+    while (ei < entry_count) {
+        var estart = load64(&entry_starts + ei * 8);
+        var eend = len;
+        if (ei + 1 < entry_count) { eend = load64(&entry_starts + (ei + 1) * 8); }
+
+        # Entry header starts after "[[entries]]\n"
+        var hdr_start = estart + 12;
+        if (estart > 0) { hdr_start = estart + 13; }
+
+        # Find --- within this entry
+        var edelim = 0 - 1;
+        var edi = hdr_start;
+        while (edi < eend) {
+            if (_cyml_is_delim(data, eend, edi) == 1) {
+                edelim = edi;
+                edi = eend;
+            } else {
+                edi = edi + 1;
+            }
+        }
+
+        if (edelim < 0) {
+            # No body — entry is header only
+            var ehp = 0; var ehl = 0;
+            _cyml_trim(data + hdr_start, eend - hdr_start, &ehp, &ehl);
+            store64(entries + ei * 8, cyml_entry_new(ehp, ehl, 0, 0));
+        } else {
+            var ehp = 0; var ehl = 0; var ebp = 0; var ebl = 0;
+            _cyml_trim(data + hdr_start, edelim - hdr_start, &ehp, &ehl);
+            var ebody_start = edelim + 5;
+            _cyml_trim(data + ebody_start, eend - ebody_start, &ebp, &ebl);
+            store64(entries + ei * 8, cyml_entry_new(ehp, ehl, ebp, ebl));
+        }
+        ei = ei + 1;
+    }
+
+    store64(doc + 16, entries);
+    store64(doc + 24, entry_count);
+    return doc;
+}
+
+# ================================================================
+# Value expansion — resolve ${file:PATH} and ${env:NAME} references
+# ================================================================
+# ${file:VERSION} → reads file "VERSION", trims whitespace
+# ${env:HOME}     → reads environment variable HOME
+# Plain strings without ${...} returned as-is.
+
+fn _cyml_read_file_trimmed(path): i64 {
+    var buf[4096];
+    var fd = syscall(2, path, 0, 0);
+    if (fd < 0) { return 0; }
+    var n = syscall(0, fd, &buf, 4095);
+    syscall(3, fd);
+    if (n <= 0) { return 0; }
+    # Trim trailing whitespace/newlines
+    while (n > 0) {
+        var c = load8(&buf + n - 1);
+        if (c == 10 || c == 13 || c == 32 || c == 9) { n = n - 1; }
+        else { break; }
+    }
+    var out = alloc(n + 1);
+    memcpy(out, &buf, n);
+    store8(out + n, 0);
+    return out;
+}
+
+fn _cyml_read_env(name, name_len): i64 {
+    var ebuf[8192];
+    var fd = syscall(2, "/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+    var n = syscall(0, fd, &ebuf, 8191);
+    syscall(3, fd);
+    if (n <= 0) { return 0; }
+    store8(&ebuf + n, 0);
+    var pos = 0;
+    while (pos < n) {
+        var end = pos;
+        while (end < n && load8(&ebuf + end) != 0) { end = end + 1; }
+        # Check if this entry starts with name=
+        if (end - pos > name_len) {
+            if (load8(&ebuf + pos + name_len) == 61) {
+                var matched = 1;
+                var k = 0;
+                while (k < name_len) {
+                    if (load8(&ebuf + pos + k) != load8(name + k)) { matched = 0; break; }
+                    k = k + 1;
+                }
+                if (matched == 1) {
+                    var vstart = pos + name_len + 1;
+                    var vlen = end - vstart;
+                    var out = alloc(vlen + 1);
+                    memcpy(out, &ebuf + vstart, vlen);
+                    store8(out + vlen, 0);
+                    return out;
+                }
+            }
+        }
+        pos = end + 1;
+    }
+    return 0;
+}
+
+# Expand ${file:PATH} and ${env:NAME} in a value string.
+# Returns expanded cstring (allocated). Returns input unchanged if no expansion.
+fn cyml_expand_value(val): i64 {
+    if (val == 0) { return 0; }
+    var len = strlen(val);
+    if (len < 4) { return val; }
+    # Scan for ${
+    var i = 0;
+    while (i < len - 1) {
+        if (load8(val + i) == 36 && load8(val + i + 1) == 123) {
+            # Found ${ — find closing }
+            var start = i + 2;
+            var end = start;
+            while (end < len && load8(val + end) != 125) { end = end + 1; }
+            if (end >= len) { return val; }
+            # Extract reference: file:PATH or env:NAME
+            if (end - start > 5 && memeq(val + start, "file:", 5) == 1) {
+                # ${file:PATH}
+                var plen = end - start - 5;
+                var path = alloc(plen + 1);
+                memcpy(path, val + start + 5, plen);
+                store8(path + plen, 0);
+                var expanded = _cyml_read_file_trimmed(path);
+                if (expanded != 0) { return expanded; }
+                return val;
+            }
+            if (end - start > 4 && memeq(val + start, "env:", 4) == 1) {
+                # ${env:NAME}
+                var nlen = end - start - 4;
+                var expanded = _cyml_read_env(val + start + 4, nlen);
+                if (expanded != 0) { return expanded; }
+                return val;
+            }
+            return val;
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+# Convenience: split a single-entry CYML buffer into header + body.
+# Returns 1 on success, 0 if no delimiter found.
+fn cyml_split(data, len, out_hdr, out_hdr_len, out_body, out_body_len): i64 {
+    var i = 0;
+    while (i < len) {
+        if (_cyml_is_delim(data, len, i) == 1) {
+            _cyml_trim(data, i, out_hdr, out_hdr_len);
+            var body_start = i + 4;
+            if (i > 0) { body_start = i + 5; }
+            _cyml_trim(data + body_start, len - body_start, out_body, out_body_len);
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v5.8.30 — Result variant of file-loading parser. Reads the file
+# via file_open_r / file_read_r, wraps any IoError as Err(CymlIoErr).
+# Buffer cap matches the conservative 256KB used elsewhere; vidya's
+# largest current .cyml entries fit comfortably.
+fn cyml_parse_file_r(path): i64 {
+    var fd_r = file_open_r(path, 0, 0);
+    if (is_err_result(fd_r) == 1) { return Err(CymlIoErr); }
+    var fd = load64(fd_r + 8);
+    var buf = alloc(262144);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var rd_r = file_read_r(fd, buf + total, 262144 - total);
+        if (is_err_result(rd_r) == 1) { sys_close(fd); return Err(CymlIoErr); }
+        var n = load64(rd_r + 8);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= 262144) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+    if (total == 0) { return Err(CymlIoErr); }
+    return Ok(cyml_parse(buf, total));
+}

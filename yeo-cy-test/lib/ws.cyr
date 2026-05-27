@@ -1,0 +1,278 @@
+# ws.cyr — WebSocket protocol (RFC 6455)
+# Usage: include "lib/ws.cyr"
+# Requires: net.cyr, string.cyr, alloc.cyr, base64.cyr, syscalls.cyr
+#
+# Client-side WebSocket over existing TCP connections.
+# Handles framing, masking, ping/pong, close handshake.
+#
+#   var sock = tcp_connect("127.0.0.1", 8080);
+#   var ws = ws_connect(sock, "/ws", "localhost");
+#   ws_send_text(ws, "hello");
+#   var msg = ws_recv(ws);
+#   ws_close(ws);
+
+# WebSocket opcodes
+enum WsOpcode {
+    WS_OP_CONTINUATION = 0;
+    WS_OP_TEXT   = 1;
+    WS_OP_BINARY = 2;
+    WS_OP_CLOSE  = 8;
+    WS_OP_PING   = 9;
+    WS_OP_PONG   = 10;
+}
+
+# WebSocket state
+enum WsState {
+    WS_CONNECTING = 0;
+    WS_OPEN       = 1;
+    WS_CLOSING    = 2;
+    WS_CLOSED     = 3;
+}
+
+# WebSocket handle layout (32 bytes)
+# +0  fd       socket file descriptor
+# +8  state    connection state
+# +16 mask_key 4-byte mask for client frames
+# +24 flags    (FIN, RSV, etc.)
+
+# Create WebSocket handle from connected socket
+fn ws_new(fd): i64 {
+    var ws = alloc(32);
+    store64(ws, fd);
+    store64(ws + 8, WS_CONNECTING);
+    store64(ws + 16, 0);
+    store64(ws + 24, 0);
+    return ws;
+}
+
+# Get socket fd from WebSocket handle
+fn ws_fd(ws): i64 { return load64(ws); }
+
+# Get WebSocket connection state
+fn ws_state(ws): i64 { return load64(ws + 8); }
+
+# Generate 4-byte mask key from /dev/urandom
+fn _ws_gen_mask(ws): i64 {
+    var mask[4];
+    var fd = syscall(2, "/dev/urandom", 0, 0);
+    if (fd >= 0) {
+        syscall(0, fd, &mask, 4);
+        syscall(3, fd);
+    }
+    store64(ws + 16, load64(&mask) & 0xFFFFFFFF);
+    return 0;
+}
+
+# Build WebSocket upgrade request
+fn _ws_handshake_request(path, host, key_out): i64 {
+    # Generate 16-byte random key, base64 encode
+    var raw[16];
+    var fd = syscall(2, "/dev/urandom", 0, 0);
+    if (fd >= 0) { syscall(0, fd, &raw, 16); syscall(3, fd); }
+    var key = base64_encode(&raw, 16);
+    memcpy(key_out, key, strlen(key));
+    store8(key_out + strlen(key), 0);
+
+    var buf = alloc(512);
+    var pos = 0;
+    # GET path HTTP/1.1\r\n
+    memcpy(buf + pos, "GET ", 4); pos = pos + 4;
+    memcpy(buf + pos, path, strlen(path)); pos = pos + strlen(path);
+    memcpy(buf + pos, " HTTP/1.1\r\n", 11); pos = pos + 11;
+    # Host
+    memcpy(buf + pos, "Host: ", 6); pos = pos + 6;
+    memcpy(buf + pos, host, strlen(host)); pos = pos + strlen(host);
+    memcpy(buf + pos, "\r\n", 2); pos = pos + 2;
+    # Upgrade headers
+    memcpy(buf + pos, "Upgrade: websocket\r\n", 20); pos = pos + 20;
+    memcpy(buf + pos, "Connection: Upgrade\r\n", 21); pos = pos + 21;
+    memcpy(buf + pos, "Sec-WebSocket-Version: 13\r\n", 27); pos = pos + 27;
+    memcpy(buf + pos, "Sec-WebSocket-Key: ", 19); pos = pos + 19;
+    memcpy(buf + pos, key, strlen(key)); pos = pos + strlen(key);
+    memcpy(buf + pos, "\r\n\r\n", 4); pos = pos + 4;
+    store8(buf + pos, 0);
+    return buf;
+}
+
+# Perform WebSocket handshake on connected socket
+fn ws_connect(sock, path, host): i64 {
+    var ws = ws_new(sock);
+    var key[32];
+    var req = _ws_handshake_request(path, host, &key);
+    syscall(1, sock, req, strlen(req));
+
+    # Read response (simplified — check for 101)
+    var resp[512];
+    var n = syscall(0, sock, &resp, 511);
+    if (n <= 0) { store64(ws + 8, WS_CLOSED); return ws; }
+    store8(&resp + n, 0);
+
+    # Check for "101" in first line
+    if (load8(&resp + 9) == 49) {
+        if (load8(&resp + 10) == 48) {
+            if (load8(&resp + 11) == 49) {
+                store64(ws + 8, WS_OPEN);
+            }
+        }
+    }
+    return ws;
+}
+
+# Send a WebSocket frame
+fn _ws_send_frame(ws, opcode, data, len): i64 {
+    if (ws_state(ws) != WS_OPEN) { return 0 - 1; }
+    var fd = ws_fd(ws);
+    var hdr[14];
+    var hlen = 0;
+
+    # First byte: FIN + opcode
+    store8(&hdr, 0x80 | (opcode & 0x0F));
+    hlen = 1;
+
+    # Second byte: MASK + length
+    if (len < 126) {
+        store8(&hdr + 1, 0x80 | len);
+        hlen = 2;
+    } elif (len < 65536) {
+        store8(&hdr + 1, 0x80 | 126);
+        store8(&hdr + 2, (len >> 8) & 0xFF);
+        store8(&hdr + 3, len & 0xFF);
+        hlen = 4;
+    } else {
+        store8(&hdr + 1, 0x80 | 127);
+        store8(&hdr + 2, 0); store8(&hdr + 3, 0);
+        store8(&hdr + 4, 0); store8(&hdr + 5, 0);
+        store8(&hdr + 6, (len >> 24) & 0xFF);
+        store8(&hdr + 7, (len >> 16) & 0xFF);
+        store8(&hdr + 8, (len >> 8) & 0xFF);
+        store8(&hdr + 9, len & 0xFF);
+        hlen = 10;
+    }
+
+    # Mask key
+    _ws_gen_mask(ws);
+    var mask = load64(ws + 16) & 0xFFFFFFFF;
+    store8(&hdr + hlen, mask & 0xFF);
+    store8(&hdr + hlen + 1, (mask >> 8) & 0xFF);
+    store8(&hdr + hlen + 2, (mask >> 16) & 0xFF);
+    store8(&hdr + hlen + 3, (mask >> 24) & 0xFF);
+    hlen = hlen + 4;
+
+    # Send header
+    syscall(1, fd, &hdr, hlen);
+
+    # Mask and send payload
+    var masked = alloc(len);
+    var i = 0;
+    while (i < len) {
+        var mb = (mask >> ((i % 4) * 8)) & 0xFF;
+        store8(masked + i, load8(data + i) ^ mb);
+        i = i + 1;
+    }
+    syscall(1, fd, masked, len);
+    return len;
+}
+
+# Send text message
+fn ws_send_text(ws, msg): i64 {
+    return _ws_send_frame(ws, WS_OP_TEXT, msg, strlen(msg));
+}
+
+# Send binary message
+fn ws_send_binary(ws, data, len): i64 {
+    return _ws_send_frame(ws, WS_OP_BINARY, data, len);
+}
+
+# Send ping
+fn ws_ping(ws): i64 {
+    return _ws_send_frame(ws, WS_OP_PING, "", 0);
+}
+
+# Receive a WebSocket frame, returns payload pointer (caller must check opcode)
+# Sets opcode_out to the frame opcode
+fn ws_recv_frame(ws, opcode_out, len_out): i64 {
+    if (ws_state(ws) != WS_OPEN) { return 0; }
+    var fd = ws_fd(ws);
+    var hdr[2];
+    var n = syscall(0, fd, &hdr, 2);
+    if (n < 2) { store64(ws + 8, WS_CLOSED); return 0; }
+
+    var opcode = load8(&hdr) & 0x0F;
+    store64(opcode_out, opcode);
+    var masked = (load8(&hdr + 1) >> 7) & 1;
+    var plen = load8(&hdr + 1) & 0x7F;
+
+    if (plen == 126) {
+        var ext[2];
+        syscall(0, fd, &ext, 2);
+        plen = (load8(&ext) << 8) | load8(&ext + 1);
+    } elif (plen == 127) {
+        var ext[8];
+        syscall(0, fd, &ext, 8);
+        var _e4 = load8(&ext + 4) << 24;
+        var _e5 = load8(&ext + 5) << 16;
+        var _e6 = load8(&ext + 6) << 8;
+        plen = _e4 | _e5 | _e6 | load8(&ext + 7);
+    }
+    store64(len_out, plen);
+
+    # Read mask if present
+    var mask = 0;
+    if (masked == 1) {
+        var mk[4];
+        syscall(0, fd, &mk, 4);
+        mask = load8(&mk) | (load8(&mk + 1) << 8) | (load8(&mk + 2) << 16) | (load8(&mk + 3) << 24);
+    }
+
+    # Read payload
+    var payload = alloc(plen + 1);
+    if (plen > 0) {
+        syscall(0, fd, payload, plen);
+    }
+
+    # Unmask if needed
+    if (masked == 1) {
+        var i = 0;
+        while (i < plen) {
+            var mb = (mask >> ((i % 4) * 8)) & 0xFF;
+            store8(payload + i, load8(payload + i) ^ mb);
+            i = i + 1;
+        }
+    }
+    store8(payload + plen, 0);
+
+    # Auto-respond to ping with pong
+    if (opcode == WS_OP_PING) {
+        _ws_send_frame(ws, WS_OP_PONG, payload, plen);
+    }
+
+    # Handle close
+    if (opcode == WS_OP_CLOSE) {
+        _ws_send_frame(ws, WS_OP_CLOSE, "", 0);
+        store64(ws + 8, WS_CLOSED);
+    }
+
+    return payload;
+}
+
+# Receive text message (convenience — returns string or 0)
+fn ws_recv(ws): i64 {
+    var opcode[1];
+    var len[1];
+    var data = ws_recv_frame(ws, &opcode, &len);
+    if (data == 0) { return 0; }
+    if (load64(&opcode) == WS_OP_TEXT) { return data; }
+    if (load64(&opcode) == WS_OP_BINARY) { return data; }
+    return 0;
+}
+
+# Close WebSocket connection
+fn ws_close(ws): i64 {
+    if (ws_state(ws) == WS_OPEN) {
+        _ws_send_frame(ws, WS_OP_CLOSE, "", 0);
+        store64(ws + 8, WS_CLOSING);
+    }
+    syscall(3, ws_fd(ws));
+    store64(ws + 8, WS_CLOSED);
+    return 0;
+}

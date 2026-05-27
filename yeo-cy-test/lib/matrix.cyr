@@ -1,0 +1,177 @@
+# matrix.cyr — dense matrix operations for f64 values
+# Usage: include "lib/matrix.cyr"
+# Requires: alloc.cyr, fmt.cyr, string.cyr
+#
+# Row-major dense matrix backed by a single heap allocation.
+# All values are f64 bit patterns stored as i64.
+# Layout: { rows: i64, cols: i64, data: f64[rows*cols] }
+# Total: 16 + rows * cols * 8 bytes
+
+# Create a zero-filled rows x cols matrix
+fn mat_new(rows, cols): i64 {
+    var sz = 16 + rows * cols * 8;
+    var m = alloc(sz);
+    store64(m, rows);
+    store64(m + 8, cols);
+    var i = 0;
+    while (i < rows * cols) {
+        store64(m + 16 + i * 8, 0);
+        i = i + 1;
+    }
+    return m;
+}
+
+# Get number of rows
+fn mat_rows(m): i64 { return load64(m); }
+# Get number of columns
+fn mat_cols(m): i64 { return load64(m + 8); }
+
+# Get element at (row, col) — returns f64 bit pattern
+fn mat_get(m, r, c): i64 {
+    var cols = load64(m + 8);
+    return load64(m + 16 + (r * cols + c) * 8);
+}
+
+# Set element at (row, col) — value is f64 bit pattern
+fn mat_set(m, r, c, val): i64 {
+    var cols = load64(m + 8);
+    store64(m + 16 + (r * cols + c) * 8, val);
+    return 0;
+}
+
+# Create an identity matrix (N x N)
+fn mat_identity(n): i64 {
+    var m = mat_new(n, n);
+    var i = 0;
+    while (i < n) {
+        mat_set(m, i, i, f64_from(1));
+        i = i + 1;
+    }
+    return m;
+}
+
+# Create a matrix from a flat array of f64 values
+fn mat_from(rows, cols, data): i64 {
+    var m = mat_new(rows, cols);
+    var i = 0;
+    while (i < rows * cols) {
+        store64(m + 16 + i * 8, load64(data + i * 8));
+        i = i + 1;
+    }
+    return m;
+}
+
+# Matrix addition: C = A + B (returns new matrix)
+fn mat_add(a, b): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    var c = mat_new(rows, cols);
+    var i = 0;
+    while (i < rows * cols) {
+        var va = load64(a + 16 + i * 8);
+        var vb = load64(b + 16 + i * 8);
+        store64(c + 16 + i * 8, f64_add(va, vb));
+        i = i + 1;
+    }
+    return c;
+}
+
+# Matrix subtraction: C = A - B (returns new matrix)
+fn mat_sub(a, b): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    var c = mat_new(rows, cols);
+    var i = 0;
+    while (i < rows * cols) {
+        var va = load64(a + 16 + i * 8);
+        var vb = load64(b + 16 + i * 8);
+        store64(c + 16 + i * 8, f64_sub(va, vb));
+        i = i + 1;
+    }
+    return c;
+}
+
+# Scalar multiply: C = A * scalar (returns new matrix)
+fn mat_scale(a, scalar): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    var c = mat_new(rows, cols);
+    var i = 0;
+    while (i < rows * cols) {
+        store64(c + 16 + i * 8, f64_mul(load64(a + 16 + i * 8), scalar));
+        i = i + 1;
+    }
+    return c;
+}
+
+# Matrix multiply: C = A * B (returns new matrix, A is m×k, B is k×n → C is m×n)
+fn mat_mul(a, b): i64 {
+    var m = mat_rows(a);
+    var k = mat_cols(a);
+    var n = mat_cols(b);
+    var c = mat_new(m, n);
+    var i = 0;
+    while (i < m) {
+        var j = 0;
+        while (j < n) {
+            var sum = f64_from(0);
+            var p = 0;
+            while (p < k) {
+                sum = f64_add(sum, f64_mul(mat_get(a, i, p), mat_get(b, p, j)));
+                p = p + 1;
+            }
+            mat_set(c, i, j, sum);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+# Transpose: returns new matrix
+fn mat_transpose(a): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    var t = mat_new(cols, rows);
+    var i = 0;
+    while (i < rows) {
+        var j = 0;
+        while (j < cols) {
+            mat_set(t, j, i, mat_get(a, i, j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return t;
+}
+
+# Dot product of two column vectors (Nx1 matrices or flat arrays of length N)
+fn mat_dot(a, b, n): i64 {
+    var sum = f64_from(0);
+    var i = 0;
+    while (i < n) {
+        sum = f64_add(sum, f64_mul(load64(a + i * 8), load64(b + i * 8)));
+        i = i + 1;
+    }
+    return sum;
+}
+
+# Print matrix to stdout
+fn mat_print(m): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    var i = 0;
+    while (i < rows) {
+        syscall(1, 1, "[ ", 2);
+        var j = 0;
+        while (j < cols) {
+            var v = mat_get(m, i, j);
+            fmt_int(f64_to(f64_mul(v, f64_from(100))));
+            syscall(1, 1, "/100 ", 5);
+            j = j + 1;
+        }
+        syscall(1, 1, "]\n", 2);
+        i = i + 1;
+    }
+    return 0;
+}

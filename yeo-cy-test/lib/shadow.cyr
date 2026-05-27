@@ -1,0 +1,203 @@
+# shadow.cyr — pure-cyrius /etc/shadow reader (musl pattern).
+#
+# Companion to lib/pwd.cyr + lib/grp.cyr. Bypasses glibc NSS;
+# parses the POSIX shadow(5) format directly:
+#
+#   name:hash:last_change:min_age:max_age:warn:inactive:expire:reserved
+#
+# `/etc/shadow` is mode 0600 root:root on every mainstream Linux.
+# Non-root readers get EACCES. For non-root auth, use `lib/pam.cyr`'s
+# `pam_unix_authenticate()` which routes via the setuid-root
+# `unix_chkpwd` helper — the same path Linux-PAM's `pam_unix`
+# takes when a non-root process (e.g. an unprivileged daemon)
+# needs to verify a password.
+#
+# Caller protocol — two buffers:
+#
+#   sprec  — 24 bytes:
+#              +0   name         (cstr ptr into strbuf)
+#              +8   hash         (cstr ptr; the `$6$salt$hash` crypt(3) encoding)
+#              +16  last_change  (i64, days since epoch; -1 = unset)
+#   strbuf — scratch for name + hash. 512 bytes is ample for every
+#            real record (hash ≤ 86 chars for SHA-512-crypt).
+#
+# Return values:
+#     1  — found
+#     0  — not found
+#    -1  — /etc/shadow not readable (usually EACCES — need root)
+#    -2  — strbuf too small
+#
+# v5.5.27 — first of the PAM arc: (1) this reader, (2) lib/pam.cyr
+# via unix_chkpwd fork/pipe, (3) TBD inline SHA-512-crypt for root
+# consumers that want to verify without a subprocess.
+
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+
+var SHADOW_BUF_MAX = 0x20000;
+
+var _shadow_buf = 0;
+var _shadow_buf_len = 0;
+
+# Force a re-read of /etc/shadow on the next lookup. Use after
+# password changes (e.g. passwd(1) updates). NSS cache-invalidation
+# trio — see grp_invalidate_cache for full rationale + revisit window.
+fn shadow_invalidate_cache(): i64 {
+    _shadow_buf_len = 0;
+    return 0;
+}
+
+fn _shadow_load(): i64 {
+    if (_shadow_buf_len > 0) { return _shadow_buf; }
+    if (_shadow_buf == 0) { _shadow_buf = alloc(SHADOW_BUF_MAX); }
+    if (_shadow_buf == 0) { return 0; }
+    var n = file_read_all("/etc/shadow", _shadow_buf, SHADOW_BUF_MAX);
+    if (n <= 0) { return 0; }
+    _shadow_buf_len = n;
+    return _shadow_buf;
+}
+
+fn _shadow_atoi_span(p, end): i64 {
+    var v = 0;
+    var i = 0;
+    while (p + i < end) {
+        var c = load8(p + i);
+        if (c < 48) { break; }
+        if (c > 57) { break; }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    return (v << 32) | i;
+}
+
+fn _shadow_stash(p, n, strbuf, soff_ptr, strbufsz): i64 {
+    var soff = load64(soff_ptr);
+    if (soff + n + 1 > strbufsz) { return 0 - 1; }
+    var dst = strbuf + soff;
+    memcpy(dst, p, n);
+    store8(dst + n, 0);
+    store64(soff_ptr, soff + n + 1);
+    return dst;
+}
+
+fn _shadow_parse_line(line_start, line_end, sprec, strbuf, strbufsz): i64 {
+    var soff_store[1];
+    store64(&soff_store, 0);
+
+    # /etc/shadow has 9 fields (8 colons). We only parse 0 (name),
+    # 1 (hash), 2 (last_change). Others are left for future use —
+    # reader is compact.
+    var f_name_start = line_start;
+    var p = line_start;
+    while (p < line_end && load8(p) != 58) { p = p + 1; }
+    var f_name_end = p;
+    if (p >= line_end) { return 0; }
+    p = p + 1;
+
+    var f_hash_start = p;
+    while (p < line_end && load8(p) != 58) { p = p + 1; }
+    var f_hash_end = p;
+    if (p >= line_end) { return 0; }
+    p = p + 1;
+
+    var f_lc_start = p;
+    while (p < line_end && load8(p) != 58) { p = p + 1; }
+    var f_lc_end = p;
+
+    var name_p = _shadow_stash(f_name_start, f_name_end - f_name_start, strbuf, &soff_store, strbufsz);
+    if (name_p < 0) { return 0 - 2; }
+    var hash_p = _shadow_stash(f_hash_start, f_hash_end - f_hash_start, strbuf, &soff_store, strbufsz);
+    if (hash_p < 0) { return 0 - 2; }
+
+    var lc = 0 - 1;
+    if (f_lc_end > f_lc_start) {
+        var lc_pack = _shadow_atoi_span(f_lc_start, f_lc_end);
+        lc = lc_pack >> 32;
+    }
+
+    store64(sprec,      name_p);
+    store64(sprec + 8,  hash_p);
+    store64(sprec + 16, lc);
+    return 1;
+}
+
+fn _shadow_match_name(sprec, ctx): i64 {
+    var name = load64(sprec);
+    var i = 0;
+    while (1 == 1) {
+        var a = load8(name + i);
+        var b = load8(ctx + i);
+        if (a != b) { return 0; }
+        if (a == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _shadow_find(matcher, ctx, sprec, strbuf, strbufsz): i64 {
+    var buf = _shadow_load();
+    if (buf == 0) { return 0 - 1; }
+    var end = buf + _shadow_buf_len;
+    var p = buf;
+    while (p < end) {
+        var line_end = p;
+        while (line_end < end) {
+            if (load8(line_end) == 10) { break; }
+            line_end = line_end + 1;
+        }
+        if (line_end > p) {
+            if (load8(p) != 35) {
+                var rc = _shadow_parse_line(p, line_end, sprec, strbuf, strbufsz);
+                if (rc < 0) { return rc; }
+                if (rc == 1) {
+                    if (fncall2(matcher, sprec, ctx) == 1) {
+                        return 1;
+                    }
+                }
+            }
+        }
+        p = line_end + 1;
+    }
+    return 0;
+}
+
+# Look up a shadow record by username. Requires read access to
+# /etc/shadow (typically root only). For non-root authentication,
+# use lib/pam.cyr's pam_unix_authenticate.
+fn shadow_getspnam(name, sprec, strbuf, strbufsz): i64 {
+    return _shadow_find(&_shadow_match_name, name, sprec, strbuf, strbufsz);
+}
+
+# Return the username cstring from a parsed sprec.
+fn shadow_name(sprec): i64 { return load64(sprec); }
+# Return the password-hash cstring (`$6$salt$hash` crypt(3) format,
+# or `*` / `!` for locked / no-password accounts).
+fn shadow_hash(sprec): i64 { return load64(sprec + 8); }
+# Return days-since-1970 the password was last changed; -1 = unset.
+fn shadow_last_change(sprec) : i64 { return load64(sprec + 16); }
+
+# v5.8.31 — ShadowError variants (mirrors PwdError shape).
+include "lib/result.cyr"
+
+enum ShadowError {
+    ShadowNotFound;
+    ShadowLoadFailed;
+    ShadowBufTooSmall;
+    ShadowOther;
+}
+
+# v5.8.31 — Result variant of shadow_getspnam.
+# Note: `ShadowLoadFailed` typically signals "no read access to
+# /etc/shadow" (caller is non-root). For authentication paths
+# that don't need root, see lib/pam.cyr's pam_unix_authenticate
+# (which delegates to a setuid helper).
+fn shadow_getspnam_r(name, sprec, strbuf, strbufsz) : Result {
+    var rc = shadow_getspnam(name, sprec, strbuf, strbufsz);
+    if (rc == 1)      { return Ok(0); }
+    if (rc == 0)      { return Err(ShadowNotFound); }
+    if (rc == 0 - 1)  { return Err(ShadowLoadFailed); }
+    if (rc == 0 - 2)  { return Err(ShadowBufTooSmall); }
+    return Err(ShadowOther);
+}

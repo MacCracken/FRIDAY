@@ -1,0 +1,120 @@
+# thread_local.cyr — per-thread slot storage (Thread-Local Storage)
+# Usage: include "lib/thread_local.cyr"
+# Requires: syscalls.cyr, alloc.cyr
+#
+# Each thread gets its own 4KB block addressed via the CPU's
+# thread-pointer register: `%fs` on x86_64, `TPIDR_EL0` on aarch64.
+# The block is installed via `arch_prctl(ARCH_SET_FS, tls)` (x86)
+# or `msr TPIDR_EL0, x0` (aarch64) by `thread_local_init`, and by
+# `CLONE_SETTLS` in `_thread_spawn` for worker threads so each
+# thread automatically inherits a fresh block on creation.
+#
+# Slot API (runtime, no new compiler syntax):
+#   thread_local_init()             → 1 on success, 0 on failure
+#   thread_local_get(slot)          → i64 at slot
+#   thread_local_set(slot, val)     → void
+#
+# Slot range: 0 .. TLOCAL_MAX_SLOTS-1 (16 slots × 8B). No bounds
+# check in the hot path — caller is trusted.
+#
+# NOT named tls.cyr to avoid collision with lib/tls.cyr (libssl TLS
+# protocol client; retired by the v5.9.x pure-cyrius TLS arc).
+#
+# >>> include "lib/syscalls.cyr"
+# >>> include "lib/alloc.cyr"
+# >>> include "lib/thread_local.cyr"
+#
+# ABI / call-order constraint (v5.5.30):
+# `fdlopen_init_full` (v5.5.28+) enters ld.so which clobbers `%fs` on
+# x86_64 during its own TLS setup. Programs that use both MUST call
+# `thread_local_init` AFTER any `fdlopen_init_full` completes (or
+# re-invoke `thread_local_init` after foreign-dlopen returns). On
+# aarch64 the two are disjoint (fdlopen's x86 pattern doesn't
+# translate), so ordering is free.
+
+var TLOCAL_BLOCK_SIZE = 4096;
+var TLOCAL_MAX_SLOTS = 16;
+
+# Install `tls` as the current thread's thread-pointer register base.
+# x86_64: syscall(158, ARCH_SET_FS=0x1002, tls)
+# aarch64: msr TPIDR_EL0, tls
+# Returns 0 on success, non-zero on failure (x86 only; aarch64 never
+# fails at EL0).
+fn _tlocal_install(tls): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    return syscall(158, 0x1002, tls);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        # Frame layout: [x29-8] = tls (first param)
+        0xA0; 0x83; 0x5F; 0xF8;    # ldur x0, [x29, #-8]
+        0x40; 0xD0; 0x1B; 0xD5;    # msr  TPIDR_EL0, x0
+    }
+    return 0;
+    #endif
+}
+
+# Allocate + install a fresh per-thread TLS block. Call once per
+# thread. Worker threads spawned via `thread_create` get a block
+# installed automatically by CLONE_SETTLS, so they do NOT need to
+# call this. Returns 1 on success, 0 on failure.
+fn thread_local_init(): i64 {
+    alloc_init();
+    var tls = alloc(TLOCAL_BLOCK_SIZE);
+    if (tls == 0) { return 0; }
+    var i = 0;
+    while (i < TLOCAL_BLOCK_SIZE) {
+        store8(tls + i, 0);
+        i = i + 1;
+    }
+    var rc = _tlocal_install(tls);
+    if (rc != 0) { return 0; }
+    return 1;
+}
+
+# Read the i64 value at `slot`. Returns 0 on fresh slots.
+fn thread_local_get(slot): i64 {
+    var ret = 0;
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        # Frame: [rbp-8]=slot, [rbp-16]=ret
+        0x48; 0x8B; 0x7D; 0xF8;        # mov rdi, [rbp-8]    ; slot
+        0x48; 0xC1; 0xE7; 0x03;        # shl rdi, 3          ; slot*8
+        0x64; 0x48; 0x8B; 0x07;        # mov rax, fs:[rdi]   ; load
+        0x48; 0x89; 0x45; 0xF0;        # mov [rbp-16], rax   ; ret = rax
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        # Frame: [x29-8]=slot, [x29-16]=ret
+        0xA0; 0x83; 0x5F; 0xF8;        # ldur x0, [x29, #-8]      ; slot
+        0x41; 0xD0; 0x3B; 0xD5;        # mrs  x1, TPIDR_EL0       ; base
+        0x22; 0x78; 0x60; 0xF8;        # ldr  x2, [x1, x0, lsl #3]; load slot*8
+        0xA2; 0x03; 0x1F; 0xF8;        # stur x2, [x29, #-16]     ; ret = x2
+    }
+    #endif
+    return ret;
+}
+
+# Write `val` into `slot`.
+fn thread_local_set(slot, val): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        # Frame: [rbp-8]=slot, [rbp-16]=val
+        0x48; 0x8B; 0x7D; 0xF8;        # mov rdi, [rbp-8]    ; slot
+        0x48; 0x8B; 0x45; 0xF0;        # mov rax, [rbp-16]   ; val
+        0x48; 0xC1; 0xE7; 0x03;        # shl rdi, 3          ; slot*8
+        0x64; 0x48; 0x89; 0x07;        # mov fs:[rdi], rax   ; store
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        # Frame: [x29-8]=slot, [x29-16]=val
+        0xA0; 0x83; 0x5F; 0xF8;        # ldur x0, [x29, #-8]       ; slot
+        0xA2; 0x03; 0x5F; 0xF8;        # ldur x2, [x29, #-16]      ; val
+        0x41; 0xD0; 0x3B; 0xD5;        # mrs  x1, TPIDR_EL0        ; base
+        0x22; 0x78; 0x20; 0xF8;        # str  x2, [x1, x0, lsl #3] ; store slot*8
+    }
+    #endif
+    return 0;
+}

@@ -1,0 +1,781 @@
+# fdlopen.cyr — foreign-dlopen: full-libc access for static cyrius binaries
+# Usage: include "lib/fdlopen.cyr"
+# Requires: string.cyr, syscalls.cyr, mmap.cyr, dynlib.cyr, fnptr.cyr
+#
+# The pattern pfalcon/foreign-dlopen + Cosmopolitan libc use to get
+# a fully-initialised glibc into a static binary's address space
+# without shelling out. Ships v5.5.28 as the real fix for the NSS
+# dispatch problem the v5.5.23–v5.5.25 auxv-synthesis attempt could
+# not solve (see docs/development/issues/dynlib-nss-bootstrap.md +
+# vidya :: static_dlopen_and_nss_bootstrap_limits).
+#
+# ARCHITECTURE
+# ============
+#
+# Path A (v5.5.26/v5.5.27) covers identity lookups (pwd/grp/shadow/pam)
+# via pure-cyrius /etc/* readers + unix_chkpwd fork — bypasses NSS
+# entirely, solves 95% of consumers.
+#
+# Path B (this file) covers the rest: getaddrinfo, strerror with
+# locale, setlocale(LC_ALL, "C"), setenv realloc — anything that
+# needs glibc's full internal state. Approach:
+#
+#   1. At install time, `scripts/install.sh` compiles a ~40-line C
+#      helper (`programs/dlopen-helper.c`) against the host libc
+#      and caches it at `~/.cyrius/dlopen-helper`.
+#
+#   2. At runtime, `fdlopen_init(state_buf)`:
+#      a. mmaps `~/.cyrius/dlopen-helper` + `/lib64/ld-linux-x86-64.so.2`
+#         into our address space.
+#      b. Allocates a fresh 64 KB stack region (mmap anon).
+#      c. Lays out the kernel-style startup stack — `argc`, `argv[0..]`,
+#         envp, auxv (sourced from /proc/self/auxv via
+#         `dynlib_read_auxv`) — at the bottom of the new region.
+#         Auxv AT_PHDR / AT_BASE / AT_ENTRY are set from the helper's
+#         parsed ELF headers, not from our /proc/self/auxv (which
+#         describes cyrius itself).
+#      d. `dl_setjmp` captures our return state.
+#      e. Jumps to ld.so's ELF entry point with RSP pointing at the
+#         constructed stack. ld.so runs its normal `_dl_start` flow,
+#         populates `_rtld_global_ro` legitimately, resolves the
+#         helper's PT_INTERP, and invokes `__libc_start_main`, which
+#         runs the helper's `main()`.
+#      f. The helper's `main()` reads a caller-passed callback
+#         function pointer from `argv[1]` (encoded as hex), resolves
+#         libc + libpam + libresolv symbols via real `dlsym`, stuffs
+#         the pointers into `state_buf`, and calls the callback.
+#      g. The callback (a cyrius fn we register) invokes
+#         `dl_longjmp` to return to the caller's setjmp frame.
+#
+#   3. Post-`fdlopen_init`, `state_buf` holds real fn pointers into
+#      a fully-initialised glibc. `fdlopen_sym(state, "getaddrinfo")`
+#      returns the pointer; caller invokes via `fncallN`.
+#
+# RISKS & MITIGATIONS
+# ===================
+#
+# * Locale double-init with `dynlib_bootstrap_locale` — foreign-dlopen
+#   owns locale setup from v5.5.28 onward; skip the earlier bootstrap
+#   when this path is in use. `fdlopen_init` documents this in its
+#   error codes.
+# * TLS base collision — ld.so sets up TLS in %fs; a prior
+#   `dynlib_bootstrap_tls` call's %fs is clobbered. Since pure-cyrius
+#   code uses rbp-relative locals (not %fs), this is fine in practice.
+#   Document the ordering: call `fdlopen_init` BEFORE any
+#   `dynlib_bootstrap_tls`, not after.
+# * Helper missing / stale — if the cached helper disappears or the
+#   host libc was upgraded in an ABI-breaking way, fdlopen_init
+#   returns FDL_ERR_HELPER_MISSING; caller can fall back to
+#   `syscall(execve, "/usr/bin/getent", ...)` or fail loud.
+#
+# STATE BUF LAYOUT (caller allocates 256 bytes)
+# ============================================
+#
+#   +0   jmp_buf        128 bytes (setjmp/longjmp state)
+#   +128 dlopen  fn*    real glibc dlopen
+#   +136 dlsym   fn*    real glibc dlsym
+#   +144 dlclose fn*    real glibc dlclose
+#   +152 dlerror fn*    real glibc dlerror
+#   +160 getaddrinfo fn*
+#   +168 freeaddrinfo fn*
+#   +176 gai_strerror fn*
+#   +184 strerror fn*
+#   +192 setlocale fn*
+#   +200 setenv fn*
+#   +208 unsetenv fn*
+#   +216 status i64     0 = uninit, 1 = init OK, <0 = error code
+#   +224 flags i64      reserved
+#   +232 reserved
+#   +240 reserved
+#   +248 reserved
+#
+# ERROR CODES
+# ===========
+#
+#   FDL_ERR_HELPER_MISSING  = -1  `~/.cyrius/dlopen-helper` not found
+#   FDL_ERR_LDSO_MISSING    = -2  ld-linux-x86-64.so.2 not found
+#   FDL_ERR_MMAP_FAILED     = -3  mmap of helper / ld.so / stack failed
+#   FDL_ERR_ELF_PARSE       = -4  helper or ld.so ELF header bogus
+#   FDL_ERR_AUXV_READ       = -5  /proc/self/auxv unreadable
+#   FDL_ERR_ARCH_UNSUPPORTED = -6  not x86_64 Linux
+#   FDL_ERR_CALLBACK_FAILED = -7  helper ran but callback never fired
+#
+# v5.5.28 — initial implementation. x86_64 Linux only; aarch64 Linux +
+# Darwin + Windows stubbed (foreign-dlopen is inherently glibc-shaped —
+# Darwin uses dyld, Windows uses its own PE loader, both work
+# differently).
+
+# Error codes — cyrius enums don't accept negative literals, so these
+# live as plain constants. Returned as negative values from init:
+#
+#   FDL_ERR_HELPER_MISSING    = -1  ~/.cyrius/dlopen-helper not found
+#   FDL_ERR_LDSO_MISSING      = -2  ld-linux-x86-64.so.2 not found
+#   FDL_ERR_MMAP_FAILED       = -3  mmap of helper / ld.so / stack failed
+#   FDL_ERR_ELF_PARSE         = -4  helper or ld.so ELF header bogus
+#   FDL_ERR_AUXV_READ         = -5  /proc/self/auxv unreadable
+#   FDL_ERR_ARCH_UNSUPPORTED  = -6  not x86_64 Linux
+#   FDL_ERR_CALLBACK_FAILED   = -7  helper ran but callback never fired
+#   FDL_ERR_UNINIT            = -8  orchestration not yet landed (v5.5.28)
+
+enum FdlopenOff {
+    FDL_JMPBUF          = 0;
+    FDL_DLOPEN          = 128;
+    FDL_DLSYM           = 136;
+    FDL_DLCLOSE         = 144;
+    FDL_DLERROR         = 152;
+    FDL_GETADDRINFO     = 160;
+    FDL_FREEADDRINFO    = 168;
+    FDL_GAI_STRERROR    = 176;
+    FDL_STRERROR        = 184;
+    FDL_SETLOCALE       = 192;
+    FDL_SETENV          = 200;
+    FDL_UNSETENV        = 208;
+    FDL_STATUS          = 216;
+    FDL_FLAGS           = 224;
+}
+
+enum FdlopenLayout {
+    FDL_STATE_SIZE = 256;
+    FDL_JMPBUF_SIZE = 128;
+    FDL_STACK_SIZE = 0x10000;   # 64 KB for ld.so + helper
+}
+
+# Cached global — the in-process fdlopen state buffer, so helper's
+# callback can find it via a known address. Set by fdlopen_init;
+# read by _fdlopen_callback_trampoline.
+var _fdlopen_state_global = 0;
+
+# ================================================================
+# setjmp / longjmp primitives
+# ================================================================
+#
+# Standard x86_64 SysV callee-saved regs: rbx, rbp, r12-r15. Plus
+# rsp + return-rip. 8 slots × 8 B = 64 B. Buffer is sized at 128 B
+# for future (signal mask, SIMD, guard value) without ABI break.
+#
+# LAYOUT (64 B used of 128 B available):
+#   +0   rbx  (callee-saved GPR)
+#   +8   rbp  (caller's frame pointer — stored at [rbp] inside callee)
+#   +16  r12
+#   +24  r13
+#   +32  r14
+#   +40  r15
+#   +48  caller_rsp  (rbp + 16 = pre-`call dl_setjmp` rsp)
+#   +56  caller_rip  (return address — stored at [rbp+8] inside callee)
+#   +64..+127  reserved
+#
+# Return value: 0 on direct call, non-zero on return-via-longjmp. If
+# longjmp was called with val==0, returns 1 (POSIX convention).
+#
+# CAVEAT: cyrius functions pass first arg at [rbp-8]. The asm below
+# assumes the standard `push rbp; mov rbp, rsp; sub rsp, N` prologue.
+fn dl_setjmp(buf): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8B; 0x45; 0xF8;    # mov rax, [rbp-8]   (buf)
+        0x48; 0x89; 0x58; 0x00;    # mov [rax+0],  rbx
+        0x48; 0x8B; 0x4D; 0x00;    # mov rcx, [rbp]     (caller rbp)
+        0x48; 0x89; 0x48; 0x08;    # mov [rax+8],  rcx
+        0x4C; 0x89; 0x60; 0x10;    # mov [rax+16], r12
+        0x4C; 0x89; 0x68; 0x18;    # mov [rax+24], r13
+        0x4C; 0x89; 0x70; 0x20;    # mov [rax+32], r14
+        0x4C; 0x89; 0x78; 0x28;    # mov [rax+40], r15
+        0x48; 0x8D; 0x4D; 0x10;    # lea rcx, [rbp+16]  (caller rsp)
+        0x48; 0x89; 0x48; 0x30;    # mov [rax+48], rcx
+        0x48; 0x8B; 0x4D; 0x08;    # mov rcx, [rbp+8]   (return rip)
+        0x48; 0x89; 0x48; 0x38;    # mov [rax+56], rcx
+    }
+    #endif
+    #endif
+    return 0;
+}
+
+# Restore state captured by dl_setjmp. Does not return.
+# If `val` is 0, setjmp will see 1 (POSIX convention — caller can't
+# distinguish "direct call" from "longjmp with val=0" otherwise).
+fn dl_longjmp(buf, val): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8B; 0x45; 0xF0;    # mov rax, [rbp-16]  (val)
+        0x48; 0xC7; 0xC1; 0x01; 0x00; 0x00; 0x00;  # mov rcx, 1
+        0x48; 0x85; 0xC0;          # test rax, rax
+        0x48; 0x0F; 0x44; 0xC1;    # cmove rax, rcx    (val==0 -> 1)
+
+        0x48; 0x8B; 0x55; 0xF8;    # mov rdx, [rbp-8]  (buf)
+        0x48; 0x8B; 0x5A; 0x00;    # mov rbx, [rdx+0]
+        0x48; 0x8B; 0x6A; 0x08;    # mov rbp, [rdx+8]
+        0x4C; 0x8B; 0x62; 0x10;    # mov r12, [rdx+16]
+        0x4C; 0x8B; 0x6A; 0x18;    # mov r13, [rdx+24]
+        0x4C; 0x8B; 0x72; 0x20;    # mov r14, [rdx+32]
+        0x4C; 0x8B; 0x7A; 0x28;    # mov r15, [rdx+40]
+        0x48; 0x8B; 0x4A; 0x38;    # mov rcx, [rdx+56] (target rip)
+        0x48; 0x8B; 0x62; 0x30;    # mov rsp, [rdx+48] (caller rsp)
+        0xFF; 0xE1;                # jmp rcx
+    }
+    #endif
+    #endif
+    return 0;  # unreachable on success
+}
+
+# ================================================================
+# Helper path resolution
+# ================================================================
+
+# Build `$HOME/.cyrius/dlopen-helper` into `buf`, returning length
+# on success or 0 if HOME is unset.
+fn _fdlopen_helper_path(buf, bufsz): i64 {
+    if (buf == 0) { return 0; }
+    if (bufsz < 64) { return 0; }
+    # Read HOME from environ via getenv-style walk. Since we may
+    # be called before any libc bootstrap, walk /proc/self/environ
+    # directly. Fallback: /home/$USER if HOME is empty.
+    var fd = syscall(2, "/proc/self/environ", 0, 0);  # O_RDONLY
+    if (fd < 0) { return 0; }
+    var envbuf = alloc(8192);
+    if (envbuf == 0) { syscall(3, fd); return 0; }
+    var n = syscall(0, fd, envbuf, 8192);
+    syscall(3, fd);
+    if (n <= 0) { return 0; }
+
+    # Walk NUL-separated KEY=VALUE entries, find HOME=
+    var i = 0;
+    var home = 0;
+    var home_len = 0;
+    while (i < n) {
+        var entry_start = envbuf + i;
+        # Find end of this entry (NUL)
+        var j = i;
+        while (j < n) {
+            if (load8(envbuf + j) == 0) { break; }
+            j = j + 1;
+        }
+        # Check if it starts with "HOME="
+        if (j - i >= 5) {
+            if (load8(entry_start + 0) == 72) {        # 'H'
+                if (load8(entry_start + 1) == 79) {    # 'O'
+                    if (load8(entry_start + 2) == 77) {# 'M'
+                        if (load8(entry_start + 3) == 69) {  # 'E'
+                            if (load8(entry_start + 4) == 61) {  # '='
+                                home = entry_start + 5;
+                                home_len = (j - i) - 5;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i = j + 1;
+    }
+    if (home == 0) { return 0; }
+    if (home_len + 24 > bufsz) { return 0; }
+
+    # Copy HOME + "/.cyrius/dlopen-helper" into buf
+    var k = 0;
+    while (k < home_len) {
+        store8(buf + k, load8(home + k));
+        k = k + 1;
+    }
+    var suffix = "/.cyrius/dlopen-helper";
+    var s = 0;
+    while (load8(suffix + s) != 0) {
+        store8(buf + home_len + s, load8(suffix + s));
+        s = s + 1;
+    }
+    store8(buf + home_len + s, 0);
+    return home_len + s;
+}
+
+# Check whether `$HOME/.cyrius/dlopen-helper` exists. Returns 1 if
+# yes, 0 if no.
+fn fdlopen_helper_available(): i64 {
+    var pathbuf = alloc(512);
+    if (pathbuf == 0) { return 0; }
+    var pl = _fdlopen_helper_path(pathbuf, 512);
+    if (pl == 0) { return 0; }
+    # stat via syscall 4 (stat) — cheap existence check.
+    var statbuf = alloc(144);
+    if (statbuf == 0) { return 0; }
+    var rc = syscall(4, pathbuf, statbuf);
+    if (rc < 0) { return 0; }
+    return 1;
+}
+
+# ================================================================
+# fdlopen_init / fdlopen_sym / helpers
+# ================================================================
+
+# Returns the size in bytes that caller must allocate for the
+# fdlopen state buffer passed to `fdlopen_init` / `fdlopen_init_full`.
+# Currently 256 bytes; jmp_buf (128) + fn-pointer slots (88) + status
+# (8) + flags (8) + reserved (24).
+fn fdlopen_state_size(): i64 { return 256; }
+
+# ---------------------------------------------------------------
+# Minimal ELF PT_LOAD mapper (PIE ET_DYN).
+# Opens `path`, mmaps the file, allocates a PIE region, copies
+# each PT_LOAD segment into it, mprotects per PF_* flags. Unlike
+# dynlib_open this applies NO relocations and resolves NO symbols —
+# ld.so does all of that once we hand it control.
+#
+# Writes five u64 slots into out_info:
+#   out_info+0  : base address
+#   out_info+8  : absolute entry (base + e_entry)
+#   out_info+16 : phdr address   (base + e_phoff)
+#   out_info+24 : phnum
+#   out_info+32 : phentsize
+# Returns 0 on success, negative error code on failure.
+# ---------------------------------------------------------------
+fn _fdlopen_mmap_elf(path, out_info): i64 {
+    var fd = syscall(2, path, 0, 0);   # O_RDONLY
+    if (fd < 0) { return 0 - 1; }
+
+    # fstat for file size
+    var stbuf = alloc(144);
+    if (stbuf == 0) { syscall(3, fd); return 0 - 3; }
+    var sr = syscall(5, fd, stbuf);    # fstat
+    if (sr < 0) { syscall(3, fd); return 0 - 1; }
+    var fsize = load64(stbuf + 48);    # st_size at offset 48
+
+    # mmap file read-only
+    var fmap = syscall(9, 0, fsize, 1, 2, fd, 0);   # PROT_READ, MAP_PRIVATE
+    syscall(3, fd);
+    if (fmap < 0) { return 0 - 3; }
+    if (fmap == 0) { return 0 - 3; }
+
+    # Verify ELF magic
+    if (load8(fmap + 0) != 0x7F) { return 0 - 4; }
+    if (load8(fmap + 1) != 69) { return 0 - 4; }   # 'E'
+    if (load8(fmap + 2) != 76) { return 0 - 4; }   # 'L'
+    if (load8(fmap + 3) != 70) { return 0 - 4; }   # 'F'
+    # ELFCLASS64 + little-endian
+    if (load8(fmap + 4) != 2) { return 0 - 4; }
+    # e_type ET_EXEC (2) or ET_DYN (3)
+    var etype = load16(fmap + 16);
+    if (etype != 2) { if (etype != 3) { return 0 - 4; } }
+
+    var eentry = load64(fmap + 24);
+    var ephoff = load64(fmap + 32);
+    var ephent = load16(fmap + 54);
+    var ephnum = load16(fmap + 56);
+
+    # Scan PT_LOAD to find total memory span (max p_vaddr+p_memsz)
+    var span = 0;
+    var pi = 0;
+    while (pi < ephnum) {
+        var ph = fmap + ephoff + pi * ephent;
+        if (load32(ph) == 1) {         # PT_LOAD
+            var va = load64(ph + 16);
+            var ms = load64(ph + 40);
+            var end = va + ms;
+            if (end > span) { span = end; }
+        }
+        pi = pi + 1;
+    }
+    # Page-align span up
+    span = (span + 4095) / 4096 * 4096;
+    if (span == 0) { return 0 - 4; }
+
+    # Allocate PIE region via mmap_anon (RW)
+    var base = syscall(9, 0, span, 3, 34, 0 - 1, 0);  # PROT_READ|WRITE, MAP_PRIVATE|ANON
+    if (base < 0) { return 0 - 3; }
+
+    # Copy each PT_LOAD segment, then mprotect to requested flags
+    pi = 0;
+    while (pi < ephnum) {
+        var ph2 = fmap + ephoff + pi * ephent;
+        if (load32(ph2) == 1) {
+            var p_off = load64(ph2 + 8);
+            var p_va = load64(ph2 + 16);
+            var p_fz = load64(ph2 + 32);
+            var p_mz = load64(ph2 + 40);
+            # Copy file bytes
+            memcpy(base + p_va, fmap + p_off, p_fz);
+            # BSS zero-fill (alloc_anon already zero, but belt-and-braces)
+            var zi = p_fz;
+            while (zi < p_mz) {
+                store8(base + p_va + zi, 0);
+                zi = zi + 1;
+            }
+        }
+        pi = pi + 1;
+    }
+
+    # Second pass: mprotect per p_flags. NB — PF bits and PROT bits
+    # are NOT 1:1. ELF p_flags: PF_X=1, PF_W=2, PF_R=4. Linux mmap
+    # prot: PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4. R and X are
+    # swapped between the two encodings. v5.5.34 A1 investigation
+    # found pre-v5.5.34 code erroneously mapped PF_R→prot+=4 and
+    # PF_X→prot+=1, making PF_R-only segments execute-only (reads
+    # SIGSEGV'd silently, which is why v5.5.29's helper main was
+    # never reached — ld.so's auxv walk hit unreadable pages).
+    # cyrius lacks bitwise AND so each bit is extracted via div+mod.
+    pi = 0;
+    while (pi < ephnum) {
+        var ph3 = fmap + ephoff + pi * ephent;
+        if (load32(ph3) == 1) {
+            var p_fl = load32(ph3 + 4);
+            var p_va2 = load64(ph3 + 16);
+            var p_mz2 = load64(ph3 + 40);
+            var prot = 0;
+            # PF_R (bit 2, value 4) → PROT_READ (value 1)
+            var r_half = p_fl / 4;
+            var r_quarter = r_half / 2;
+            if (r_half - r_quarter * 2 == 1) { prot = prot + 1; }
+            # PF_W (bit 1, value 2) → PROT_WRITE (value 2)
+            var w_half = p_fl / 2;
+            var w_quarter = w_half / 2;
+            if (w_half - w_quarter * 2 == 1) { prot = prot + 2; }
+            # PF_X (bit 0, value 1) → PROT_EXEC (value 4)
+            var x_half = p_fl / 2;
+            if (p_fl - x_half * 2 == 1) { prot = prot + 4; }
+            # Page-align vaddr down, length up
+            var vpg = p_va2 / 4096 * 4096;
+            var vend = (p_va2 + p_mz2 + 4095) / 4096 * 4096;
+            if (prot == 0) { prot = 1; }                # PROT_READ fallback
+            syscall(10, base + vpg, vend - vpg, prot);
+        }
+        pi = pi + 1;
+    }
+
+    # Munmap the file backing — we've copied what we need
+    cyr_munmap(fmap, fsize);
+
+    store64(out_info + 0,  base);
+    store64(out_info + 8,  base + eentry);
+    store64(out_info + 16, base + ephoff);
+    store64(out_info + 24, ephnum);
+    store64(out_info + 32, ephent);
+    return 0;
+}
+
+# ---------------------------------------------------------------
+# The callback the helper invokes after populating state slots.
+# Published address is passed to the helper via argv[2] (hex).
+# Flow: helper main → cb() → dl_longjmp back to the cyrius setjmp
+# frame. This fn never returns to the helper; helper's frames on
+# the constructed 64 KB stack are abandoned (intentional).
+# ---------------------------------------------------------------
+fn _fdlopen_cb(): i64 {
+    dl_longjmp(_fdlopen_state_global + 0, 1);
+    return 0;  # unreachable
+}
+
+# ---------------------------------------------------------------
+# Hex-encode a u64 into `out` as 16 lowercase hex chars + NUL.
+# Writes exactly 17 bytes.
+# ---------------------------------------------------------------
+fn _fdlopen_hex64(v, out): i64 {
+    var i = 15;
+    while (i >= 0) {
+        var d = v - (v / 16) * 16;
+        if (d < 10) {
+            store8(out + i, 48 + d);        # '0'..'9'
+        } else {
+            store8(out + i, 87 + d);        # 'a'..'f'  (97 - 10)
+        }
+        v = v / 16;
+        i = i - 1;
+    }
+    store8(out + 16, 0);
+    return 17;
+}
+
+# ---------------------------------------------------------------
+# Build the kernel-style startup stack at `region` (a 64 KB mmap'd
+# area). Returns the new RSP value (a pointer into region) or 0 on
+# failure. Layout (growing downward from region_top):
+#   [high]  string table: "helper_path\0state_hex\0cb_hex\0"
+#           + 16 bytes for AT_RANDOM (if we synth it)
+#   ...
+#   [low]   <- RSP -> argc, argv[0..2], NULL, envp NULL,
+#                     auxv pairs, AT_NULL
+# RSP must be 16-byte aligned at ld.so entry.
+# ---------------------------------------------------------------
+fn _fdlopen_build_stack(region, region_size, helper_info, ldso_info,
+auxv_buf, auxv_len, state_addr, cb_addr) {
+    var region_top = region + region_size;
+
+    # String table at the high end
+    var sptr = region_top;
+    # 16 random bytes for AT_RANDOM (synth — use address as entropy seed)
+    sptr = sptr - 16;
+    var rand_ptr = sptr;
+    var hi = 0;
+    while (hi < 16) {
+        store8(rand_ptr + hi, hi + 1);      # any deterministic fill
+        hi = hi + 1;
+    }
+
+    # cb_hex
+    sptr = sptr - 17;
+    var cb_hex_ptr = sptr;
+    _fdlopen_hex64(cb_addr, cb_hex_ptr);
+
+    # state_hex
+    sptr = sptr - 17;
+    var state_hex_ptr = sptr;
+    _fdlopen_hex64(state_addr, state_hex_ptr);
+
+    # helper_path
+    var pathbuf = alloc(512);
+    if (pathbuf == 0) { return 0; }
+    var pl = _fdlopen_helper_path(pathbuf, 512);
+    if (pl == 0) { return 0; }
+    sptr = sptr - (pl + 1);
+    var path_ptr = sptr;
+    var ci = 0;
+    while (ci < pl) {
+        store8(path_ptr + ci, load8(pathbuf + ci));
+        ci = ci + 1;
+    }
+    store8(path_ptr + pl, 0);
+
+    # Align string-table bottom to 16 bytes (downward)
+    sptr = sptr / 16 * 16;
+
+    # Space budget:
+    #   argc(1) + argv[0..2](3) + argv_null(1) + envp_null(1) = 6 u64
+    #   auxv pairs: 15 tag/value pairs + AT_NULL = 32 u64
+    #   Total 38 u64 = 304 bytes. Align down to 16.
+    var rsp = sptr - 304;
+    rsp = rsp / 16 * 16;
+
+    # Fill forward from rsp
+    var p = rsp;
+    store64(p, 3); p = p + 8;                          # argc
+    store64(p, path_ptr); p = p + 8;                   # argv[0]
+    store64(p, state_hex_ptr); p = p + 8;              # argv[1]
+    store64(p, cb_hex_ptr); p = p + 8;                 # argv[2]
+    store64(p, 0); p = p + 8;                          # argv terminator
+    store64(p, 0); p = p + 8;                          # envp (empty)
+
+    # auxv entries (tag, value). Tags needed by ld.so:
+    #   3 AT_PHDR, 4 AT_PHENT, 5 AT_PHNUM, 6 AT_PAGESZ, 7 AT_BASE,
+    #   8 AT_FLAGS, 9 AT_ENTRY, 11 AT_UID, 12 AT_EUID, 13 AT_GID,
+    #   14 AT_EGID, 16 AT_HWCAP, 23 AT_SECURE, 25 AT_RANDOM,
+    #   31 AT_EXECFN, 33 AT_SYSINFO_EHDR, 0 AT_NULL
+
+    store64(p, 3);  p = p + 8;
+    store64(p, load64(helper_info + 16)); p = p + 8;   # phdr
+    store64(p, 4);  p = p + 8;
+    store64(p, load64(helper_info + 32)); p = p + 8;   # phentsize
+    store64(p, 5);  p = p + 8;
+    store64(p, load64(helper_info + 24)); p = p + 8;   # phnum
+    store64(p, 6);  p = p + 8;
+    store64(p, 4096); p = p + 8;                       # AT_PAGESZ
+    store64(p, 7);  p = p + 8;
+    store64(p, load64(ldso_info + 0)); p = p + 8;      # AT_BASE
+    store64(p, 8);  p = p + 8;
+    store64(p, 0); p = p + 8;                          # AT_FLAGS = 0
+    store64(p, 9);  p = p + 8;
+    store64(p, load64(helper_info + 8)); p = p + 8;    # AT_ENTRY
+    # AT_UID / AT_EUID / AT_GID / AT_EGID — source from our auxv
+    store64(p, 11); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 11)); p = p + 8;
+    store64(p, 12); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 12)); p = p + 8;
+    store64(p, 13); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 13)); p = p + 8;
+    store64(p, 14); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 14)); p = p + 8;
+    store64(p, 16); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 16)); p = p + 8;  # AT_HWCAP
+    store64(p, 23); p = p + 8;
+    store64(p, 0); p = p + 8;                          # AT_SECURE=0 (regular exe)
+    store64(p, 25); p = p + 8;
+    var real_rnd = dynlib_auxv_get(auxv_buf, auxv_len, 25);
+    if (real_rnd == 0) { real_rnd = rand_ptr; }
+    store64(p, real_rnd); p = p + 8;                   # AT_RANDOM
+    store64(p, 31); p = p + 8;
+    store64(p, path_ptr); p = p + 8;                   # AT_EXECFN
+    store64(p, 33); p = p + 8;
+    store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 33)); p = p + 8;  # AT_SYSINFO_EHDR
+    store64(p, 0); p = p + 8;                          # AT_NULL tag
+    store64(p, 0); p = p + 8;                          # AT_NULL val
+
+    return rsp;
+}
+
+# ---------------------------------------------------------------
+# Enter ld.so with constructed startup stack. Never returns
+# normally — control rejoins the caller via dl_longjmp from the
+# helper callback.
+#
+# Args: ldso_entry (absolute address), new_rsp (pointer to argc)
+# ---------------------------------------------------------------
+fn _fdlopen_enter_ldso(ldso_entry, new_rsp): i64 {
+    # ldso_entry at [rbp-8], new_rsp at [rbp-16]
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8B; 0x45; 0xF8;        # mov rax, [rbp-8]   (ldso_entry)
+        0x48; 0x8B; 0x65; 0xF0;        # mov rsp, [rbp-16]  (new_rsp)
+        0x31; 0xD2;                    # xor edx, edx       (no atexit fn)
+        0xFF; 0xE0;                    # jmp rax
+    }
+    #endif
+    #endif
+    return 0;  # unreachable
+}
+
+# ---------------------------------------------------------------
+# Full orchestration. Returns 0 on success with state populated,
+# negative error code on failure.
+# ---------------------------------------------------------------
+fn _fdlopen_run_loader(state): i64 {
+    # Read /proc/self/auxv once
+    var auxv = alloc(4096);
+    if (auxv == 0) { return 0 - 3; }
+    var auxv_len = dynlib_read_auxv(auxv, 4096);
+    if (auxv_len <= 0) { return 0 - 5; }
+
+    # Resolve helper path
+    var hpath = alloc(512);
+    if (hpath == 0) { return 0 - 3; }
+    if (_fdlopen_helper_path(hpath, 512) == 0) { return 0 - 1; }
+
+    # Map helper ELF
+    var helper_info = alloc(64);
+    if (helper_info == 0) { return 0 - 3; }
+    var hr = _fdlopen_mmap_elf(hpath, helper_info);
+    if (hr != 0) { return hr; }
+
+    # Map ld.so (canonical path — future work: read helper's PT_INTERP)
+    var ldso_info = alloc(64);
+    if (ldso_info == 0) { return 0 - 3; }
+    var lr = _fdlopen_mmap_elf("/lib64/ld-linux-x86-64.so.2", ldso_info);
+    if (lr != 0) { return 0 - 2; }
+
+    # Allocate fresh 64 KB stack region
+    # (renamed from `stack` → `stk_region` in v5.5.36 because `stack`
+    # became a reserved keyword for stack-local array declarations)
+    var stack_sz = 0x10000;
+    var stk_region = syscall(9, 0, stack_sz, 3, 34, 0 - 1, 0);
+    if (stk_region < 0) { return 0 - 3; }
+
+    # Build startup stack layout
+    var cb_addr = &_fdlopen_cb;
+    var new_rsp = _fdlopen_build_stack(stk_region, stack_sz,
+    helper_info, ldso_info,
+    auxv, auxv_len,
+    state, cb_addr);
+    if (new_rsp == 0) { return 0 - 3; }
+
+    # Capture return state — longjmp from callback comes back here
+    var rt = dl_setjmp(state + 0);
+    if (rt == 0) {
+        # Direct call — fire the ld.so entry jump
+        _fdlopen_enter_ldso(load64(ldso_info + 8), new_rsp);
+        # If we returned from enter_ldso without longjmp, something
+        # went catastrophically wrong (ld.so exited, helper didn't
+        # invoke callback, etc.).
+        return 0 - 7;   # FDL_ERR_CALLBACK_FAILED
+    }
+
+    # rt != 0 means helper invoked callback and longjmp'd us back.
+    # Validate state was populated.
+    if (load64(state + 128) == 0) { return 0 - 7; }
+    return 0;
+}
+
+# Initialise the fdlopen state buffer. Shape-stable entry point.
+# As of v5.5.29 this returns FDL_ERR_UNINIT (-8) after the helper
+# probe — the full ld.so-entry orchestration lives in
+# `fdlopen_init_full` and is opt-in while the investigation
+# continues (see the log at the end of this file).
+fn fdlopen_init(state): i64 {
+    if (state == 0) { return 0 - 3; }
+    var i = 0;
+    while (i < 256) { store8(state + i, 0); i = i + 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    if (fdlopen_helper_available() == 0) {
+        store64(state + 216, 0 - 1);
+        return 0 - 1;
+    }
+    # Shape-stable return: orchestration callers must explicitly
+    # opt in via fdlopen_init_full.
+    store64(state + 216, 0 - 8);
+    return 0 - 8;
+    #endif
+    #endif
+    store64(state + 216, 0 - 6);
+    return 0 - 6;
+}
+
+# Opt-in full orchestration path. Runs the complete ld.so-entry
+# dance: mmaps helper + ld.so, constructs startup stack, setjmps,
+# jumps to ld.so entry. On success state status is set to 1 and
+# fn-pointer slots are populated; on failure returns a negative
+# error code.
+#
+# STATUS: complete since v5.5.34. The v5.5.29 attempts hit a
+# prot-bit encoding bug in `_fdlopen_mmap_elf` (PF_R / PF_X are
+# swapped relative to PROT_READ / PROT_EXEC); v5.5.34 fixed the
+# extraction and the full round-trip works — see the per-byte
+# reasoning at lines 405-413. `tests/tcyr/fdlopen.tcyr` exercises
+# the full path end-to-end (real `dlopen("libc.so.6")` →
+# `dlsym("getpid")` → `fncall0(...) == syscall(39)` round-trip).
+fn fdlopen_init_full(state): i64 {
+    if (state == 0) { return 0 - 3; }
+    var i = 0;
+    while (i < 256) { store8(state + i, 0); i = i + 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    if (fdlopen_helper_available() == 0) {
+        store64(state + 216, 0 - 1);
+        return 0 - 1;
+    }
+    _fdlopen_state_global = state;
+    var rc = _fdlopen_run_loader(state);
+    if (rc != 0) {
+        store64(state + 216, rc);
+        return rc;
+    }
+    store64(state + 216, 1);
+    return 0;
+    #endif
+    #endif
+    store64(state + 216, 0 - 6);
+    return 0 - 6;
+}
+
+# Return the fn pointer stored at `off` within a state buffer, or
+# 0 if the state is uninitialised.
+fn fdlopen_slot(state, off): i64 {
+    if (state == 0) { return 0; }
+    if (load64(state + 216) != 1) { return 0; }   # FDL_STATUS check
+    return load64(state + off);
+}
+
+# Returns fn pointer to real glibc `dlopen`, or 0 if state uninit.
+fn fdlopen_dlopen(state): i64 { return fdlopen_slot(state, 128); }
+# Returns fn pointer to real glibc `dlsym`, or 0 if state uninit.
+fn fdlopen_dlsym(state): i64 { return fdlopen_slot(state, 136); }
+# Returns fn pointer to real glibc `dlclose`, or 0 if state uninit.
+fn fdlopen_dlclose(state): i64 { return fdlopen_slot(state, 144); }
+# Returns fn pointer to real glibc `dlerror`, or 0 if state uninit.
+fn fdlopen_dlerror(state): i64 { return fdlopen_slot(state, 152); }
+# Returns fn pointer to real glibc `getaddrinfo`, or 0 if state uninit.
+fn fdlopen_getaddrinfo(state): i64 { return fdlopen_slot(state, 160); }
+# Returns fn pointer to real glibc `freeaddrinfo`, or 0 if state uninit.
+fn fdlopen_freeaddrinfo(state): i64 { return fdlopen_slot(state, 168); }
+# Returns fn pointer to real glibc `gai_strerror`, or 0 if state uninit.
+fn fdlopen_gai_strerror(state): i64 { return fdlopen_slot(state, 176); }
+# Returns fn pointer to real glibc `strerror`, or 0 if state uninit.
+fn fdlopen_strerror(state): i64 { return fdlopen_slot(state, 184); }
+# Returns fn pointer to real glibc `setlocale`, or 0 if state uninit.
+fn fdlopen_setlocale(state): i64 { return fdlopen_slot(state, 192); }
+# Returns fn pointer to real glibc `setenv`, or 0 if state uninit.
+fn fdlopen_setenv(state): i64 { return fdlopen_slot(state, 200); }
+# Returns fn pointer to real glibc `unsetenv`, or 0 if state uninit.
+fn fdlopen_unsetenv(state): i64 { return fdlopen_slot(state, 208); }
+
+# Report the status code in a state buffer (0 = uninit, 1 = init OK,
+# negative = FdlopenErr code from the last init attempt).
+fn fdlopen_status(state): i64 {
+    if (state == 0) { return 0 - 8; }  # FDL_ERR_UNINIT
+    return load64(state + 216);
+}

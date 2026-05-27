@@ -1,0 +1,23 @@
+# yeo-cy-test benchmarks
+# Stdlib auto-included via cyrius.cyml
+#
+# Pattern: bench_new -> bench_batch_start -> tight loop -> bench_batch_stop -> bench_report.
+# For sub-1us ops use batch_size >= 1000 to amortize clock_gettime overhead
+# (~240 ns per start/stop pair on x86_64 Linux). See lib/bench.cyr header for
+# the full overhead-vs-batching guidance.
+
+fn bench_noop(): i64 { return 0; }
+
+fn main(): i64 {
+    alloc_init();
+    var b = bench_new("noop");
+    bench_batch_start(b);
+    var i = 0;
+    while (i < 1000000) { bench_noop(); i = i + 1; }
+    bench_batch_stop(b, 1000000);
+    bench_report(b);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,342 @@
+# grp.cyr — pure-cyrius /etc/group reader (musl pattern).
+#
+# Companion to lib/pwd.cyr; same approach for /etc/group. Bypasses
+# glibc NSS. Parses the POSIX group(5) format:
+#
+#   name:passwd:gid:user1,user2,user3
+#
+# The members list is comma-separated and may be empty.
+#
+# Caller protocol — two buffers:
+#
+#   grrec — 24 bytes:
+#              +0  gid    (i64)
+#              +8  name   (cstr ptr into strbuf)
+#              +16 passwd (cstr ptr)
+#   strbuf — scratch for name/passwd/members. 1024 bytes typical.
+#
+# Members are NOT stored in grrec; they're queried separately via
+# grp_getgrouplist (which walks /etc/group enumerating every group
+# that lists `user` as a member). This matches the glibc surface
+# most consumers actually need.
+#
+# Return values:
+#     1  — found; grrec + strbuf populated
+#     0  — not found
+#    -1  — /etc/group not readable
+#    -2  — strbuf too small
+
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+
+var GRP_BUF_MAX = 0x20000;
+
+var _grp_buf = 0;
+var _grp_buf_len = 0;
+
+# Force a re-read of /etc/group on the next lookup. Use after
+# editing the file (e.g. `groupadd` from cyrius tooling).
+# No current downstream caller (audited v5.11.21); part of the
+# NSS cache-invalidation trio (pwd / grp / shadow) — intended
+# consumer is agnos / kavach user-management primitives. Trio
+# stays as a coherent surface; revisit at v6.0.0 dead-code sweep
+# if no claimant. See docs/audit/2026-05-11-zero-call-stdlib.md.
+fn grp_invalidate_cache(): i64 {
+    _grp_buf_len = 0;
+    return 0;
+}
+
+fn _grp_load(): i64 {
+    if (_grp_buf_len > 0) { return _grp_buf; }
+    if (_grp_buf == 0) { _grp_buf = alloc(GRP_BUF_MAX); }
+    if (_grp_buf == 0) { return 0; }
+    var n = file_read_all("/etc/group", _grp_buf, GRP_BUF_MAX);
+    if (n <= 0) { return 0; }
+    _grp_buf_len = n;
+    return _grp_buf;
+}
+
+# Decimal parse. Same packed return format as lib/pwd.cyr:
+# high 32 bits = value, low 32 bits = bytes consumed.
+fn _grp_atoi_span(p, end): i64 {
+    var v = 0;
+    var i = 0;
+    while (p + i < end) {
+        var c = load8(p + i);
+        if (c < 48) { break; }
+        if (c > 57) { break; }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    return (v << 32) | i;
+}
+
+fn _grp_stash(p, n, strbuf, soff_ptr, strbufsz): i64 {
+    var soff = load64(soff_ptr);
+    if (soff + n + 1 > strbufsz) { return 0 - 1; }
+    var dst = strbuf + soff;
+    memcpy(dst, p, n);
+    store8(dst + n, 0);
+    store64(soff_ptr, soff + n + 1);
+    return dst;
+}
+
+# Parse one /etc/group line. Only fills the first three fields
+# (name / passwd / gid) — the members-list field is walked
+# separately by grp_getgrouplist via _grp_line_has_member.
+fn _grp_parse_header(line_start, line_end, grrec, strbuf, strbufsz): i64 {
+    var soff_store[8];
+    store64(&soff_store, 0);
+
+    var field_starts[4];
+    var field_idx = 0;
+    store64(&field_starts, line_start);
+
+    var p = line_start;
+    while (p < line_end) {
+        if (load8(p) == 58) {
+            field_idx = field_idx + 1;
+            if (field_idx > 3) { return 0; }
+            store64(&field_starts + field_idx * 8, p + 1);
+        }
+        p = p + 1;
+    }
+    if (field_idx != 3) { return 0; }
+
+    var f0_s = load64(&field_starts);
+    var f0_e = load64(&field_starts + 8) - 1;    # name
+    var f1_s = load64(&field_starts + 8);
+    var f1_e = load64(&field_starts + 16) - 1;   # passwd
+    var f2_s = load64(&field_starts + 16);
+    var f2_e = load64(&field_starts + 24) - 1;   # gid
+
+    var gid_pack = _grp_atoi_span(f2_s, f2_e);
+    var gid = gid_pack >> 32;
+
+    var name_p = _grp_stash(f0_s, f0_e - f0_s, strbuf, &soff_store, strbufsz);
+    if (name_p < 0) { return 0 - 2; }
+    var pass_p = _grp_stash(f1_s, f1_e - f1_s, strbuf, &soff_store, strbufsz);
+    if (pass_p < 0) { return 0 - 2; }
+
+    store64(grrec,      gid);
+    store64(grrec + 8,  name_p);
+    store64(grrec + 16, pass_p);
+    return 1;
+}
+
+fn _grp_find(matcher, ctx, grrec, strbuf, strbufsz): i64 {
+    var buf = _grp_load();
+    if (buf == 0) { return 0 - 1; }
+    var end = buf + _grp_buf_len;
+    var p = buf;
+    while (p < end) {
+        var line_end = p;
+        while (line_end < end) {
+            if (load8(line_end) == 10) { break; }
+            line_end = line_end + 1;
+        }
+        if (line_end > p) {
+            if (load8(p) != 35) {
+                var rc = _grp_parse_header(p, line_end, grrec, strbuf, strbufsz);
+                if (rc < 0) { return rc; }
+                if (rc == 1) {
+                    if (fncall2(matcher, grrec, ctx) == 1) {
+                        return 1;
+                    }
+                }
+            }
+        }
+        p = line_end + 1;
+    }
+    return 0;
+}
+
+fn _grp_match_gid(grrec, ctx): i64 {
+    if (load64(grrec) == ctx) { return 1; }
+    return 0;
+}
+
+fn _grp_match_name(grrec, ctx): i64 {
+    var name = load64(grrec + 8);
+    var i = 0;
+    while (1 == 1) {
+        var a = load8(name + i);
+        var b = load8(ctx + i);
+        if (a != b) { return 0; }
+        if (a == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Look up a group record by numeric gid.
+fn grp_getgrgid(gid, grrec, strbuf, strbufsz): i64 {
+    return _grp_find(&_grp_match_gid, gid, grrec, strbuf, strbufsz);
+}
+
+# Look up a group record by name (null-terminated cstring).
+fn grp_getgrnam(name, grrec, strbuf, strbufsz): i64 {
+    return _grp_find(&_grp_match_name, name, grrec, strbuf, strbufsz);
+}
+
+# v5.8.31 — GrpError variants (mirrors PwdError shape).
+include "lib/result.cyr"
+
+enum GrpError {
+    GrpNotFound;
+    GrpLoadFailed;
+    GrpBufTooSmall;
+    GrpOther;
+}
+
+# v5.8.31 — Result variant of grp_getgrgid.
+fn grp_getgrgid_r(gid, grrec, strbuf, strbufsz) : Result {
+    var rc = grp_getgrgid(gid, grrec, strbuf, strbufsz);
+    if (rc == 1)      { return Ok(0); }
+    if (rc == 0)      { return Err(GrpNotFound); }
+    if (rc == 0 - 1)  { return Err(GrpLoadFailed); }
+    if (rc == 0 - 2)  { return Err(GrpBufTooSmall); }
+    return Err(GrpOther);
+}
+
+# v5.8.31 — Result variant of grp_getgrnam.
+fn grp_getgrnam_r(name, grrec, strbuf, strbufsz) : Result {
+    var rc = grp_getgrnam(name, grrec, strbuf, strbufsz);
+    if (rc == 1)      { return Ok(0); }
+    if (rc == 0)      { return Err(GrpNotFound); }
+    if (rc == 0 - 1)  { return Err(GrpLoadFailed); }
+    if (rc == 0 - 2)  { return Err(GrpBufTooSmall); }
+    return Err(GrpOther);
+}
+
+# Walk the members field of a single line and check whether
+# `user` (null-terminated cstring) is listed.
+fn _grp_line_has_member(line_start, line_end, user): i64 {
+    # Find the 4th field (after 3 colons)
+    var colons = 0;
+    var p = line_start;
+    while (p < line_end) {
+        if (load8(p) == 58) {
+            colons = colons + 1;
+            if (colons == 3) { p = p + 1; break; }
+        }
+        p = p + 1;
+    }
+    if (colons != 3) { return 0; }
+
+    # Scan comma-separated members
+    var member_start = p;
+    while (p <= line_end) {
+        var at_end = 0;
+        if (p == line_end) { at_end = 1; }
+        else {
+            if (load8(p) == 44) { at_end = 1; }  # ','
+        }
+        if (at_end == 1) {
+            # Compare [member_start, p) against user
+            var len = p - member_start;
+            var i = 0;
+            var hit = 1;
+            while (i < len) {
+                if (load8(member_start + i) != load8(user + i)) { hit = 0; }
+                i = i + 1;
+            }
+            # user must be exactly this length (null term at i)
+            if (hit == 1) {
+                if (load8(user + len) == 0) { return 1; }
+            }
+            member_start = p + 1;
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# Populate caller-provided `gid_buf` (an i64 array of `max` slots)
+# with every gid that lists `user` as a member, OR that matches
+# `primary_gid`. Returns the number of gids written (always ≥ 1
+# if primary_gid is included), or a negative error.
+#
+# Matches glibc's getgrouplist semantics: the primary group is
+# always included, followed by supplementary groups from /etc/group.
+#
+# Errors:
+#    -1  — /etc/group not readable
+#    -2  — gid_buf too small (returns -(n+2) where n is the count
+#          that would have been written; caller can realloc and
+#          retry)
+fn grp_getgrouplist(user, primary_gid, gid_buf, max): i64 {
+    var buf = _grp_load();
+    if (buf == 0) { return 0 - 1; }
+
+    if (max < 1) { return 0 - 2; }
+    store64(gid_buf, primary_gid);
+    var count = 1;
+
+    var end = buf + _grp_buf_len;
+    var p = buf;
+    while (p < end) {
+        var line_end = p;
+        while (line_end < end) {
+            if (load8(line_end) == 10) { break; }
+            line_end = line_end + 1;
+        }
+        if (line_end > p) {
+            if (load8(p) != 35) {
+                if (_grp_line_has_member(p, line_end, user) == 1) {
+                    # Extract this line's gid (3rd field)
+                    var colons = 0;
+                    var q = p;
+                    var gid_start = 0;
+                    while (q < line_end) {
+                        if (load8(q) == 58) {
+                            colons = colons + 1;
+                            if (colons == 2) { gid_start = q + 1; q = q + 1; break; }
+                        }
+                        q = q + 1;
+                    }
+                    if (gid_start != 0) {
+                        # scan until next colon
+                        var gid_end = gid_start;
+                        while (gid_end < line_end) {
+                            if (load8(gid_end) == 58) { break; }
+                            gid_end = gid_end + 1;
+                        }
+                        var gpack = _grp_atoi_span(gid_start, gid_end);
+                        var g = gpack >> 32;
+                        if (g != primary_gid) {
+                            if (count >= max) { return 0 - 2; }
+                            store64(gid_buf + count * 8, g);
+                            count = count + 1;
+                        }
+                    }
+                }
+            }
+        }
+        p = line_end + 1;
+    }
+    return count;
+}
+
+# Return the numeric gid from a parsed grrec.
+fn grp_gid(grrec): i64 { return load64(grrec); }
+# Return the group name cstring (points into strbuf).
+fn grp_name(grrec): i64 { return load64(grrec + 8); }
+# Return the group passwd field (rarely used; usually "x").
+fn grp_passwd(grrec) : i64 { return load64(grrec + 16); }
+
+# v5.8.31 — Result variant of grp_getgrouplist.
+# Returns Ok(count) on success; Err on failure. The legacy
+# fn's overflow-as-negative `-(n+2)` encoding collapses to
+# Err(GrpBufTooSmall) here — callers needing the would-have-
+# been count fall back to the int-returning fn.
+fn grp_getgrouplist_r(user, primary_gid, gid_buf, max) : Result {
+    var rc = grp_getgrouplist(user, primary_gid, gid_buf, max);
+    if (rc >= 0)      { return Ok(rc); }
+    if (rc == 0 - 1)  { return Err(GrpLoadFailed); }
+    if (rc == 0 - 2)  { return Err(GrpBufTooSmall); }
+    if (rc <= 0 - 3)  { return Err(GrpBufTooSmall); }
+    return Err(GrpOther);
+}

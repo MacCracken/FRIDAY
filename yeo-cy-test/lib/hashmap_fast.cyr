@@ -1,0 +1,339 @@
+# hashmap_fast.cyr — SIMD-accelerated hash table (Swiss table inspired)
+# Usage: include "lib/hashmap_fast.cyr"
+# Requires: alloc.cyr, string.cyr, fnptr.cyr
+#
+# **Status (v5.8.62 audit): experimental, zero consumers.** Not in
+# cyrius.cyml's `[deps].stdlib` auto-prepend, not included by any
+# tcyr / program / sibling-distfile. Production code uses
+# `lib/hashmap.cyr` (open-addressing, 3 key-type surfaces). Kept in
+# tree as a future optimization candidate — promote to stdlib only
+# once a consumer benchmarks a measurable win over hashmap.cyr;
+# pinned for re-evaluation in the pre-v6.0 hardening sweep.
+#
+# Layout: separate metadata array (1 byte per slot) + key/value
+# arrays (8 bytes each).
+# Metadata byte: 0x00 = empty, 0xFF = tombstone, 0x01-0xFE = H2
+# hash (top 7 bits + 1).
+# Probe: load 16 metadata bytes → SSE2 pcmpeqb → pmovmskb →
+# bitmask of matches.
+# Group size: 16 (one SSE2 register). Linear probing within group,
+# then next group.
+
+include "lib/fnptr.cyr"
+
+# FNV-1a hash for null-terminated string (same as hashmap.cyr)
+fn _fhm_hash(s): i64 {
+    if (s == 0) { return 0; }
+    var h = 0xCBF29CE484222325;
+    var hi = 0;
+    while (load8(s + hi) != 0) {
+        h = h ^ load8(s + hi);
+        h = h * 0x100000001B3;
+        hi = hi + 1;
+    }
+    return h;
+}
+
+var _FHM_EMPTY = 0;
+var _FHM_TOMB = 255;
+
+# Compute H2 (metadata hash): top 7 bits of hash, +1 to avoid 0x00
+fn _fhm_h2(h): i64 { return ((h >> 57) & 0x7F) + 1; }
+
+# Create a new fast hashmap (capacity must be multiple of 16, minimum 16)
+fn fhm_new(): i64 {
+    var m = alloc(40);
+    var cap = 16;
+    var meta = alloc(cap);
+    var keys = alloc(cap * 8);
+    var vals = alloc(cap * 8);
+    memset(meta, 0, cap);
+    store64(m, meta);
+    store64(m + 8, keys);
+    store64(m + 16, vals);
+    store64(m + 24, cap);
+    store64(m + 32, 0);
+    return m;
+}
+
+# Return the current capacity
+fn fhm_cap(m): i64 { return load64(m + 24); }
+# Return the number of occupied entries
+fn fhm_count(m): i64 { return load64(m + 32); }
+
+# SIMD probe: find slot matching h2 byte in a 16-byte group at meta+offset.
+# Uses SSE2: movdqu → pcmpeqb → pmovmskb → bitmask.
+# Returns bitmask (each bit = 1 if meta byte matches h2).
+fn _fhm_probe16(meta, offset, h2): i64 {
+    var result = 0;
+    # Load 16 metadata bytes into xmm0
+    # Broadcast h2 into xmm1
+    # pcmpeqb xmm0, xmm1
+    # pmovmskb eax, xmm0
+    asm {
+        # movdqu xmm0, [rdi]  — rdi = meta + offset (1st arg)
+        # We need meta+offset in a register. It's param 0 + param 1.
+        # Params: meta=[rbp-8], offset=[rbp-16], h2=[rbp-24], result=[rbp-32]
+
+        # mov rax, [rbp-8]    ; meta
+        0x48; 0x8B; 0x45; 0xF8;
+        # add rax, [rbp-16]   ; + offset
+        0x48; 0x03; 0x45; 0xF0;
+        # movdqu xmm0, [rax]
+        0xF3; 0x0F; 0x6F; 0x00;
+
+        # movd xmm1, [rbp-24] ; h2 (low byte)
+        0x66; 0x0F; 0x6E; 0x4D; 0xE8;
+        # punpcklbw xmm1, xmm1  (broadcast byte 0 to all 16)
+        0x66; 0x0F; 0x60; 0xC9;
+        # punpcklwd xmm1, xmm1
+        0x66; 0x0F; 0x61; 0xC9;
+        # pshufd xmm1, xmm1, 0x00
+        0x66; 0x0F; 0x70; 0xC9; 0x00;
+
+        # pcmpeqb xmm0, xmm1
+        0x66; 0x0F; 0x74; 0xC1;
+        # pmovmskb eax, xmm0
+        0x66; 0x0F; 0xD7; 0xC0;
+        # mov [rbp-32], rax    ; result
+        0x48; 0x89; 0x45; 0xE0;
+    }
+    return result;
+}
+
+# Find empty slot bitmask in 16-byte group
+fn _fhm_empty16(meta, offset): i64 {
+    return _fhm_probe16(meta, offset, 0);
+}
+
+# Find index of lowest set bit in bitmask
+fn _fhm_ctz(mask): i64 {
+    var bit = 0;
+    var tmp = mask;
+    while ((tmp & 1) == 0) { bit = bit + 1; tmp = tmp >> 1; }
+    return bit;
+}
+
+# Get value by key. Returns value or 0 if not found.
+fn fhm_get(m, key): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var vals = load64(m + 16);
+    var cap = load64(m + 24);
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        # SIMD probe: check 16 slots at once
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) {
+                return load64(vals + si * 8);
+            }
+            mask = mask & (mask - 1);
+        }
+        # Check if group has any empty slots (no point continuing if so)
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) { return 0; }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return 0;
+}
+
+# Get value with default. Returns value or default_val if not found.
+fn fhm_get_or(m, key, default_val): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var vals = load64(m + 16);
+    var cap = load64(m + 24);
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) {
+                return load64(vals + si * 8);
+            }
+            mask = mask & (mask - 1);
+        }
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) { return default_val; }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return default_val;
+}
+
+# Alias for fhm_count
+fn fhm_size(m): i64 { return load64(m + 32); }
+
+# Set key-value pair
+fn fhm_set(m, key, val): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var vals = load64(m + 16);
+    var cap = load64(m + 24);
+    var count = load64(m + 32);
+    # Grow at 87.5% load (14/16 per group)
+    if (count * 8 >= cap * 7) {
+        _fhm_grow(m);
+        meta = load64(m);
+        keys = load64(m + 8);
+        vals = load64(m + 16);
+        cap = load64(m + 24);
+    }
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        # Check for existing key
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) {
+                store64(vals + si * 8, val);
+                return 0;
+            }
+            mask = mask & (mask - 1);
+        }
+        # Find empty slot
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) {
+            var si = idx + _fhm_ctz(empty);
+            store8(meta + si, h2);
+            store64(keys + si * 8, key);
+            store64(vals + si * 8, val);
+            store64(m + 32, count + 1);
+            return 0;
+        }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return 0;
+}
+
+# Grow the table (double capacity)
+fn _fhm_grow(m): i64 {
+    var old_meta = load64(m);
+    var old_keys = load64(m + 8);
+    var old_vals = load64(m + 16);
+    var old_cap = load64(m + 24);
+    var new_cap = old_cap * 2;
+    var new_meta = alloc(new_cap);
+    var new_keys = alloc(new_cap * 8);
+    var new_vals = alloc(new_cap * 8);
+    memset(new_meta, 0, new_cap);
+    store64(m, new_meta);
+    store64(m + 8, new_keys);
+    store64(m + 16, new_vals);
+    store64(m + 24, new_cap);
+    store64(m + 32, 0);
+    # Reinsert all entries
+    var oi = 0;
+    while (oi < old_cap) {
+        var st = load8(old_meta + oi);
+        if (st != 0) {
+            if (st != 255) {
+                fhm_set(m, load64(old_keys + oi * 8), load64(old_vals + oi * 8));
+            }
+        }
+        oi = oi + 1;
+    }
+    return 0;
+}
+
+# Check if key exists. Returns 1 or 0.
+fn fhm_has(m, key): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = load64(m + 24);
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) { return 1; }
+            mask = mask & (mask - 1);
+        }
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) { return 0; }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return 0;
+}
+
+# Delete key. Returns 1 if found, 0 if not.
+fn fhm_delete(m, key): i64 {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = load64(m + 24);
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) {
+                store8(meta + si, 255);
+                store64(m + 32, load64(m + 32) - 1);
+                return 1;
+            }
+            mask = mask & (mask - 1);
+        }
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) { return 0; }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return 0;
+}
+
+# Get all keys as a vec
+fn fhm_keys(m): i64 {
+    var result = vec_new();
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = load64(m + 24);
+    var i = 0;
+    while (i < cap) {
+        var st = load8(meta + i);
+        if (st != 0) { if (st != 255) { vec_push(result, load64(keys + i * 8)); } }
+        i = i + 1;
+    }
+    return result;
+}
+
+# Get all values as a vec
+fn fhm_values(m): i64 {
+    var result = vec_new();
+    var meta = load64(m);
+    var vals = load64(m + 16);
+    var cap = load64(m + 24);
+    var i = 0;
+    while (i < cap) {
+        var st = load8(meta + i);
+        if (st != 0) { if (st != 255) { vec_push(result, load64(vals + i * 8)); } }
+        i = i + 1;
+    }
+    return result;
+}
+
+# Clear all entries
+fn fhm_clear(m): i64 {
+    memset(load64(m), 0, load64(m + 24));
+    store64(m + 32, 0);
+    return 0;
+}

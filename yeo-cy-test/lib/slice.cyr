@@ -1,0 +1,327 @@
+# slice.cyr — first-class slice (16-byte {ptr, len}) helpers.
+#
+# v5.8.10 §2: complements parser-side slice<T> / [T] type
+# annotations (parse_decl.cyr's PARSE_VAR scalar_type=16 path).
+# A slice is a 16-byte stack-local slot:
+#   offset 0: ptr (i64) — pointer to first element
+#   offset 8: len (i64) — element count
+#
+# v5.8.15 §7: bounds-aware indexing — `s[i]` on a slice-typed
+# local lowers to `_slice_idx_get_W(&s, i)` where W is the
+# element byte-width tracked at PARSE_VAR time (v5.8.14 §6's
+# GSLICE_W). Each helper reads s.len, traps on out-of-range
+# (idx < 0 OR idx >= len), then loads the element via the
+# correct sized load. Bounds checks are default-on for safety;
+# the slice_unchecked_get_W variants opt out for perf hot
+# paths (consumer's responsibility to guarantee in-range).
+#
+# Element-width selection happens at parse time — each `s[i]`
+# call site emits a call to the helper matching s's element
+# width (1/2/4/8/16). On bounds violation, helpers print
+# `slice bounds violation\n` to stderr and exit 134.
+
+include "lib/syscalls.cyr"
+#
+# All helpers take a slice POINTER (`&s`), mirroring the u128 /
+# struct-by-pointer convention that pervades cyrius's stdlib.
+# Field access via dot syntax (`s.ptr` / `s.len`) is NOT yet
+# wired — that's a future polish slot. For now, use the
+# slice_ptr() / slice_len() accessors.
+#
+# Element-type tracking is intentionally absent in §2: the
+# parser's `slice<T>` / `[T]` annotation accepts any T (i8, i16,
+# i32, i64, u128, *T) but doesn't propagate T to runtime. A
+# slice over u8 looks structurally identical to a slice over
+# i64 — consumers must remember the element width and use
+# load8/load16/load32/load64 accordingly. Element-typed indexing
+# (`s[i]` lowers to load* of correct width) lands in a follow-up
+# slot if a consumer needs it.
+#
+# Usage:
+#   var data[5];
+#   store8(&data, 65);  store8(&data + 1, 66);  ...
+#   var s: [u8] = 0;
+#   slice_set(&s, &data, 5);
+#   var p = slice_ptr(&s);   # &data
+#   var n = slice_len(&s);   # 5
+#   var first = load8(p);    # 65
+#
+# Builder convenience:
+#   var s: [u8] = 0;  slice_of(&s, &data, 5);   # same as slice_set
+
+# Initialize slice in-place. Returns 0.
+fn slice_set(s, ptr, len): i64 {
+    store64(s, ptr);
+    store64(s + 8, len);
+    return 0;
+}
+
+# Builder alias for slice_set — reads as `slice_of(&s, buf, n)`.
+fn slice_of(s, ptr, len): i64 {
+    return slice_set(s, ptr, len);
+}
+
+# Read the ptr field.
+fn slice_ptr(s): i64 {
+    return load64(s);
+}
+
+# Read the len field.
+fn slice_len(s): i64 {
+    return load64(s + 8);
+}
+
+# Zero both fields. Equivalent to slice_set(s, 0, 0).
+fn slice_zero(s): i64 {
+    store64(s, 0);
+    store64(s + 8, 0);
+    return 0;
+}
+
+# Copy src slice into dst (both pointers to 16-byte slots).
+fn slice_copy(dst, src): i64 {
+    store64(dst, load64(src));
+    store64(dst + 8, load64(src + 8));
+    return 0;
+}
+
+# Two slices equal iff both ptr and len match. Note this is
+# pointer-equality, not content-equality — slice_eq_content is
+# a future addition if a consumer needs it.
+fn slice_eq(a, b): i64 {
+    if (load64(a) != load64(b)) { return 0; }
+    if (load64(a + 8) != load64(b + 8)) { return 0; }
+    return 1;
+}
+
+# True iff the slice has zero length. ptr may still be non-null.
+fn slice_is_empty(s): i64 {
+    if (load64(s + 8) == 0) { return 1; }
+    return 0;
+}
+
+# True iff the slice is null-pointer (ptr == 0). Distinct from
+# is_empty: a non-null slice with len=0 is "empty but allocated";
+# a null slice is "no allocation at all".
+fn slice_is_null(s): i64 {
+    if (load64(s) == 0) { return 1; }
+    return 0;
+}
+
+# v5.8.11 §3: Str ↔ slice<u8> structural equivalence.
+#
+# `Str` (lib/str.cyr) is a heap-allocated 16-byte handle with
+# `data` at offset 0 and `len` at offset 8 — byte-identical to
+# this file's stack-slice convention. Consequence: a `Str`-typed
+# value can be passed DIRECTLY to any of the slice helpers above
+# (slice_ptr / slice_len / slice_eq / slice_is_empty / etc.).
+# The semantic difference is lifetime — Str sits in heap (alive
+# until the bump-allocator resets); a stack slice is fn-frame-
+# scoped. Field layouts are identical.
+#
+# This pair of builders writes a slice INTO an existing
+# stack-allocated 16-byte slot, equivalent to the heap-allocating
+# `str_from(cstr)` / `str_new(data, len)` shape but without the
+# allocation:
+
+# Initialize stack slice from a C-style null-terminated string.
+# Mirrors `str_from(cstr)` (lib/str.cyr) but writes into the
+# pre-allocated `dst` slot instead of heap-allocing 16 bytes.
+fn slice_from_cstr(dst, cstr): i64 {
+    # Inline strlen — avoid pulling lib/string.cyr just for this.
+    var n = 0;
+    while (load8(cstr + n) != 0) { n = n + 1; }
+    store64(dst, cstr);
+    store64(dst + 8, n);
+    return 0;
+}
+
+# Initialize stack slice from a (buf, len) pair.
+# Mirrors `str_new(data, len)` (lib/str.cyr) but writes into the
+# pre-allocated `dst` slot. Equivalent to slice_set; alias kept
+# for symmetry with the str_* family.
+fn slice_from_buf(dst, buf, len): i64 {
+    return slice_set(dst, buf, len);
+}
+
+# v5.8.12 §4: vec ↔ slice<T> structural-prefix equivalence.
+#
+# `vec` (lib/vec.cyr) is a heap-allocated 24-byte handle:
+#   offset 0:  data (ptr to backing array)
+#   offset 8:  len  (element count)
+#   offset 16: cap  (allocated capacity)
+#
+# The FIRST 16 BYTES of a vec are byte-identical to this file's
+# slice convention — `data` at offset 0, `len` at offset 8. So a
+# vec value can be passed directly to slice_ptr / slice_len /
+# slice_is_empty / slice_is_null (all of which read offsets 0
+# and 8 only and don't touch offset 16+).
+#
+# slice_eq on a vec works too (compares both ptr and len fields)
+# but ignores cap differences — two vecs with the same data
+# pointer and length compare equal even with different capacities.
+# Usually what you want when comparing "current contents".
+#
+# `vec_as_slice(dst, v)` writes vec's slice-prefix into a stack
+# slot — useful when you want to expose a vec's current view as
+# a slice without exposing the cap field (or when you want a
+# stable snapshot before a future vec_push grows the backing).
+
+# Copy vec's slice-prefix (data, len) into a 16-byte stack slot.
+# Result: dst points at the SAME backing array as v; mutations
+# through `vec_push(v, ...)` may invalidate dst's ptr if the
+# backing reallocs. Treat as a snapshot of v's current view.
+fn vec_as_slice(dst, v): i64 {
+    store64(dst, load64(v));
+    store64(dst + 8, load64(v + 8));
+    return 0;
+}
+
+# v5.8.15 §7: bounds-aware indexing helpers.
+#
+# Each `_slice_idx_get_W` helper takes (s_addr, idx), validates
+# idx is in [0, s.len), and returns the element via the W-byte
+# load. PARSE_FACTOR's slice-subscript path emits a call to the
+# helper matching the slice's tracked element width (GSLICE_W
+# from v5.8.14 §6). On out-of-range, prints to stderr and
+# exits 134.
+#
+# `slice_unchecked_get_W` variants skip the bounds check —
+# consumer must guarantee 0 <= idx < s.len. Faster but unsafe.
+
+fn _slice_bounds_trap(): i64 {
+    sys_write(2, "slice bounds violation\n", 23);
+    sys_exit(134);
+    return 0;
+}
+
+# Width-1: u8 / i8 elements. Returns zero-extended byte value.
+fn _slice_idx_get_1(s_addr, idx): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load8(load64(s_addr) + idx);
+}
+
+# Width-2: u16 / i16 elements.
+fn _slice_idx_get_2(s_addr, idx): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load16(load64(s_addr) + idx * 2);
+}
+
+# Width-4: u32 / i32 elements.
+fn _slice_idx_get_4(s_addr, idx): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load32(load64(s_addr) + idx * 4);
+}
+
+# Width-8: i64 / u64 / pointer elements.
+fn _slice_idx_get_8(s_addr, idx): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load64(load64(s_addr) + idx * 8);
+}
+
+# Width-16: u128 / struct-16 elements. Returns POINTER to the
+# 16-byte slot (consumer uses load64 / u128_* ops to read it).
+# u128 can't be returned by-value through cyrius's i64-only ABI.
+fn _slice_idx_get_16(s_addr, idx): i64 {
+    var len = load64(s_addr + 8);
+    if (idx < 0) { _slice_bounds_trap(); }
+    if (idx >= len) { _slice_bounds_trap(); }
+    return load64(s_addr) + idx * 16;
+}
+
+# Unchecked variants — same shape, no bounds check. Caller's
+# responsibility to guarantee 0 <= idx < s.len. Useful inside
+# already-checked loops or perf hot paths where the bounds check
+# dominates.
+
+# Width-1 unchecked: u8 / i8 element load. No bounds verification.
+fn slice_unchecked_get_1(s_addr, idx): i64 {
+    return load8(load64(s_addr) + idx);
+}
+
+# Width-2 unchecked: u16 / i16 element load. No bounds verification.
+fn slice_unchecked_get_2(s_addr, idx): i64 {
+    return load16(load64(s_addr) + idx * 2);
+}
+
+# Width-4 unchecked: u32 / i32 element load. No bounds verification.
+fn slice_unchecked_get_4(s_addr, idx): i64 {
+    return load32(load64(s_addr) + idx * 4);
+}
+
+# Width-8 unchecked: i64 / u64 / pointer element load. No bounds verification.
+fn slice_unchecked_get_8(s_addr, idx): i64 {
+    return load64(load64(s_addr) + idx * 8);
+}
+
+# Width-16 unchecked: returns pointer to u128 / struct-16 slot. No bounds verification.
+fn slice_unchecked_get_16(s_addr, idx): i64 {
+    return load64(s_addr) + idx * 16;
+}
+
+# v5.8.18 §10 — slice-typed wrappers around the canonical
+# raw-pointer stdlib helpers (sys_read / memcpy / memeq).
+#
+# These let new code take slice arguments instead of raw
+# `(ptr, len)` pairs WITHOUT requiring a sweep of every
+# existing call site at the moment a fn migrates. The
+# canonical helpers in lib/string.cyr / lib/syscalls.cyr stay
+# as the (ptr, len) primitives — these wrappers just unpack a
+# slice into the (ptr, len) shape and forward.
+#
+# Adoption pattern:
+#   - Stdlib fn that takes a buffer + length and is being
+#     re-typed: change the signature from `(buf, len)` to
+#     `(buf: [u8])` (or `slice<u8>`). Inside the fn,
+#     `slice_len(&buf)` and `slice_data(&buf)` (or `buf.len`
+#     and `buf.ptr` once §8 dot syntax applies) replace the
+#     two args. Calls to memcpy / memeq that were `memcpy(dst,
+#     src, n)` become `slice_copy_bytes(&dst, &src)` (the
+#     wrapper does the min-length picking).
+#   - New stdlib fns can either start with the slice signature
+#     directly (cleaner) or use the (ptr, len) primitive for
+#     parity with neighbouring code — the wrapper is here for
+#     consumers who want the slice shape.
+#
+# All three wrappers take SLICE POINTERS (`&s`) so they
+# compose with the rest of the slice helper API; there's no
+# "by-value slice" calling convention in cyrius.
+
+# Read up to s.len bytes from fd into s.data. Returns the
+# byte count read (or negative errno). Convenience wrapper
+# around sys_read for slice-typed buffers.
+fn sys_read_slice(fd, s): i64 {
+    return sys_read(fd, load64(s), load64(s + 8));
+}
+
+# Copy min(dst.len, src.len) bytes from src.data to dst.data.
+# Returns the byte count copied. Truncates against the
+# shorter slice rather than overrunning (canonical memcpy(n)
+# can't enforce this — caller has to compute min upfront).
+fn slice_copy_bytes(dst, src): i64 {
+    var dn = load64(dst + 8);
+    var sn = load64(src + 8);
+    var n = dn;
+    if (sn < n) { n = sn; }
+    memcpy(load64(dst), load64(src), n);
+    return n;
+}
+
+# Compare two slices' byte contents. Returns 1 on equal, 0
+# otherwise. Length-mismatched slices are unequal by
+# definition (no prefix-match semantics — use a different
+# helper if that's the intent).
+fn slice_eq_bytes(a, b): i64 {
+    var an = load64(a + 8);
+    var bn = load64(b + 8);
+    if (an != bn) { return 0; }
+    return memeq(load64(a), load64(b), an);
+}

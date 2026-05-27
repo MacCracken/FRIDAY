@@ -1,0 +1,306 @@
+# pwd.cyr — pure-cyrius /etc/passwd reader (musl pattern).
+#
+# Bypasses glibc NSS entirely. Parses /etc/passwd directly, same
+# way musl libc does for its entire identity surface. This is
+# Path A from docs/development/issues/dynlib-nss-bootstrap.md
+# — the v5.5.26 half of the three-patch NSS real-fix arc
+# (v5.5.26 pwd/grp, v5.5.27 shadow, v5.5.28 fdlopen).
+#
+# Format: colon-separated, one record per line, POSIX-guaranteed
+# no `:` inside fields (passwd(5)):
+#
+#   name:passwd:uid:gid:gecos:dir:shell
+#
+# Caller protocol — two buffers:
+#
+#   pwrec  — 56 bytes, where we write the parsed record. Layout:
+#              +0   uid   (i64)
+#              +8   gid   (i64)
+#              +16  name   (cstr ptr, into strbuf)
+#              +24  passwd (cstr ptr)
+#              +32  gecos  (cstr ptr)
+#              +40  dir    (cstr ptr)
+#              +48  shell  (cstr ptr)
+#   strbuf — where the null-terminated string fields go. 1024
+#            bytes is comfortable; record lines on typical systems
+#            stay well under that.
+#
+# Return values (same for all lookups):
+#     1  — found; pwrec + strbuf populated
+#     0  — not found
+#    -1  — /etc/passwd not readable
+#    -2  — strbuf too small for this record
+#
+# Module-internal: we buffer /etc/passwd into a scratch heap
+# region so repeated calls in a loop don't re-read the file. Most
+# consumers (shakti, sysadmin tools) call once; the cache is a
+# nice-to-have, not a correctness requirement.
+
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+
+# Max bytes we'll buffer from /etc/passwd. 128 KB covers > 1500
+# typical records; kernel/LDAP-mirror setups exceed this but they
+# wouldn't be using `files` NSS anyway.
+var PWD_BUF_MAX = 0x20000;
+
+# Cached buffer (lazy alloc on first call). _pwd_buf_len is the
+# bytes-read count; 0 means "not loaded yet or read failed".
+var _pwd_buf = 0;
+var _pwd_buf_len = 0;
+
+# Force a re-read of /etc/passwd on the next call. Caller can
+# invoke this after they know the file changed (useshell edits
+# /etc/passwd, e.g.). NSS cache-invalidation trio — see
+# grp_invalidate_cache for full rationale + revisit window.
+fn pwd_invalidate_cache(): i64 {
+    _pwd_buf_len = 0;
+    return 0;
+}
+
+# Returns pointer to buffered /etc/passwd content, and writes the
+# byte count to *out_len. Returns 0 on read failure.
+fn _pwd_load(): i64 {
+    if (_pwd_buf_len > 0) { return _pwd_buf; }
+    if (_pwd_buf == 0) { _pwd_buf = alloc(PWD_BUF_MAX); }
+    if (_pwd_buf == 0) { return 0; }
+    var n = file_read_all("/etc/passwd", _pwd_buf, PWD_BUF_MAX);
+    if (n <= 0) { return 0; }
+    _pwd_buf_len = n;
+    return _pwd_buf;
+}
+
+# Parse a decimal digit run at `p`. Writes parsed integer to
+# *out_val (actually caller reads return). Returns the number of
+# bytes consumed.
+fn _pwd_atoi_span(p, end): i64 {
+    var v = 0;
+    var i = 0;
+    while (p + i < end) {
+        var c = load8(p + i);
+        if (c < 48) { break; }      # '0'
+        if (c > 57) { break; }      # '9'
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    # Return value in high 32 bits, span in low 32 bits so a single
+    # i64 carries both — callers destructure with & / >>.
+    return (v << 32) | i;
+}
+
+# Copy bytes [p, p+n) to strbuf at offset *soff, null-terminate,
+# return the pre-increment offset (pointer into strbuf) or -1 on
+# overflow. Updates soff in place via out-param semantics: caller
+# must read the side-effect via load64(&soff).
+fn _pwd_stash(p, n, strbuf, soff_ptr, strbufsz): i64 {
+    var soff = load64(soff_ptr);
+    if (soff + n + 1 > strbufsz) { return 0 - 1; }
+    var dst = strbuf + soff;
+    memcpy(dst, p, n);
+    store8(dst + n, 0);
+    store64(soff_ptr, soff + n + 1);
+    return dst;
+}
+
+# Parse one /etc/passwd line starting at `line_start` (inclusive),
+# ending at `line_end` (exclusive — usually the '\n' or EOF).
+# On success, writes the 7 fields into pwrec and the strings into
+# strbuf. Returns 1 on parse success, 0 on malformed line, -2 on
+# strbuf overflow.
+fn _pwd_parse_line(line_start, line_end, pwrec, strbuf, strbufsz): i64 {
+    var soff_store[8];
+    store64(&soff_store, 0);
+    var soff_ptr = &soff_store;
+
+    # Field starts
+    var field_starts[8];
+    var field_idx = 0;
+    store64(&field_starts, line_start);
+
+    # Walk the line, splitting at ':'
+    var p = line_start;
+    while (p < line_end) {
+        if (load8(p) == 58) {        # ':'
+            field_idx = field_idx + 1;
+            if (field_idx > 6) { return 0; }
+            store64(&field_starts + field_idx * 8, p + 1);
+        }
+        p = p + 1;
+    }
+    if (field_idx != 6) { return 0; }  # need exactly 7 fields (6 colons)
+
+    # Extract field spans
+    var f0_s = load64(&field_starts);
+    var f0_e = load64(&field_starts + 8) - 1;      # name
+    var f1_s = load64(&field_starts + 8);
+    var f1_e = load64(&field_starts + 16) - 1;     # passwd
+    var f2_s = load64(&field_starts + 16);
+    var f2_e = load64(&field_starts + 24) - 1;     # uid
+    var f3_s = load64(&field_starts + 24);
+    var f3_e = load64(&field_starts + 32) - 1;     # gid
+    var f4_s = load64(&field_starts + 32);
+    var f4_e = load64(&field_starts + 40) - 1;     # gecos
+    var f5_s = load64(&field_starts + 40);
+    var f5_e = load64(&field_starts + 48) - 1;     # dir
+    var f6_s = load64(&field_starts + 48);
+    var f6_e = line_end;                           # shell
+
+    # Parse uid / gid
+    var uid_pack = _pwd_atoi_span(f2_s, f2_e);
+    var gid_pack = _pwd_atoi_span(f3_s, f3_e);
+    var uid = uid_pack >> 32;
+    var gid = gid_pack >> 32;
+
+    # Stash strings
+    var name_p  = _pwd_stash(f0_s, f0_e - f0_s, strbuf, soff_ptr, strbufsz);
+    if (name_p < 0) { return 0 - 2; }
+    var pass_p  = _pwd_stash(f1_s, f1_e - f1_s, strbuf, soff_ptr, strbufsz);
+    if (pass_p < 0) { return 0 - 2; }
+    var gecos_p = _pwd_stash(f4_s, f4_e - f4_s, strbuf, soff_ptr, strbufsz);
+    if (gecos_p < 0) { return 0 - 2; }
+    var dir_p   = _pwd_stash(f5_s, f5_e - f5_s, strbuf, soff_ptr, strbufsz);
+    if (dir_p < 0) { return 0 - 2; }
+    var shell_p = _pwd_stash(f6_s, f6_e - f6_s, strbuf, soff_ptr, strbufsz);
+    if (shell_p < 0) { return 0 - 2; }
+
+    # Fill pwrec
+    store64(pwrec,      uid);
+    store64(pwrec + 8,  gid);
+    store64(pwrec + 16, name_p);
+    store64(pwrec + 24, pass_p);
+    store64(pwrec + 32, gecos_p);
+    store64(pwrec + 40, dir_p);
+    store64(pwrec + 48, shell_p);
+    return 1;
+}
+
+# Iterate every record in /etc/passwd, calling the provided matcher
+# on each parse. The matcher is a function pointer: it receives
+# (pwrec, ctx) and returns 1 if the record matches. Returns 1 when
+# a match is found (pwrec + strbuf populated), 0 if no match, -1
+# if /etc/passwd can't be read, -2 if strbuf is too small for any
+# record along the way.
+#
+# Caller-provided:
+#   matcher  — fn(pwrec, ctx) -> 1 if hit, else 0
+#   ctx      — opaque, passed to matcher
+#   pwrec    — 56 B buffer (layout above)
+#   strbuf   — scratch for string fields (≥ 512 B recommended)
+#   strbufsz — size of strbuf in bytes
+#
+# Implementation note: we parse into pwrec/strbuf per line; on a
+# miss we reset strbuf's high-water mark by overwriting pwrec on
+# the next iteration. Memory cost = one record's worth of strings
+# at peak, not the whole file.
+fn _pwd_find(matcher, ctx, pwrec, strbuf, strbufsz): i64 {
+    var buf = _pwd_load();
+    if (buf == 0) { return 0 - 1; }
+    var end = buf + _pwd_buf_len;
+    var p = buf;
+    while (p < end) {
+        # Find end-of-line
+        var line_end = p;
+        while (line_end < end) {
+            if (load8(line_end) == 10) { break; }  # '\n'
+            line_end = line_end + 1;
+        }
+        # Skip blank + comment lines
+        if (line_end > p) {
+            if (load8(p) != 35) {                  # '#'
+                var rc = _pwd_parse_line(p, line_end, pwrec, strbuf, strbufsz);
+                if (rc < 0) { return rc; }
+                if (rc == 1) {
+                    if (fncall2(matcher, pwrec, ctx) == 1) {
+                        return 1;
+                    }
+                }
+            }
+        }
+        p = line_end + 1;
+    }
+    return 0;
+}
+
+fn _pwd_match_uid(pwrec, ctx): i64 {
+    if (load64(pwrec) == ctx) { return 1; }
+    return 0;
+}
+
+fn _pwd_match_name(pwrec, ctx): i64 {
+    var name = load64(pwrec + 16);
+    var i = 0;
+    while (1 == 1) {
+        var a = load8(name + i);
+        var b = load8(ctx + i);
+        if (a != b) { return 0; }
+        if (a == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Look up a record by numeric uid.
+fn pwd_getpwuid(uid, pwrec, strbuf, strbufsz): i64 {
+    return _pwd_find(&_pwd_match_uid, uid, pwrec, strbuf, strbufsz);
+}
+
+# Look up a record by username (null-terminated cstring).
+fn pwd_getpwnam(name, pwrec, strbuf, strbufsz): i64 {
+    return _pwd_find(&_pwd_match_name, name, pwrec, strbuf, strbufsz);
+}
+
+# v5.8.31 — PwdError variants. Maps the int-return contract:
+#   1  → Ok(0) (found, pwrec populated)
+#   0  → Err(PwdNotFound)
+#   -1 → Err(PwdLoadFailed) (couldn't read /etc/passwd)
+#   -2 → Err(PwdBufTooSmall) (strbuf overflow)
+# Variant-name prefix `Pwd` keeps these out of the global enum-
+# variant namespace alongside Grp* / Shadow* / Pam* / Io* / Net*.
+include "lib/result.cyr"
+
+enum PwdError {
+    PwdNotFound;
+    PwdLoadFailed;
+    PwdBufTooSmall;
+    PwdOther;
+}
+
+# v5.8.31 — Result variant of pwd_getpwuid.
+fn pwd_getpwuid_r(uid, pwrec, strbuf, strbufsz) : Result {
+    var rc = pwd_getpwuid(uid, pwrec, strbuf, strbufsz);
+    if (rc == 1)      { return Ok(0); }
+    if (rc == 0)      { return Err(PwdNotFound); }
+    if (rc == 0 - 1)  { return Err(PwdLoadFailed); }
+    if (rc == 0 - 2)  { return Err(PwdBufTooSmall); }
+    return Err(PwdOther);
+}
+
+# v5.8.31 — Result variant of pwd_getpwnam.
+fn pwd_getpwnam_r(name, pwrec, strbuf, strbufsz) : Result {
+    var rc = pwd_getpwnam(name, pwrec, strbuf, strbufsz);
+    if (rc == 1)      { return Ok(0); }
+    if (rc == 0)      { return Err(PwdNotFound); }
+    if (rc == 0 - 1)  { return Err(PwdLoadFailed); }
+    if (rc == 0 - 2)  { return Err(PwdBufTooSmall); }
+    return Err(PwdOther);
+}
+
+# Convenience accessors — for callers that prefer reading fields
+# by name over raw load64 offsets. All return the value at the
+# fixed layout offset.
+
+# Return the numeric uid from a parsed pwrec.
+fn pwd_uid(pwrec): i64 { return load64(pwrec); }
+# Return the numeric primary gid from a parsed pwrec.
+fn pwd_gid(pwrec): i64 { return load64(pwrec + 8); }
+# Return the username cstring (points into strbuf).
+fn pwd_name(pwrec): i64 { return load64(pwrec + 16); }
+# Return the passwd field (usually "x" on modern shadow systems).
+fn pwd_passwd(pwrec) : i64 { return load64(pwrec + 24); }
+# Return the GECOS / finger-info cstring.
+fn pwd_gecos(pwrec): i64 { return load64(pwrec + 32); }
+# Return the home-directory cstring.
+fn pwd_dir(pwrec): i64 { return load64(pwrec + 40); }
+# Return the login-shell cstring.
+fn pwd_shell(pwrec): i64 { return load64(pwrec + 48); }

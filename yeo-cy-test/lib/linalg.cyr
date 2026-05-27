@@ -1,0 +1,957 @@
+# linalg.cyr — dense linear algebra on f64 matrices
+# Usage: include "lib/linalg.cyr"
+# Requires: alloc.cyr, math.cyr, matrix.cyr
+#
+# Builds on matrix.cyr's storage layer (row-major, f64 as i64 bit patterns).
+# All decompositions use out-params (Cyrius has no tuples):
+#   mat_lu(m, out_lu, out_piv)  not  (lu, piv) = mat_lu(m)
+#
+# Pivoting: partial pivoting only. Complete pivoting is out of scope
+# (O(n^3) column search per step, no benefit for hisab's use cases).
+#
+# mat_det and mat_inv are convenience wrappers around mat_lu — they are
+# not independent implementations.
+
+# Default tolerance for floating-point comparisons
+var LINALG_EPS = 0;
+
+fn _linalg_init_eps(): i64 {
+    if (LINALG_EPS == 0) {
+        # 1e-12 as f64 bit pattern
+        LINALG_EPS = f64_div(f64_from(1), f64_from(1000000000000));
+    }
+    return 0;
+}
+
+# ================================================================
+# Tier 3 — Matrix utilities (additions to matrix.cyr's feature set)
+# ================================================================
+
+# Deep copy of a matrix
+fn mat_copy(m): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    var c = mat_new(rows, cols);
+    var i = 0;
+    var n = rows * cols;
+    while (i < n) {
+        store64(c + 16 + i * 8, load64(m + 16 + i * 8));
+        i = i + 1;
+    }
+    return c;
+}
+
+# Negate all elements
+fn mat_neg(m): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    var c = mat_new(rows, cols);
+    var i = 0;
+    var n = rows * cols;
+    while (i < n) {
+        store64(c + 16 + i * 8, f64_neg(load64(m + 16 + i * 8)));
+        i = i + 1;
+    }
+    return c;
+}
+
+# Extract row r as a flat f64 array (heap-allocated, cols entries)
+fn mat_row(m, r): i64 {
+    var cols = mat_cols(m);
+    var out = alloc(cols * 8);
+    var j = 0;
+    while (j < cols) {
+        store64(out + j * 8, mat_get(m, r, j));
+        j = j + 1;
+    }
+    return out;
+}
+
+# Extract column c as a flat f64 array (heap-allocated, rows entries)
+fn mat_col(m, c): i64 {
+    var rows = mat_rows(m);
+    var out = alloc(rows * 8);
+    var i = 0;
+    while (i < rows) {
+        store64(out + i * 8, mat_get(m, i, c));
+        i = i + 1;
+    }
+    return out;
+}
+
+# Overwrite row r from flat f64 array
+fn mat_set_row(m, r, data): i64 {
+    var cols = mat_cols(m);
+    var j = 0;
+    while (j < cols) {
+        mat_set(m, r, j, load64(data + j * 8));
+        j = j + 1;
+    }
+    return 0;
+}
+
+# Overwrite column c from flat f64 array
+fn mat_set_col(m, c, data): i64 {
+    var rows = mat_rows(m);
+    var i = 0;
+    while (i < rows) {
+        mat_set(m, i, c, load64(data + i * 8));
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Extract submatrix [r0..r1, c0..c1) as new matrix
+fn mat_submatrix(m, r0, c0, r1, c1): i64 {
+    var nr = r1 - r0;
+    var nc = c1 - c0;
+    var s = mat_new(nr, nc);
+    var i = 0;
+    while (i < nr) {
+        var j = 0;
+        while (j < nc) {
+            mat_set(s, i, j, mat_get(m, r0 + i, c0 + j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+# Frobenius norm: sqrt(sum of squares of all elements)
+fn mat_frobenius(m): i64 {
+    var n = mat_rows(m) * mat_cols(m);
+    var sum = f64_from(0);
+    var i = 0;
+    while (i < n) {
+        var v = load64(m + 16 + i * 8);
+        sum = f64_add(sum, f64_mul(v, v));
+        i = i + 1;
+    }
+    return f64_sqrt(sum);
+}
+
+# Infinity norm: max absolute row sum
+fn mat_max_norm(m): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    var mx = f64_from(0);
+    var i = 0;
+    while (i < rows) {
+        var rsum = f64_from(0);
+        var j = 0;
+        while (j < cols) {
+            rsum = f64_add(rsum, f64_abs(mat_get(m, i, j)));
+            j = j + 1;
+        }
+        if (f64_gt(rsum, mx) == 1) { mx = rsum; }
+        i = i + 1;
+    }
+    return mx;
+}
+
+# Check symmetry within tolerance
+fn mat_is_symmetric(m, tol): i64 {
+    var n = mat_rows(m);
+    if (n != mat_cols(m)) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var j = i + 1;
+        while (j < n) {
+            var diff = f64_abs(f64_sub(mat_get(m, i, j), mat_get(m, j, i)));
+            if (f64_gt(diff, tol) == 1) { return 0; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Element-wise equality within tolerance. Use LINALG_EPS as default.
+fn mat_eq(a, b, tol): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    if (rows != mat_rows(b)) { return 0; }
+    if (cols != mat_cols(b)) { return 0; }
+    var n = rows * cols;
+    var i = 0;
+    while (i < n) {
+        var diff = f64_abs(f64_sub(load64(a + 16 + i * 8), load64(b + 16 + i * 8)));
+        if (f64_gt(diff, tol) == 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Trace: sum of diagonal elements
+fn mat_trace(m): i64 {
+    var n = mat_rows(m);
+    var sum = f64_from(0);
+    var i = 0;
+    while (i < n) {
+        sum = f64_add(sum, mat_get(m, i, i));
+        i = i + 1;
+    }
+    return sum;
+}
+
+# ================================================================
+# Tier 1 — Linear solvers
+# ================================================================
+
+# LU decomposition with partial pivoting.
+# out_lu: n×n matrix (caller allocates via mat_new). Receives packed L\U.
+# out_piv: flat i64 array of length n (caller allocates via alloc(n*8)).
+# Returns pivot sign (+1 or -1) for determinant, or 0 on singular matrix.
+#
+# L is unit lower triangular (1s on diagonal, stored below diagonal).
+# U is upper triangular (stored on and above diagonal).
+fn mat_lu(m, out_lu, out_piv): i64 {
+    var n = mat_rows(m);
+    # Copy m into out_lu
+    var i = 0;
+    var total = n * n;
+    while (i < total) {
+        store64(out_lu + 16 + i * 8, load64(m + 16 + i * 8));
+        i = i + 1;
+    }
+    # Initialize pivot vector to identity permutation
+    i = 0;
+    while (i < n) { store64(out_piv + i * 8, i); i = i + 1; }
+
+    var sign = 1;
+    var k = 0;
+    while (k < n) {
+        # Find pivot: row with largest |a[i][k]| for i >= k
+        var max_val = f64_from(0);
+        var max_row = k;
+        i = k;
+        while (i < n) {
+            var av = f64_abs(mat_get(out_lu, i, k));
+            if (f64_gt(av, max_val) == 1) {
+                max_val = av;
+                max_row = i;
+            }
+            i = i + 1;
+        }
+
+        _linalg_init_eps();
+        if (f64_lt(max_val, LINALG_EPS) == 1) {
+            return 0;  # Singular
+        }
+
+        # Swap rows k and max_row
+        if (max_row != k) {
+            var j = 0;
+            while (j < n) {
+                var tmp = mat_get(out_lu, k, j);
+                mat_set(out_lu, k, j, mat_get(out_lu, max_row, j));
+                mat_set(out_lu, max_row, j, tmp);
+                j = j + 1;
+            }
+            var ptmp = load64(out_piv + k * 8);
+            store64(out_piv + k * 8, load64(out_piv + max_row * 8));
+            store64(out_piv + max_row * 8, ptmp);
+            sign = 0 - sign;
+        }
+
+        # Eliminate below pivot
+        var akk = mat_get(out_lu, k, k);
+        i = k + 1;
+        while (i < n) {
+            var factor = f64_div(mat_get(out_lu, i, k), akk);
+            mat_set(out_lu, i, k, factor);  # Store L factor
+            var j = k + 1;
+            while (j < n) {
+                var val = f64_sub(mat_get(out_lu, i, j),
+                f64_mul(factor, mat_get(out_lu, k, j)));
+                mat_set(out_lu, i, j, val);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return sign;
+}
+
+# Solve Ax=b from LU factors (from mat_lu).
+# lu: packed L\U matrix. piv: pivot vector. b: flat f64 array of length n.
+# out_x: flat f64 array of length n (caller allocates). Receives solution.
+# Returns 0 on success.
+fn mat_lu_solve(lu, piv, b, out_x): i64 {
+    var n = mat_rows(lu);
+
+    # Forward substitution: Ly = Pb
+    var y = alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        var pi = load64(piv + i * 8);
+        var sum = load64(b + pi * 8);
+        var j = 0;
+        while (j < i) {
+            sum = f64_sub(sum, f64_mul(mat_get(lu, i, j), load64(y + j * 8)));
+            j = j + 1;
+        }
+        store64(y + i * 8, sum);
+        i = i + 1;
+    }
+
+    # Back substitution: Ux = y
+    i = n - 1;
+    while (i >= 0) {
+        var sum = load64(y + i * 8);
+        var j = i + 1;
+        while (j < n) {
+            sum = f64_sub(sum, f64_mul(mat_get(lu, i, j), load64(out_x + j * 8)));
+            j = j + 1;
+        }
+        store64(out_x + i * 8, f64_div(sum, mat_get(lu, i, i)));
+        i = i - 1;
+    }
+    return 0;
+}
+
+# Determinant via LU. Convenience wrapper around mat_lu.
+fn mat_det(m): i64 {
+    var n = mat_rows(m);
+    var lu = mat_new(n, n);
+    var piv = alloc(n * 8);
+    var sign = mat_lu(m, lu, piv);
+    if (sign == 0) { return f64_from(0); }
+    var det = f64_from(sign);
+    var i = 0;
+    while (i < n) {
+        det = f64_mul(det, mat_get(lu, i, i));
+        i = i + 1;
+    }
+    return det;
+}
+
+# Inverse via LU. Convenience wrapper — solves LU against identity columns.
+# Returns new n×n matrix, or 0 if singular.
+fn mat_inv(m): i64 {
+    var n = mat_rows(m);
+    var lu = mat_new(n, n);
+    var piv = alloc(n * 8);
+    var sign = mat_lu(m, lu, piv);
+    if (sign == 0) { return 0; }
+
+    var inv = mat_new(n, n);
+    var col = alloc(n * 8);
+    var x = alloc(n * 8);
+    var k = 0;
+    while (k < n) {
+        # Build identity column k
+        var i = 0;
+        while (i < n) { store64(col + i * 8, f64_from(0)); i = i + 1; }
+        store64(col + k * 8, f64_from(1));
+
+        mat_lu_solve(lu, piv, col, x);
+
+        # Copy solution into column k of inv
+        i = 0;
+        while (i < n) {
+            mat_set(inv, i, k, load64(x + i * 8));
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return inv;
+}
+
+# Cholesky factorization for symmetric positive-definite matrices.
+# out_l: n×n matrix (caller allocates). Receives lower triangular L where A = LL^T.
+# Returns 1 on success, 0 if not positive-definite.
+fn mat_cholesky(m, out_l): i64 {
+    var n = mat_rows(m);
+    # Zero out_l
+    var i = 0;
+    var total = n * n;
+    while (i < total) { store64(out_l + 16 + i * 8, f64_from(0)); i = i + 1; }
+
+    i = 0;
+    while (i < n) {
+        var j = 0;
+        while (j <= i) {
+            var sum = f64_from(0);
+            var k = 0;
+            while (k < j) {
+                sum = f64_add(sum, f64_mul(mat_get(out_l, i, k), mat_get(out_l, j, k)));
+                k = k + 1;
+            }
+            if (i == j) {
+                var diag = f64_sub(mat_get(m, i, i), sum);
+                if (f64_lt(diag, f64_from(0)) == 1) { return 0; }
+                mat_set(out_l, i, j, f64_sqrt(diag));
+            } else {
+                var lij = f64_div(f64_sub(mat_get(m, i, j), sum), mat_get(out_l, j, j));
+                mat_set(out_l, i, j, lij);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Solve Ax=b from Cholesky factor L (where A = LL^T).
+# l: lower triangular. b: flat f64 array. out_x: flat f64 array.
+fn mat_cholesky_solve(l, b, out_x): i64 {
+    var n = mat_rows(l);
+
+    # Forward: Ly = b
+    var y = alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        var sum = load64(b + i * 8);
+        var j = 0;
+        while (j < i) {
+            sum = f64_sub(sum, f64_mul(mat_get(l, i, j), load64(y + j * 8)));
+            j = j + 1;
+        }
+        store64(y + i * 8, f64_div(sum, mat_get(l, i, i)));
+        i = i + 1;
+    }
+
+    # Backward: L^T x = y
+    i = n - 1;
+    while (i >= 0) {
+        var sum = load64(y + i * 8);
+        var j = i + 1;
+        while (j < n) {
+            sum = f64_sub(sum, f64_mul(mat_get(l, j, i), load64(out_x + j * 8)));
+            j = j + 1;
+        }
+        store64(out_x + i * 8, f64_div(sum, mat_get(l, i, i)));
+        i = i - 1;
+    }
+    return 0;
+}
+
+# QR decomposition via Householder reflections.
+# out_q: m×m matrix (caller allocates). Receives orthogonal Q.
+# out_r: m×n matrix (caller allocates). Receives upper triangular R.
+# Returns 0 on success.
+fn mat_qr(m, out_q, out_r): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+
+    # Copy m into R
+    var i = 0;
+    while (i < rows * cols) {
+        store64(out_r + 16 + i * 8, load64(m + 16 + i * 8));
+        i = i + 1;
+    }
+
+    # Initialize Q to identity
+    i = 0;
+    var q_total = rows * rows;
+    while (i < q_total) { store64(out_q + 16 + i * 8, f64_from(0)); i = i + 1; }
+    i = 0;
+    while (i < rows) { mat_set(out_q, i, i, f64_from(1)); i = i + 1; }
+
+    var min = rows;
+    if (cols < min) { min = cols; }
+
+    var k = 0;
+    while (k < min) {
+        # Extract column k below diagonal
+        var v = alloc((rows - k) * 8);
+        i = 0;
+        while (i < rows - k) {
+            store64(v + i * 8, mat_get(out_r, k + i, k));
+            i = i + 1;
+        }
+
+        # Compute norm of v
+        var norm = f64_from(0);
+        i = 0;
+        while (i < rows - k) {
+            var vi = load64(v + i * 8);
+            norm = f64_add(norm, f64_mul(vi, vi));
+            i = i + 1;
+        }
+        norm = f64_sqrt(norm);
+
+        _linalg_init_eps();
+        if (f64_gt(norm, LINALG_EPS) == 1) {
+            # Choose sign to avoid cancellation
+            var v0 = load64(v);
+            if (f64_gt(v0, f64_from(0)) == 1) {
+                store64(v, f64_add(v0, norm));
+            } else {
+                store64(v, f64_sub(v0, norm));
+            }
+
+            # Normalize v
+            var vnorm = f64_from(0);
+            i = 0;
+            while (i < rows - k) {
+                var vi = load64(v + i * 8);
+                vnorm = f64_add(vnorm, f64_mul(vi, vi));
+                i = i + 1;
+            }
+            vnorm = f64_sqrt(vnorm);
+            if (f64_gt(vnorm, LINALG_EPS) == 1) {
+                i = 0;
+                while (i < rows - k) {
+                    store64(v + i * 8, f64_div(load64(v + i * 8), vnorm));
+                    i = i + 1;
+                }
+            }
+
+            # Apply H = I - 2vv^T to R (columns k..cols)
+            var j = k;
+            while (j < cols) {
+                var dot = f64_from(0);
+                i = 0;
+                while (i < rows - k) {
+                    dot = f64_add(dot, f64_mul(load64(v + i * 8), mat_get(out_r, k + i, j)));
+                    i = i + 1;
+                }
+                dot = f64_mul(f64_from(2), dot);
+                i = 0;
+                while (i < rows - k) {
+                    var rij = mat_get(out_r, k + i, j);
+                    mat_set(out_r, k + i, j, f64_sub(rij, f64_mul(dot, load64(v + i * 8))));
+                    i = i + 1;
+                }
+                j = j + 1;
+            }
+
+            # Apply H to Q (columns)
+            j = 0;
+            while (j < rows) {
+                var dot = f64_from(0);
+                i = 0;
+                while (i < rows - k) {
+                    dot = f64_add(dot, f64_mul(load64(v + i * 8), mat_get(out_q, k + i, j)));
+                    i = i + 1;
+                }
+                dot = f64_mul(f64_from(2), dot);
+                i = 0;
+                while (i < rows - k) {
+                    var qij = mat_get(out_q, k + i, j);
+                    mat_set(out_q, k + i, j, f64_sub(qij, f64_mul(dot, load64(v + i * 8))));
+                    i = i + 1;
+                }
+                j = j + 1;
+            }
+        }
+        k = k + 1;
+    }
+
+    # Q accumulated H_k...H_1 — transpose to get Q where A = QR
+    var qt = mat_transpose(out_q);
+    i = 0;
+    while (i < q_total) {
+        store64(out_q + 16 + i * 8, load64(qt + 16 + i * 8));
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Gaussian elimination on augmented matrix [A|b]. Solves in-place.
+# aug: n×(n+1) augmented matrix. Solution written to last column.
+# Returns 1 on success, 0 if singular.
+fn mat_gaussian_elim(aug): i64 {
+    var n = mat_rows(aug);
+    _linalg_init_eps();
+
+    var k = 0;
+    while (k < n) {
+        # Partial pivot
+        var max_val = f64_from(0);
+        var max_row = k;
+        var i = k;
+        while (i < n) {
+            var av = f64_abs(mat_get(aug, i, k));
+            if (f64_gt(av, max_val) == 1) {
+                max_val = av;
+                max_row = i;
+            }
+            i = i + 1;
+        }
+        if (f64_lt(max_val, LINALG_EPS) == 1) { return 0; }
+
+        # Swap rows
+        if (max_row != k) {
+            var j = k;
+            while (j <= n) {
+                var tmp = mat_get(aug, k, j);
+                mat_set(aug, k, j, mat_get(aug, max_row, j));
+                mat_set(aug, max_row, j, tmp);
+                j = j + 1;
+            }
+        }
+
+        # Eliminate
+        var akk = mat_get(aug, k, k);
+        i = k + 1;
+        while (i < n) {
+            var factor = f64_div(mat_get(aug, i, k), akk);
+            var j = k;
+            while (j <= n) {
+                mat_set(aug, i, j, f64_sub(mat_get(aug, i, j),
+                f64_mul(factor, mat_get(aug, k, j))));
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+
+    # Back substitution — write solution into last column
+    var i = n - 1;
+    while (i >= 0) {
+        var sum = mat_get(aug, i, n);
+        var j = i + 1;
+        while (j < n) {
+            sum = f64_sub(sum, f64_mul(mat_get(aug, i, j), mat_get(aug, j, n)));
+            j = j + 1;
+        }
+        mat_set(aug, i, n, f64_div(sum, mat_get(aug, i, i)));
+        i = i - 1;
+    }
+    return 1;
+}
+
+# Least-squares solve via QR: minimize ||Ax - b||^2.
+# a: m×n matrix (m >= n). b: flat f64 array of length m.
+# out_x: flat f64 array of length n (caller allocates).
+# Returns 0 on success.
+fn mat_least_squares(a, b, out_x): i64 {
+    var rows = mat_rows(a);
+    var cols = mat_cols(a);
+    var q = mat_new(rows, rows);
+    var r = mat_new(rows, cols);
+    mat_qr(a, q, r);
+
+    # x = R^-1 * Q^T * b (only top n rows of R matter)
+    # Compute Q^T * b
+    var qtb = alloc(rows * 8);
+    var i = 0;
+    while (i < rows) {
+        var sum = f64_from(0);
+        var j = 0;
+        while (j < rows) {
+            sum = f64_add(sum, f64_mul(mat_get(q, j, i), load64(b + j * 8)));
+            j = j + 1;
+        }
+        store64(qtb + i * 8, sum);
+        i = i + 1;
+    }
+
+    # Back-substitution on upper n×n of R
+    i = cols - 1;
+    while (i >= 0) {
+        var sum = load64(qtb + i * 8);
+        var j = i + 1;
+        while (j < cols) {
+            sum = f64_sub(sum, f64_mul(mat_get(r, i, j), load64(out_x + j * 8)));
+            j = j + 1;
+        }
+        store64(out_x + i * 8, f64_div(sum, mat_get(r, i, i)));
+        i = i - 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Tier 2 — Advanced decomposition
+# ================================================================
+
+# Eigendecomposition for real symmetric matrices via Jacobi rotation.
+# out_vals: flat f64 array of length n (caller allocates via alloc(n*8)).
+# out_vecs: n×n matrix (caller allocates via mat_new). Columns are eigenvectors.
+# Returns number of iterations, or -1 if max iterations exceeded.
+# Max 100*n^2 iterations. Converges when off-diagonal sum < LINALG_EPS.
+fn mat_eigen_sym(m, out_vals, out_vecs): i64 {
+    _linalg_init_eps();
+    var n = mat_rows(m);
+
+    # Copy m into working matrix A (will be diagonalized in place)
+    var a = mat_copy(m);
+
+    # Initialize out_vecs to identity (accumulates rotations)
+    var i = 0;
+    var total = n * n;
+    while (i < total) { store64(out_vecs + 16 + i * 8, f64_from(0)); i = i + 1; }
+    i = 0;
+    while (i < n) { mat_set(out_vecs, i, i, f64_from(1)); i = i + 1; }
+
+    var max_iter = 100 * n * n;
+    var iter = 0;
+    while (iter < max_iter) {
+        # Find largest off-diagonal element
+        var max_off = f64_from(0);
+        var p = 0;
+        var q = 1;
+        i = 0;
+        while (i < n) {
+            var j = i + 1;
+            while (j < n) {
+                var aij = f64_abs(mat_get(a, i, j));
+                if (f64_gt(aij, max_off) == 1) {
+                    max_off = aij;
+                    p = i;
+                    q = j;
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+
+        # Converged?
+        if (f64_lt(max_off, LINALG_EPS) == 1) {
+            # Extract eigenvalues from diagonal
+            i = 0;
+            while (i < n) {
+                store64(out_vals + i * 8, mat_get(a, i, i));
+                i = i + 1;
+            }
+            return iter;
+        }
+
+        # Compute rotation angle
+        var app = mat_get(a, p, p);
+        var aqq = mat_get(a, q, q);
+        var apq = mat_get(a, p, q);
+
+        var theta = f64_div(f64_sub(aqq, app),
+        f64_mul(f64_from(2), apq));
+        # t = sign(theta) / (|theta| + sqrt(theta^2 + 1))
+        var t = f64_from(0);
+        var abs_theta = f64_abs(theta);
+        var denom = f64_add(abs_theta,
+        f64_sqrt(f64_add(f64_mul(theta, theta), f64_from(1))));
+        if (f64_gt(theta, f64_from(0)) == 1) {
+            t = f64_div(f64_from(1), denom);
+        } else {
+            t = f64_neg(f64_div(f64_from(1), denom));
+        }
+
+        var c = f64_div(f64_from(1),
+        f64_sqrt(f64_add(f64_mul(t, t), f64_from(1))));
+        var s = f64_mul(t, c);
+        var tau = f64_div(s, f64_add(f64_from(1), c));
+
+        # Apply rotation to A
+        # Update rows/cols p and q
+        i = 0;
+        while (i < n) {
+            if (i != p && i != q) {
+                var aip = mat_get(a, i, p);
+                var aiq = mat_get(a, i, q);
+                mat_set(a, i, p, f64_sub(aip, f64_mul(s,
+                f64_add(aiq, f64_mul(tau, aip)))));
+                mat_set(a, i, q, f64_add(aiq, f64_mul(s,
+                f64_sub(aip, f64_mul(tau, aiq)))));
+                mat_set(a, p, i, mat_get(a, i, p));
+                mat_set(a, q, i, mat_get(a, i, q));
+            }
+            i = i + 1;
+        }
+
+        # Update diagonal
+        mat_set(a, p, p, f64_sub(app, f64_mul(t, apq)));
+        mat_set(a, q, q, f64_add(aqq, f64_mul(t, apq)));
+        mat_set(a, p, q, f64_from(0));
+        mat_set(a, q, p, f64_from(0));
+
+        # Accumulate rotation into eigenvector matrix
+        i = 0;
+        while (i < n) {
+            var vip = mat_get(out_vecs, i, p);
+            var viq = mat_get(out_vecs, i, q);
+            mat_set(out_vecs, i, p, f64_sub(vip, f64_mul(s,
+            f64_add(viq, f64_mul(tau, vip)))));
+            mat_set(out_vecs, i, q, f64_add(viq, f64_mul(s,
+            f64_sub(vip, f64_mul(tau, viq)))));
+            i = i + 1;
+        }
+
+        iter = iter + 1;
+    }
+
+    # Didn't converge — still extract what we have
+    i = 0;
+    while (i < n) {
+        store64(out_vals + i * 8, mat_get(a, i, i));
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# SVD via eigendecomposition of A^T*A.
+# For m×n matrix A (m >= n):
+#   A = U * diag(sigma) * V^T
+# out_u: m×n matrix (caller allocates).
+# out_sigma: flat f64 array of length n (singular values).
+# out_vt: n×n matrix (caller allocates, V transposed).
+# Returns 0 on success.
+fn mat_svd(m, out_u, out_sigma, out_vt): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    _linalg_init_eps();
+
+    # Compute A^T * A (n×n symmetric)
+    var mt = mat_transpose(m);
+    var ata = mat_mul(mt, m);
+
+    # Eigendecompose A^T*A → V, lambda
+    var lambda = alloc(cols * 8);
+    var v = mat_new(cols, cols);
+    mat_eigen_sym(ata, lambda, v);
+
+    # Singular values = sqrt(eigenvalues), V^T = transpose of eigenvectors
+    var i = 0;
+    while (i < cols) {
+        var ev = load64(lambda + i * 8);
+        if (f64_lt(ev, f64_from(0)) == 1) { ev = f64_from(0); }
+        store64(out_sigma + i * 8, f64_sqrt(ev));
+        i = i + 1;
+    }
+
+    # Sort singular values descending (and corresponding V columns)
+    i = 0;
+    while (i < cols) {
+        var max_idx = i;
+        var max_sv = load64(out_sigma + i * 8);
+        var j = i + 1;
+        while (j < cols) {
+            if (f64_gt(load64(out_sigma + j * 8), max_sv) == 1) {
+                max_sv = load64(out_sigma + j * 8);
+                max_idx = j;
+            }
+            j = j + 1;
+        }
+        if (max_idx != i) {
+            # Swap sigma
+            var tmp = load64(out_sigma + i * 8);
+            store64(out_sigma + i * 8, load64(out_sigma + max_idx * 8));
+            store64(out_sigma + max_idx * 8, tmp);
+            # Swap V columns
+            var k = 0;
+            while (k < cols) {
+                var tv = mat_get(v, k, i);
+                mat_set(v, k, i, mat_get(v, k, max_idx));
+                mat_set(v, k, max_idx, tv);
+                k = k + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    # V^T
+    var vt_tmp = mat_transpose(v);
+    i = 0;
+    var vt_total = cols * cols;
+    while (i < vt_total) {
+        store64(out_vt + 16 + i * 8, load64(vt_tmp + 16 + i * 8));
+        i = i + 1;
+    }
+
+    # U = A * V * Sigma_inv (column by column)
+    # For each column j: u_j = (1/sigma_j) * A * v_j
+    var j = 0;
+    while (j < cols) {
+        var sv = load64(out_sigma + j * 8);
+        if (f64_gt(sv, LINALG_EPS) == 1) {
+            var inv_sv = f64_div(f64_from(1), sv);
+            # Compute A * v_j
+            i = 0;
+            while (i < rows) {
+                var sum = f64_from(0);
+                var k = 0;
+                while (k < cols) {
+                    sum = f64_add(sum, f64_mul(mat_get(m, i, k), mat_get(v, k, j)));
+                    k = k + 1;
+                }
+                mat_set(out_u, i, j, f64_mul(sum, inv_sv));
+                i = i + 1;
+            }
+        } else {
+            # Zero singular value — zero column in U
+            i = 0;
+            while (i < rows) {
+                mat_set(out_u, i, j, f64_from(0));
+                i = i + 1;
+            }
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+# Moore-Penrose pseudoinverse via SVD.
+# Returns new n×m matrix (pseudoinverse of m×n input).
+fn mat_pseudo_inv(m): i64 {
+    var rows = mat_rows(m);
+    var cols = mat_cols(m);
+    _linalg_init_eps();
+
+    var u = mat_new(rows, cols);
+    var sigma = alloc(cols * 8);
+    var vt = mat_new(cols, cols);
+    mat_svd(m, u, sigma, vt);
+
+    # Pseudo-inverse = V * Sigma_inv * U^T
+    # Build Sigma_inv diagonal matrix
+    var sigma_inv = mat_new(cols, cols);
+    var i = 0;
+    while (i < cols) {
+        var sv = load64(sigma + i * 8);
+        if (f64_gt(sv, LINALG_EPS) == 1) {
+            mat_set(sigma_inv, i, i, f64_div(f64_from(1), sv));
+        }
+        i = i + 1;
+    }
+
+    # V = transpose of V^T
+    var v = mat_transpose(vt);
+    var ut = mat_transpose(u);
+
+    # V * Sigma_inv
+    var vs = mat_mul(v, sigma_inv);
+    # (V * Sigma_inv) * U^T
+    return mat_mul(vs, ut);
+}
+
+# Numerical rank: count of singular values above tolerance.
+fn mat_rank(m, tol): i64 {
+    var cols = mat_cols(m);
+    var u = mat_new(mat_rows(m), cols);
+    var sigma = alloc(cols * 8);
+    var vt = mat_new(cols, cols);
+    mat_svd(m, u, sigma, vt);
+
+    var rank = 0;
+    var i = 0;
+    while (i < cols) {
+        if (f64_gt(load64(sigma + i * 8), tol) == 1) {
+            rank = rank + 1;
+        }
+        i = i + 1;
+    }
+    return rank;
+}
+
+# Condition number: sigma_max / sigma_min.
+# Returns f64. Returns -1 if matrix is singular (sigma_min ≈ 0).
+fn mat_condition(m): i64 {
+    var cols = mat_cols(m);
+    _linalg_init_eps();
+
+    var u = mat_new(mat_rows(m), cols);
+    var sigma = alloc(cols * 8);
+    var vt = mat_new(cols, cols);
+    mat_svd(m, u, sigma, vt);
+
+    var smax = load64(sigma);
+    var smin = load64(sigma + (cols - 1) * 8);
+
+    if (f64_lt(smin, LINALG_EPS) == 1) { return f64_neg(f64_from(1)); }
+    return f64_div(smax, smin);
+}

@@ -1,0 +1,248 @@
+# fmt.cyr — string formatting utilities
+# Usage: include "lib/fmt.cyr"
+# Requires: include "lib/string.cyr" for strlen
+
+# Print decimal number to stdout
+fn fmt_int(n: i64): i64 {
+    var buf[24];
+    var bi = 23;
+    var neg: i64 = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    if (n == 0) { store8(&buf + bi, 48); bi = bi - 1; }
+    while (n > 0) { store8(&buf + bi, 48 + n % 10); bi = bi - 1; n = n / 10; }
+    if (neg == 1) { store8(&buf + bi, 45); bi = bi - 1; }
+    syscall(1, 1, &buf + bi + 1, 23 - bi);
+    return 0;
+}
+
+# Print decimal number to a specific fd.
+# Use when diagnostic output must go to stderr: `fmt_int_fd(2, value)`.
+# Otherwise identical to fmt_int which always writes to fd 1.
+fn fmt_int_fd(fd, n: i64): i64 {
+    var buf[24];
+    var bi = 23;
+    var neg: i64 = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    if (n == 0) { store8(&buf + bi, 48); bi = bi - 1; }
+    while (n > 0) { store8(&buf + bi, 48 + n % 10); bi = bi - 1; n = n / 10; }
+    if (neg == 1) { store8(&buf + bi, 45); bi = bi - 1; }
+    syscall(1, fd, &buf + bi + 1, 23 - bi);
+    return 0;
+}
+
+# Print decimal number to stderr. Shorthand for fmt_int_fd(2, n).
+# Keeps diagnostic output atomic with adjacent `syscall(1, 2, "...", N)`
+# messages — mixing fmt_int (stdout) with stderr writes produces interleaved
+# output in logs.
+fn efmt_int(n: i64): i64 {
+    var buf[24];
+    var bi = 23;
+    var neg: i64 = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    if (n == 0) { store8(&buf + bi, 48); bi = bi - 1; }
+    while (n > 0) { store8(&buf + bi, 48 + n % 10); bi = bi - 1; n = n / 10; }
+    if (neg == 1) { store8(&buf + bi, 45); bi = bi - 1; }
+    syscall(1, 2, &buf + bi + 1, 23 - bi);
+    return 0;
+}
+
+# Print hex number to stdout (no 0x prefix)
+fn fmt_hex(n: i64): i64 {
+    var buf[16];
+    var bi = 15;
+    if (n == 0) { store8(&buf + bi, 48); bi = bi - 1; }
+    while (n > 0) {
+        var nib = n & 0xF;
+        if (nib < 10) { store8(&buf + bi, 48 + nib); }
+        else { store8(&buf + bi, 87 + nib); }
+        bi = bi - 1;
+        n = n >> 4;
+    }
+    syscall(1, 1, &buf + bi + 1, 15 - bi);
+    return 0;
+}
+
+# Print hex with 0x prefix
+fn fmt_hex0x(n: i64): i64 {
+    syscall(1, 1, "0x", 2);
+    fmt_hex(n);
+    return 0;
+}
+
+# Print a boolean as "true" or "false"
+fn fmt_bool(b): i64 {
+    if (b == 0) { syscall(1, 1, "false", 5); }
+    else { syscall(1, 1, "true", 4); }
+    return 0;
+}
+
+# Print N spaces
+fn fmt_pad(n): i64 {
+    while (n > 0) { syscall(1, 1, " ", 1); n = n - 1; }
+    return 0;
+}
+
+# Print a byte as 2-digit hex
+fn fmt_byte(b): i64 {
+    var hi = (b >> 4) & 0xF;
+    var lo = b & 0xF;
+    var buf[2];
+    if (hi < 10) { store8(&buf, 48 + hi); } else { store8(&buf, 87 + hi); }
+    if (lo < 10) { store8(&buf + 1, 48 + lo); } else { store8(&buf + 1, 87 + lo); }
+    syscall(1, 1, &buf, 2);
+    return 0;
+}
+
+# Convert integer to string in buffer, return length
+fn fmt_int_buf(n, buf): i64 {
+    var bi = 23;
+    var neg: i64 = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    if (n == 0) { store8(buf + bi, 48); bi = bi - 1; }
+    while (n > 0) { store8(buf + bi, 48 + n % 10); bi = bi - 1; n = n / 10; }
+    if (neg == 1) { store8(buf + bi, 45); bi = bi - 1; }
+    # Shift to start of buffer
+    var len = 23 - bi;
+    var src = bi + 1;
+    for (var si = 0; si < len; si = si + 1) {
+        store8(buf + si, load8(buf + src + si));
+    }
+    store8(buf + len, 0);
+    return len;
+}
+
+# Convert hex number to string in buffer, return length
+fn fmt_hex_buf(n, buf): i64 {
+    var bi = 15;
+    if (n == 0) { store8(buf, 48); store8(buf + 1, 0); return 1; }
+    var tmp[16];
+    while (n > 0) {
+        var nib = n & 0xF;
+        if (nib < 10) { store8(&tmp + bi, 48 + nib); }
+        else { store8(&tmp + bi, 87 + nib); }
+        bi = bi - 1;
+        n = n >> 4;
+    }
+    var len = 15 - bi;
+    var src = bi + 1;
+    for (var si = 0; si < len; si = si + 1) {
+        store8(buf + si, load8(&tmp + src + si));
+    }
+    store8(buf + len, 0);
+    return len;
+}
+
+# sprintf-like formatting into a buffer with bounds checking.
+# Format: %d = decimal, %x = hex, %s = string, %% = literal %
+# Args are passed as a vec of i64 values.
+# bufsz: maximum bytes to write (including NUL terminator).
+# Returns: bytes written to buf (not counting NUL).
+#
+# Usage:
+#   var args = vec_new();
+#   vec_push(args, 42);
+#   vec_push(args, "hello");
+#   var len = fmt_sprintf(buf, 64, "num=%d str=%s", args);
+fn fmt_sprintf(buf, bufsz, format, args): i64 {
+    var fi = 0;
+    var bi = 0;
+    var ai = 0;
+    var maxw = bufsz - 1;  # reserve 1 for NUL
+    if (maxw < 0) { maxw = 0; }
+    var flen = strlen(format);
+    while (fi < flen) {
+        var c = load8(format + fi);
+        if (c == 37) {
+            # % format specifier
+            fi = fi + 1;
+            if (fi >= flen) { break; }
+            var spec = load8(format + fi);
+            if (spec == 100) {
+                # %d — decimal integer
+                var dval = vec_get(args, ai);
+                ai = ai + 1;
+                var dtmp[24];
+                var dlen = fmt_int_buf(dval, &dtmp);
+                if (bi + dlen > maxw) { dlen = maxw - bi; }
+                if (dlen > 0) { memcpy(buf + bi, &dtmp, dlen); bi = bi + dlen; }
+            }
+            if (spec == 120) {
+                # %x — hex integer
+                var xval = vec_get(args, ai);
+                ai = ai + 1;
+                var xtmp[16];
+                var xlen = fmt_hex_buf(xval, &xtmp);
+                if (bi + xlen > maxw) { xlen = maxw - bi; }
+                if (xlen > 0) { memcpy(buf + bi, &xtmp, xlen); bi = bi + xlen; }
+            }
+            if (spec == 115) {
+                # %s — string
+                var sptr = vec_get(args, ai);
+                ai = ai + 1;
+                var slen = strlen(sptr);
+                if (bi + slen > maxw) { slen = maxw - bi; }
+                if (slen > 0) { memcpy(buf + bi, sptr, slen); bi = bi + slen; }
+            }
+            if (spec == 37) {
+                # %% — literal %
+                if (bi < maxw) { store8(buf + bi, 37); bi = bi + 1; }
+            }
+            fi = fi + 1;
+        } else {
+            if (bi < maxw) { store8(buf + bi, c); bi = bi + 1; }
+            fi = fi + 1;
+        }
+    }
+    store8(buf + bi, 0);
+    return bi;
+}
+
+# Convenience: format and print to stdout
+fn fmt_printf(format, args): i64 {
+    var buf[512];
+    var len = fmt_sprintf(&buf, 512, format, args);
+    syscall(1, 1, &buf, len);
+    return len;
+}
+
+# Format f64 to buffer as "integer.fraction" with given decimal places.
+# Returns number of bytes written.
+fn fmt_float_buf(val, buf, decimals): i64 {
+    var neg = 0;
+    # Check sign bit
+    if ((val >> 63) & 1 == 1) {
+        neg = 1;
+        val = f64_abs(val);
+    }
+    var whole = f64_to(f64_floor(val));
+    var pos = 0;
+    if (neg == 1) { store8(buf, 45); pos = 1; }
+    pos = pos + fmt_int_buf(whole, buf + pos);
+    store8(buf + pos, 46); pos = pos + 1;
+    # Fractional part: multiply by 10^decimals, round, format as int
+    var scale = f64_from(1);
+    var di = 0;
+    while (di < decimals) { scale = f64_mul(scale, f64_from(10)); di = di + 1; }
+    var frac = f64_to(f64_round(f64_mul(f64_sub(val, f64_from(whole)), scale)));
+    if (frac < 0) { frac = 0 - frac; }
+    # Zero-pad fractional part
+    var flen = fmt_int_buf(frac, buf + pos);
+    var pad = decimals - flen;
+    if (pad > 0) {
+        # Shift digits right and insert zeros
+        var si = flen - 1;
+        while (si >= 0) { store8(buf + pos + pad + si, load8(buf + pos + si)); si = si - 1; }
+        si = 0;
+        while (si < pad) { store8(buf + pos + si, 48); si = si + 1; }
+        flen = decimals;
+    }
+    return pos + flen;
+}
+
+# Print f64 to stdout with given decimal places
+fn fmt_float(val, decimals): i64 {
+    var buf[32];
+    var len = fmt_float_buf(val, &buf, decimals);
+    syscall(1, 1, &buf, len);
+    return 0;
+}
