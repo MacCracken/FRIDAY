@@ -104,7 +104,9 @@ pub struct SsoProviderRow {
     pub tenant_id: String,
 }
 
-/// WebAuthn credential row from auth.webauthn_credentials table.
+/// WebAuthn credential row from the `webauthn_credentials` table. `public_key`
+/// holds the serialized webauthn-rs `Passkey` (JSON), `counter` the signature
+/// counter, `transports` the Postgres `text[]` hints.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct WebAuthnCredentialRow {
@@ -112,11 +114,10 @@ pub struct WebAuthnCredentialRow {
     pub user_id: String,
     pub credential_id: String,
     pub public_key: String,
-    pub sign_count: i64,
-    pub transports: serde_json::Value,
+    pub counter: i64,
+    pub transports: Option<Vec<String>>,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
-    pub tenant_id: String,
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────
@@ -679,22 +680,23 @@ pub async fn delete_sso_provider(
 
 // ── WebAuthn Credentials ─────────────────────────────────────────────────
 
+const WEBAUTHN_COLS: &str =
+    "id, user_id, credential_id, public_key, counter, transports, created_at, last_used_at";
+
 /// List WebAuthn credentials for a user.
 pub async fn list_webauthn_credentials(
     pool: &PgPool,
     user_id: &str,
-    tenant_id: &str,
 ) -> Result<Vec<WebAuthnCredentialRow>, sqlx::Error> {
-    sqlx::query_as::<_, WebAuthnCredentialRow>(
-        "SELECT * FROM auth.webauthn_credentials WHERE user_id = $1 AND tenant_id = $2 ORDER BY created_at DESC",
-    )
+    sqlx::query_as::<_, WebAuthnCredentialRow>(&format!(
+        "SELECT {WEBAUTHN_COLS} FROM webauthn_credentials WHERE user_id = $1 ORDER BY created_at DESC"
+    ))
     .bind(user_id)
-    .bind(tenant_id)
     .fetch_all(pool)
     .await
 }
 
-/// Create a WebAuthn credential.
+/// Create a WebAuthn credential. `public_key` is the serialized `Passkey` JSON.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_webauthn_credential(
     pool: &PgPool,
@@ -702,24 +704,45 @@ pub async fn create_webauthn_credential(
     user_id: &str,
     credential_id: &str,
     public_key: &str,
-    transports: &serde_json::Value,
-    tenant_id: &str,
+    counter: i64,
+    transports: &[String],
 ) -> Result<WebAuthnCredentialRow, sqlx::Error> {
     let now = now_ms();
-    sqlx::query_as::<_, WebAuthnCredentialRow>(
-        "INSERT INTO auth.webauthn_credentials (id, user_id, credential_id, public_key, sign_count, transports, created_at, tenant_id)
-         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
-         RETURNING *",
-    )
+    sqlx::query_as::<_, WebAuthnCredentialRow>(&format!(
+        "INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, counter, transports, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING {WEBAUTHN_COLS}"
+    ))
     .bind(id)
     .bind(user_id)
     .bind(credential_id)
     .bind(public_key)
+    .bind(counter)
     .bind(transports)
     .bind(now)
-    .bind(tenant_id)
     .fetch_one(pool)
     .await
+}
+
+/// Update a credential's signature counter + serialized state after a successful
+/// authentication (counter can advance / backup flags can change).
+pub async fn update_webauthn_credential(
+    pool: &PgPool,
+    credential_id: &str,
+    counter: i64,
+    public_key: &str,
+) -> Result<(), sqlx::Error> {
+    let now = now_ms();
+    sqlx::query(
+        "UPDATE webauthn_credentials SET counter = $1, public_key = $2, last_used_at = $3 WHERE credential_id = $4",
+    )
+    .bind(counter)
+    .bind(public_key)
+    .bind(now)
+    .bind(credential_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Delete a WebAuthn credential.
@@ -727,16 +750,12 @@ pub async fn delete_webauthn_credential(
     pool: &PgPool,
     id: &str,
     user_id: &str,
-    tenant_id: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
-        "DELETE FROM auth.webauthn_credentials WHERE id = $1 AND user_id = $2 AND tenant_id = $3",
-    )
-    .bind(id)
-    .bind(user_id)
-    .bind(tenant_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM webauthn_credentials WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected() > 0)
 }
 

@@ -6,6 +6,24 @@ All notable changes to SecureYeoman are documented in this file.
 
 ---
 
+## [Unreleased] — 0.5.2 (in progress)
+
+*Real authentication: WebAuthn passkeys + admin password hashing (the 0.5.1 stubs were failed-closed).*
+
+### Added / Security
+
+- **Real WebAuthn passkeys.** The registration and authentication ceremonies are now implemented with `webauthn-rs` 0.5 (replacing the failed-closed stubs): `register/options` + `register/verify` perform real attestation verification and persist the resulting `Passkey`; `authenticate/options` + `authenticate/verify` perform real assertion verification (step-up for the authenticated user) and, on success, advance the signature counter and mint a **fresh token for the same identity** — no more unconditional admin-token minting. In-flight ceremony state is held in memory (short TTL); credentials persist in `webauthn_credentials`. RP config via `SECUREYEOMAN_RP_ID` / `SECUREYEOMAN_RP_ORIGIN` (default localhost).
+- **Admin password hashing (Argon2id).** `SECUREYEOMAN_ADMIN_PASSWORD_HASH` (an Argon2 PHC string) is now preferred over the plaintext `SECUREYEOMAN_ADMIN_PASSWORD`, so no plaintext credential need sit at rest. The plaintext path remains as a constant-time-compared fallback.
+
+### Fixed
+
+- **WebAuthn DB schema mismatch.** The Rust `db/auth.rs` WebAuthn queries targeted a non-existent `auth.webauthn_credentials` schema (with `sign_count`/`tenant_id`); they now use the migrated `webauthn_credentials` table (`counter`, `text[]` transports), so credential storage actually works.
+
+### Still open for 0.5.2
+Real OIDC SSO code-exchange (still failed-closed; needs the `openidconnect` integration + SSO-table reconciliation); RBAC per-principal permission enforcement (API-key/JWT `permissions` claims are not yet consulted by `enforce_rbac`).
+
+---
+
 ## [0.5.1] — 2026-06-07
 
 *P(-1) scaffold-hardening release. A 16-dimension multi-agent security/correctness/perf review (adversarially verified) drove these fixes. Tooling baseline: Rust 1.96, clippy/fmt/audit/deny green; the Rust dependency tree shrank 604 → 421 crates; 482 Rust tests pass.*

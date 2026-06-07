@@ -25,6 +25,8 @@ use crate::middleware::backpressure::BackpressureState;
 use crate::middleware::fingerprinting::FingerprintState;
 use crate::middleware::ip_reputation::IpReputationState;
 use crate::privacy::ClassificationEngine;
+use webauthn_rs::Webauthn;
+use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 /// Type-erased brain manager for use in AppState.
 /// Uses dynamic dispatch so AppState doesn't need generics.
@@ -112,6 +114,10 @@ struct AppStateInner {
     pub ip_reputation: Option<IpReputationState>,
     /// DLP/PII classification engine — compiled once (regexes are not cheap).
     pub pii_engine: Arc<ClassificationEngine>,
+    /// WebAuthn relying-party instance + in-flight ceremony state.
+    pub webauthn: Arc<Webauthn>,
+    pub webauthn_reg: Arc<WebauthnRegStore>,
+    pub webauthn_auth: Arc<WebauthnAuthStore>,
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
@@ -141,6 +147,46 @@ fn generate_ephemeral_secret() -> String {
     let mut bytes = [0u8; 48];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
+}
+
+/// In-flight WebAuthn ceremony state, keyed by user id, with a creation instant
+/// for TTL eviction (ceremonies are short-lived; ~60s challenge timeout).
+pub type WebauthnRegStore = dashmap::DashMap<String, (PasskeyRegistration, Instant)>;
+pub type WebauthnAuthStore = dashmap::DashMap<String, (PasskeyAuthentication, Instant)>;
+
+/// Build the WebAuthn relying-party instance from `SECUREYEOMAN_RP_ID` /
+/// `SECUREYEOMAN_RP_ORIGIN` (defaults: localhost). `rp_id` is the registrable
+/// domain (no scheme/port); `rp_origin` must match the browser's `window.origin`.
+/// Falls back to a valid localhost config (with a warning) if the env values are
+/// invalid, so the server always has a usable instance.
+fn build_webauthn() -> Webauthn {
+    use webauthn_rs::WebauthnBuilder;
+    use webauthn_rs::prelude::Url;
+
+    let rp_id = std::env::var("SECUREYEOMAN_RP_ID").unwrap_or_else(|_| "localhost".to_string());
+    let rp_origin_str = std::env::var("SECUREYEOMAN_RP_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:18789".to_string());
+
+    let built = Url::parse(&rp_origin_str).ok().and_then(|origin| {
+        WebauthnBuilder::new(&rp_id, &origin)
+            .and_then(|b| b.rp_name("SecureYeoman").build())
+            .ok()
+    });
+
+    match built {
+        Some(w) => w,
+        None => {
+            tracing::warn!(
+                rp_id = %rp_id,
+                rp_origin = %rp_origin_str,
+                "invalid WebAuthn RP config; falling back to http://localhost"
+            );
+            let origin = Url::parse("http://localhost").expect("static localhost url");
+            WebauthnBuilder::new("localhost", &origin)
+                .and_then(|b| b.build())
+                .expect("localhost WebAuthn config is always valid")
+        }
+    }
 }
 
 impl AppState {
@@ -247,6 +293,9 @@ impl AppState {
                 fingerprint: FingerprintState::new(),
                 ip_reputation: Some(IpReputationState::default()),
                 pii_engine: Arc::new(ClassificationEngine::new()),
+                webauthn: Arc::new(build_webauthn()),
+                webauthn_reg: Arc::new(WebauthnRegStore::new()),
+                webauthn_auth: Arc::new(WebauthnAuthStore::new()),
                 bridge_tx,
                 brain: None,
                 github_client,
@@ -313,6 +362,21 @@ impl AppState {
     /// The shared DLP/PII classification engine.
     pub fn pii_engine(&self) -> &ClassificationEngine {
         &self.inner.pii_engine
+    }
+
+    /// The WebAuthn relying-party instance.
+    pub fn webauthn(&self) -> &Webauthn {
+        &self.inner.webauthn
+    }
+
+    /// In-flight WebAuthn registration ceremony state (keyed by user id).
+    pub fn webauthn_reg(&self) -> &WebauthnRegStore {
+        &self.inner.webauthn_reg
+    }
+
+    /// In-flight WebAuthn authentication ceremony state (keyed by user id).
+    pub fn webauthn_auth(&self) -> &WebauthnAuthStore {
+        &self.inner.webauthn_auth
     }
 
     /// Check if a token JTI has been revoked (cache → DB fallback).

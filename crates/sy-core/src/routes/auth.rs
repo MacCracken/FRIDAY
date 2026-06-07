@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::auth::jwt::{issue_access_token, issue_refresh_token, validate_token};
 use crate::db::auth;
 use crate::state::AppState;
+use webauthn_rs::prelude::{Passkey, PublicKeyCredential, RegisterPublicKeyCredential};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -125,6 +126,36 @@ struct LoginRequest {
     remember_me: bool,
 }
 
+/// Whether any admin credential is configured (an Argon2 hash, or a plaintext
+/// password as a discouraged fallback).
+fn admin_password_configured() -> bool {
+    std::env::var("SECUREYEOMAN_ADMIN_PASSWORD_HASH").is_ok_and(|h| !h.trim().is_empty())
+        || std::env::var("SECUREYEOMAN_ADMIN_PASSWORD").is_ok_and(|p| !p.is_empty())
+}
+
+/// Verify a submitted admin password. Prefers an Argon2 PHC hash in
+/// `SECUREYEOMAN_ADMIN_PASSWORD_HASH` (no plaintext at rest); otherwise falls back
+/// to a constant-time comparison against the plaintext `SECUREYEOMAN_ADMIN_PASSWORD`.
+fn verify_admin_password(submitted: &str) -> bool {
+    use argon2::{Argon2, PasswordHash, PasswordVerifier};
+    if let Ok(hash) = std::env::var("SECUREYEOMAN_ADMIN_PASSWORD_HASH") {
+        let hash = hash.trim();
+        if !hash.is_empty() {
+            return PasswordHash::new(hash).ok().is_some_and(|ph| {
+                Argon2::default()
+                    .verify_password(submitted.as_bytes(), &ph)
+                    .is_ok()
+            });
+        }
+    }
+    match std::env::var("SECUREYEOMAN_ADMIN_PASSWORD") {
+        Ok(pw) if !pw.is_empty() => {
+            crate::crypto::secure_compare(submitted.as_bytes(), pw.as_bytes())
+        }
+        _ => false,
+    }
+}
+
 async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> impl IntoResponse {
     if body.password.len() < 8 {
         return (
@@ -134,10 +165,8 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) ->
             .into_response();
     }
 
-    // Verify password against configured admin password
-    let admin_password = std::env::var("SECUREYEOMAN_ADMIN_PASSWORD").unwrap_or_default();
-
-    if admin_password.is_empty() {
+    // Verify against the configured admin credential (Argon2 hash preferred).
+    if !admin_password_configured() {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "No admin password configured"})),
@@ -145,17 +174,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) ->
             .into_response();
     }
 
-    // Constant-time comparison
-    let pw_bytes = body.password.as_bytes();
-    let admin_bytes = admin_password.as_bytes();
-    let matches = pw_bytes.len() == admin_bytes.len()
-        && pw_bytes
-            .iter()
-            .zip(admin_bytes.iter())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0;
-
-    if !matches {
+    if !verify_admin_password(&body.password) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "Invalid credentials"})),
@@ -1604,58 +1623,56 @@ async fn saml_acs(Path(id): Path<String>) -> impl IntoResponse {
 
 // ── WebAuthn handlers ───────────────────────────────────────────────────
 
+/// Whether the unimplemented auth stubs (SSO/OAuth exchange) may mint tokens. OFF
+/// by default — those stubs do NOT verify any cryptographic assertion, so allowing
+/// them in production is an authentication bypass. Set `SY_DEV_AUTH=1` only on a
+/// trusted dev machine. (WebAuthn below is now fully implemented and not gated.)
+fn dev_auth_enabled() -> bool {
+    std::env::var("SY_DEV_AUTH").is_ok_and(|v| v == "1" || v == "true")
+}
+
+/// 501 response for an auth flow that is not yet implemented (real OIDC exchange
+/// is pending). Returned instead of minting an unverified token.
+fn auth_not_implemented(flow: &str) -> axum::response::Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": format!("{flow} is not implemented"),
+            "statusCode": 501,
+            "hint": "cryptographic verification is pending; set SY_DEV_AUTH=1 on a trusted dev host to use the unverified stub",
+        })),
+    )
+        .into_response()
+}
+
+/// Stable, opaque per-user handle for WebAuthn (the value stored on the
+/// authenticator). Deterministic so it is identical across ceremonies; derived
+/// from the user id rather than PII.
+fn stable_user_uuid(user_id: &str) -> uuid::Uuid {
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, user_id.as_bytes())
+}
+
+fn b64url(bytes: &[u8]) -> String {
+    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+}
+
+/// Load and deserialize a user's stored passkeys.
+async fn load_user_passkeys(pool: &sqlx::PgPool, user_id: &str) -> Vec<Passkey> {
+    auth::list_webauthn_credentials(pool, user_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|r| serde_json::from_str::<Passkey>(&r.public_key).ok())
+        .collect()
+}
+
+/// WebAuthn registration — start. Returns the W3C `CreationChallengeResponse`
+/// (`{publicKey: ...}`) and stashes the in-flight ceremony state server-side,
+/// keyed by the authenticated user.
 async fn webauthn_register_options(
-    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
-) -> impl IntoResponse {
-    // Stub: generate WebAuthn registration options (challenge)
-    let challenge = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        uuid::Uuid::now_v7().as_bytes(),
-    );
-
-    Json(serde_json::json!({
-        "rp": {
-            "name": "SecureYeoman",
-            "id": "localhost",
-        },
-        "user": {
-            "id": base64::Engine::encode(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-                auth_ctx.user_id.as_bytes(),
-            ),
-            "name": auth_ctx.user_id,
-            "displayName": auth_ctx.user_id,
-        },
-        "challenge": challenge,
-        "pubKeyCredParams": [
-            {"type": "public-key", "alg": -7},
-            {"type": "public-key", "alg": -257},
-        ],
-        "timeout": 60000,
-        "attestation": "none",
-        "authenticatorSelection": {
-            "residentKey": "preferred",
-            "userVerification": "preferred",
-        },
-    }))
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WebAuthnRegisterVerifyRequest {
-    credential_id: String,
-    attestation_object: String,
-    client_data_json: String,
-    #[serde(default)]
-    transports: Vec<String>,
-}
-
-async fn webauthn_register_verify(
     State(state): State<AppState>,
     axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
-    Json(body): Json<WebAuthnRegisterVerifyRequest>,
 ) -> impl IntoResponse {
-    // Stub: verify registration — in production, validate attestation
     let Some(pool) = state.db() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1663,21 +1680,82 @@ async fn webauthn_register_verify(
         )
             .into_response();
     };
+    let user_id = &auth_ctx.user_id;
+    let exclude: Vec<_> = load_user_passkeys(pool, user_id)
+        .await
+        .iter()
+        .map(|p| p.cred_id().clone())
+        .collect();
+    let exclude = if exclude.is_empty() {
+        None
+    } else {
+        Some(exclude)
+    };
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let transports = serde_json::to_value(&body.transports).unwrap();
+    match state.webauthn().start_passkey_registration(
+        stable_user_uuid(user_id),
+        user_id,
+        user_id,
+        exclude,
+    ) {
+        Ok((ccr, reg_state)) => {
+            state
+                .webauthn_reg()
+                .insert(user_id.clone(), (reg_state, std::time::Instant::now()));
+            Json(ccr).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("registration start failed: {e}")})),
+        )
+            .into_response(),
+    }
+}
 
-    match auth::create_webauthn_credential(
-        pool,
-        &id,
-        &auth_ctx.user_id,
-        &body.credential_id,
-        &body.attestation_object, // Placeholder: real impl stores parsed public key
-        &transports,
-        "default",
-    )
-    .await
+/// WebAuthn registration — finish. Verifies the attestation against the stored
+/// ceremony state and persists the resulting `Passkey`.
+async fn webauthn_register_verify(
+    State(state): State<AppState>,
+    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
+    Json(reg): Json<RegisterPublicKeyCredential>,
+) -> impl IntoResponse {
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let user_id = &auth_ctx.user_id;
+    let Some((_, (reg_state, _))) = state.webauthn_reg().remove(user_id) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "no registration ceremony in progress"})),
+        )
+            .into_response();
+    };
+
+    let passkey = match state
+        .webauthn()
+        .finish_passkey_registration(&reg, &reg_state)
     {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({"error": format!("registration verification failed: {e}")}),
+                ),
+            )
+                .into_response();
+        }
+    };
+
+    let cred_id = b64url(passkey.cred_id().as_ref());
+    let pk_json = serde_json::to_string(&passkey).unwrap_or_default();
+    let id = uuid::Uuid::now_v7().to_string();
+
+    match auth::create_webauthn_credential(pool, &id, user_id, &cred_id, &pk_json, 0, &[]).await {
         Ok(row) => (
             StatusCode::CREATED,
             Json(serde_json::json!({
@@ -1695,95 +1773,100 @@ async fn webauthn_register_verify(
     }
 }
 
+/// WebAuthn authentication — start (step-up for the authenticated user). Returns
+/// the W3C `RequestChallengeResponse` and stashes ceremony state.
 async fn webauthn_authenticate_options(
-    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
     State(state): State<AppState>,
+    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
 ) -> impl IntoResponse {
-    // Stub: generate WebAuthn authentication options
-    let challenge = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        uuid::Uuid::now_v7().as_bytes(),
-    );
-
-    let allow_credentials = if let Some(pool) = state.db() {
-        auth::list_webauthn_credentials(pool, &auth_ctx.user_id, "default")
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|c| {
-                serde_json::json!({
-                    "type": "public-key",
-                    "id": c.credential_id,
-                    "transports": c.transports,
-                })
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
     };
+    let user_id = &auth_ctx.user_id;
+    let passkeys = load_user_passkeys(pool, user_id).await;
+    if passkeys.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "no registered passkeys for this user"})),
+        )
+            .into_response();
+    }
 
-    Json(serde_json::json!({
-        "challenge": challenge,
-        "timeout": 60000,
-        "rpId": "localhost",
-        "allowCredentials": allow_credentials,
-        "userVerification": "preferred",
-    }))
+    match state.webauthn().start_passkey_authentication(&passkeys) {
+        Ok((rcr, auth_state)) => {
+            state
+                .webauthn_auth()
+                .insert(user_id.clone(), (auth_state, std::time::Instant::now()));
+            Json(rcr).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("authentication start failed: {e}")})),
+        )
+            .into_response(),
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WebAuthnAuthVerifyRequest {
-    credential_id: String,
-    authenticator_data: String,
-    client_data_json: String,
-    signature: String,
-}
-
-/// Whether the unimplemented auth stubs (WebAuthn verify, SSO/OAuth exchange) may
-/// mint tokens. OFF by default — these stubs do NOT verify any cryptographic
-/// assertion, so allowing them in production is an authentication bypass. Set
-/// `SY_DEV_AUTH=1` only on a trusted dev machine.
-fn dev_auth_enabled() -> bool {
-    std::env::var("SY_DEV_AUTH").is_ok_and(|v| v == "1" || v == "true")
-}
-
-/// 501 response for an auth flow that is not yet implemented (real WebAuthn/OIDC
-/// verification is pending). Returned instead of minting an unverified token.
-fn auth_not_implemented(flow: &str) -> axum::response::Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": format!("{flow} is not implemented"),
-            "statusCode": 501,
-            "hint": "cryptographic verification is pending; set SY_DEV_AUTH=1 on a trusted dev host to use the unverified stub",
-        })),
-    )
-        .into_response()
-}
-
+/// WebAuthn authentication — finish. Verifies the assertion against the stored
+/// ceremony state; on success advances the signature counter and mints a fresh
+/// access token for the SAME authenticated identity (no privilege change).
 async fn webauthn_authenticate_verify(
     State(state): State<AppState>,
-    Json(body): Json<WebAuthnAuthVerifyRequest>,
+    axum::Extension(auth_ctx): axum::Extension<crate::auth::middleware::AuthContext>,
+    Json(cred): Json<PublicKeyCredential>,
 ) -> impl IntoResponse {
-    // SECURITY: this stub does not verify the WebAuthn assertion against a stored
-    // credential, so it must NOT mint a token in production. Fail closed unless a
-    // dev host explicitly opts in. (Real verification is tracked for the
-    // WebAuthn/OIDC implementation work.)
-    if !dev_auth_enabled() {
-        return auth_not_implemented("WebAuthn authentication");
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let user_id = &auth_ctx.user_id;
+    let Some((_, (auth_state, _))) = state.webauthn_auth().remove(user_id) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "no authentication ceremony in progress"})),
+        )
+            .into_response();
+    };
+
+    let result = match state
+        .webauthn()
+        .finish_passkey_authentication(&cred, &auth_state)
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"verified": false, "error": format!("assertion verification failed: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    // Advance the stored counter / backup flags if the authenticator reported a change.
+    if result.needs_update() {
+        let cred_id = b64url(result.cred_id().as_ref());
+        if let Ok(rows) = auth::list_webauthn_credentials(pool, user_id).await
+            && let Some(row) = rows.iter().find(|r| r.credential_id == cred_id)
+            && let Ok(mut pk) = serde_json::from_str::<Passkey>(&row.public_key)
+            && pk.update_credential(&result) == Some(true)
+        {
+            let pk_json = serde_json::to_string(&pk).unwrap_or_default();
+            let _ =
+                auth::update_webauthn_credential(pool, &cred_id, result.counter() as i64, &pk_json)
+                    .await;
+        }
     }
+
     let jwt_config = state.jwt_config();
-
-    // Char-safe truncation (never byte-slice user input — a mid-codepoint slice
-    // panics, and panic=abort would turn it into a remote DoS).
-    let placeholder_user = format!(
-        "webauthn-{}",
-        body.credential_id.chars().take(8).collect::<String>()
-    );
-    let permissions = vec!["*:*".to_string()];
-
-    let token = match issue_access_token(jwt_config, &placeholder_user, "admin", &permissions) {
+    let token = match issue_access_token(jwt_config, user_id, &auth_ctx.role, &auth_ctx.permissions)
+    {
         Ok(t) => t,
         Err(e) => {
             return (
@@ -1799,7 +1882,6 @@ async fn webauthn_authenticate_verify(
         "accessToken": token,
         "expiresIn": jwt_config.access_token_expiry_secs,
         "tokenType": "Bearer",
-        "stub": true,
     }))
     .into_response()
 }
@@ -1815,7 +1897,7 @@ async fn list_webauthn_credentials(
         )
             .into_response();
     };
-    match auth::list_webauthn_credentials(pool, &auth_ctx.user_id, "default").await {
+    match auth::list_webauthn_credentials(pool, &auth_ctx.user_id).await {
         Ok(rows) => Json(serde_json::to_value(rows).unwrap()).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1833,7 +1915,7 @@ async fn delete_webauthn_credential(
     let Some(pool) = state.db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    match auth::delete_webauthn_credential(pool, &id, &auth_ctx.user_id, "default").await {
+    match auth::delete_webauthn_credential(pool, &id, &auth_ctx.user_id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,
@@ -1864,4 +1946,50 @@ async fn get_auth_settings(State(state): State<AppState>) -> impl IntoResponse {
         "apiKeyAuthEnabled": has_db,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_user_uuid_is_deterministic() {
+        // Same user id → same handle across calls (required for WebAuthn).
+        assert_eq!(stable_user_uuid("alice"), stable_user_uuid("alice"));
+        assert_ne!(stable_user_uuid("alice"), stable_user_uuid("bob"));
+        // Non-nil and version-5.
+        assert!(!stable_user_uuid("alice").is_nil());
+    }
+
+    #[test]
+    fn b64url_is_url_safe_unpadded() {
+        let out = b64url(&[0xff, 0xfe, 0xfd]);
+        assert!(!out.contains('+') && !out.contains('/') && !out.contains('='));
+    }
+
+    #[test]
+    fn argon2_hash_verifies_correctly() {
+        // Validates the Argon2 PHC verification path used by verify_admin_password:
+        // a matching password verifies, a wrong one does not.
+        use argon2::password_hash::{PasswordHasher, SaltString};
+        use argon2::{Argon2, PasswordHash, PasswordVerifier};
+
+        let salt = SaltString::from_b64("dGVzdHNhbHR0ZXN0c2FsdA").unwrap();
+        let hash = Argon2::default()
+            .hash_password(b"correct horse", &salt)
+            .unwrap()
+            .to_string();
+
+        let parsed = PasswordHash::new(&hash).unwrap();
+        assert!(
+            Argon2::default()
+                .verify_password(b"correct horse", &parsed)
+                .is_ok()
+        );
+        assert!(
+            Argon2::default()
+                .verify_password(b"wrong password", &parsed)
+                .is_err()
+        );
+    }
 }
