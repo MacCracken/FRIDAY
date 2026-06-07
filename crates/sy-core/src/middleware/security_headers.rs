@@ -58,6 +58,20 @@ where
                 "permissions-policy",
                 "camera=(), microphone=(), geolocation=()",
             );
+            // HSTS — honored by browsers only over HTTPS (a no-op for plain-HTTP
+            // local runs), so safe to send unconditionally and valuable behind TLS.
+            set(
+                headers,
+                "strict-transport-security",
+                "max-age=31536000; includeSubDomains",
+            );
+            // Restrictive CSP. sy-core serves JSON APIs (the dashboard is a separate
+            // origin), so a deny-by-default policy adds defense without breaking it.
+            set(
+                headers,
+                "content-security-policy",
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+            );
 
             Ok(resp)
         })

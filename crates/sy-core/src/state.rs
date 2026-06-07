@@ -24,6 +24,7 @@ use crate::integrations::twitter::TwitterClient;
 use crate::middleware::backpressure::BackpressureState;
 use crate::middleware::fingerprinting::FingerprintState;
 use crate::middleware::ip_reputation::IpReputationState;
+use crate::privacy::ClassificationEngine;
 
 /// Type-erased brain manager for use in AppState.
 /// Uses dynamic dispatch so AppState doesn't need generics.
@@ -100,11 +101,17 @@ struct AppStateInner {
     pub started_at: Instant,
     pub version: String,
     pub allow_remote_access: bool,
+    /// Honor `X-Forwarded-For` for client-IP determination. Only enable when the
+    /// server sits behind a trusted reverse proxy that overwrites the header;
+    /// otherwise the header is attacker-controlled and must be ignored (default).
+    pub trust_proxy_headers: bool,
     pub backpressure: BackpressureState,
     /// In-memory cache of revoked JTIs (avoids DB hit per request).
     pub revoked_tokens: Arc<dashmap::DashMap<String, Instant>>,
     pub fingerprint: FingerprintState,
     pub ip_reputation: Option<IpReputationState>,
+    /// DLP/PII classification engine — compiled once (regexes are not cheap).
+    pub pii_engine: Arc<ClassificationEngine>,
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
@@ -117,10 +124,50 @@ struct AppStateInner {
     pub twitter_client: Option<Arc<TwitterClient>>,
 }
 
+/// The well-known development JWT secret that must never sign tokens in an
+/// exposed deployment — anyone with it could forge admin tokens.
+pub const DEV_JWT_PLACEHOLDER: &str = "dev-jwt-secret-change-in-production!!";
+
+/// Whether a JWT signing secret is strong enough: at least 32 bytes and not the
+/// well-known development placeholder.
+pub fn is_strong_jwt_secret(secret: &str) -> bool {
+    secret.len() >= 32 && secret != DEV_JWT_PLACEHOLDER
+}
+
+/// Generate a cryptographically-random ephemeral JWT secret (48 bytes, base64).
+fn generate_ephemeral_secret() -> String {
+    use base64::Engine;
+    use rand::RngCore;
+    let mut bytes = [0u8; 48];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
+}
+
 impl AppState {
     pub fn new(config: CoreConfig) -> Self {
-        let jwt_secret = std::env::var("SECUREYEOMAN_JWT_SECRET")
-            .unwrap_or_else(|_| "dev-jwt-secret-change-in-production!!".to_string());
+        // Resolve the JWT signing secret. We NEVER fall back to a known/guessable
+        // value — a hardcoded secret would let anyone forge admin tokens. When the
+        // env secret is absent or weak we synthesize a random ephemeral secret
+        // (tokens then don't survive a restart). main() additionally REFUSES to
+        // boot exposed (non-loopback / remote-access) without a strong secret.
+        let jwt_secret = match std::env::var("SECUREYEOMAN_JWT_SECRET") {
+            Ok(s) if is_strong_jwt_secret(&s) => s,
+            Ok(_) => {
+                tracing::warn!(
+                    "SECUREYEOMAN_JWT_SECRET is too weak (need >= 32 bytes and not the dev \
+                     placeholder); using a random ephemeral secret for this run"
+                );
+                generate_ephemeral_secret()
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "SECUREYEOMAN_JWT_SECRET not set; using a random ephemeral secret for this \
+                     run — issued tokens will not survive a restart. Set SECUREYEOMAN_JWT_SECRET \
+                     in any persistent or exposed deployment."
+                );
+                generate_ephemeral_secret()
+            }
+        };
 
         let jwt_config = JwtConfig {
             secret: jwt_secret,
@@ -192,10 +239,14 @@ impl AppState {
                 allow_remote_access: std::env::var("SECUREYEOMAN_ALLOW_REMOTE_ACCESS")
                     .ok()
                     .is_some_and(|v| v == "true" || v == "1"),
+                trust_proxy_headers: std::env::var("SECUREYEOMAN_TRUST_PROXY_HEADERS")
+                    .ok()
+                    .is_some_and(|v| v == "true" || v == "1"),
                 backpressure: BackpressureState::new(),
                 revoked_tokens: Arc::new(dashmap::DashMap::new()),
                 fingerprint: FingerprintState::new(),
                 ip_reputation: Some(IpReputationState::default()),
+                pii_engine: Arc::new(ClassificationEngine::new()),
                 bridge_tx,
                 brain: None,
                 github_client,
@@ -241,6 +292,12 @@ impl AppState {
         self.inner.allow_remote_access
     }
 
+    /// Whether `X-Forwarded-For` should be trusted for client-IP determination.
+    /// Defaults to false; enable only behind a trusted reverse proxy.
+    pub fn trust_proxy_headers(&self) -> bool {
+        self.inner.trust_proxy_headers
+    }
+
     pub fn backpressure(&self) -> &BackpressureState {
         &self.inner.backpressure
     }
@@ -251,6 +308,11 @@ impl AppState {
 
     pub fn ip_reputation(&self) -> Option<&IpReputationState> {
         self.inner.ip_reputation.as_ref()
+    }
+
+    /// The shared DLP/PII classification engine.
+    pub fn pii_engine(&self) -> &ClassificationEngine {
+        &self.inner.pii_engine
     }
 
     /// Check if a token JTI has been revoked (cache → DB fallback).
@@ -289,6 +351,21 @@ impl AppState {
     pub fn with_allow_remote_access(mut self, allow: bool) -> Self {
         let inner = Arc::get_mut(&mut self.inner).unwrap();
         inner.allow_remote_access = allow;
+        self
+    }
+
+    /// Override the trusted-proxy setting (useful for testing).
+    pub fn with_trust_proxy_headers(mut self, trust: bool) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).unwrap();
+        inner.trust_proxy_headers = trust;
+        self
+    }
+
+    /// Override the JWT signing secret (useful for tests, which need a known,
+    /// strong secret that matches the tokens they issue).
+    pub fn with_jwt_secret(mut self, secret: impl Into<String>) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).unwrap();
+        inner.jwt_config.secret = secret.into();
         self
     }
 

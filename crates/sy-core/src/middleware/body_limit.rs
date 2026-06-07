@@ -74,30 +74,54 @@ where
 
         let limit = resolve_limit(&path, content_type.as_deref());
 
+        // Fast path: a declared Content-Length over the limit is rejected outright.
         if let Some(len) = content_length
             && len > limit
         {
-            return Box::pin(async move {
-                Ok((
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    axum::Json(json!({
-                        "error": "Payload too large",
-                        "statusCode": 413,
-                        "maxBytes": limit,
-                        "receivedBytes": len,
-                    })),
-                )
-                    .into_response())
-            });
+            return Box::pin(async move { Ok(too_large(limit, Some(len))) });
         }
 
         let mut inner = self.inner.clone();
+
+        // When Content-Length is present and within the limit we trust it (hyper
+        // bounds the body to that length) and pass the body through as a stream.
+        if content_length.is_some() {
+            return Box::pin(async move {
+                let resp = inner.call(req).await?;
+                let (parts, body) = resp.into_parts();
+                Ok(Response::from_parts(parts, Body::new(body)))
+            });
+        }
+
+        // No Content-Length (chunked / streamed): the header check is bypassable,
+        // so enforce the cap on the ACTUAL bytes. `to_bytes` aborts the read once
+        // `limit` is exceeded, preventing an unbounded-body memory-exhaustion DoS.
         Box::pin(async move {
+            let (parts, body) = req.into_parts();
+            let bytes = match axum::body::to_bytes(body, limit).await {
+                Ok(b) => b,
+                Err(_) => return Ok(too_large(limit, None)),
+            };
+            let req = Request::from_parts(parts, Body::from(bytes));
             let resp = inner.call(req).await?;
-            let (parts, body) = resp.into_parts();
-            Ok(Response::from_parts(parts, Body::new(body)))
+            let (rparts, rbody) = resp.into_parts();
+            Ok(Response::from_parts(rparts, Body::new(rbody)))
         })
     }
+}
+
+/// Build a 413 Payload Too Large JSON response.
+fn too_large(limit: usize, received: Option<usize>) -> Response<Body> {
+    (
+        StatusCode::PAYLOAD_TOO_LARGE,
+        axum::Json(json!({
+            "error": "Payload too large",
+            "statusCode": 413,
+            "maxBytes": limit,
+            "receivedBytes": received,
+        })),
+    )
+        .into_response()
 }
 
 /// Determine the body size limit for a given path and content type.

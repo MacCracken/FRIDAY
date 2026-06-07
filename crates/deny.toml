@@ -11,11 +11,13 @@
 [advisories]
 version = 2
 yanked = "deny"
-# RUSTSEC-2023-0071 — rsa 0.9.10 Marvin Attack: timing sidechannel in private-key ops.
-# Reaches us only via sqlx-mysql, which sqlx pulls unconditionally. We do NOT use
-# MySQL at runtime (PostgreSQL only). No upstream fix is available; revisit when
-# rsa 0.10 ships and sqlx-mysql adopts it.
-ignore = ["RUSTSEC-2023-0071"]
+# No ignores needed here. cargo-deny is feature/graph aware: the only advisory
+# crate in the lock, rsa 0.9.10 (RUSTSEC-2023-0071), is reachable solely via
+# sqlx-mysql, which is never built (postgres-only), so deny does not report it.
+# (cargo-audit is lockfile-literal and still flags it — see crates/.cargo/audit.toml
+# for that ignore.) The wasmtime-wasi advisory (RUSTSEC-2026-0149) + yanked `aes`
+# came via the unused `agnosai` crate, now commented out in Cargo.toml (Cyrius port).
+ignore = []
 
 [licenses]
 version = 2

@@ -20,6 +20,8 @@ use dashmap::DashMap;
 use serde_json::json;
 use tower::{Layer, Service};
 
+use crate::middleware::ip_reputation::IpReputationState;
+
 /// Rate limit tier configuration.
 #[derive(Debug, Clone)]
 pub struct RateTier {
@@ -147,11 +149,23 @@ impl RateLimitState {
 #[derive(Clone)]
 pub struct RateLimitLayer {
     state: RateLimitState,
+    /// Whether to trust `X-Forwarded-For` for client-IP (behind a trusted proxy).
+    trust_proxy: bool,
+    /// Optional IP-reputation state — 429s feed violation points when present.
+    ip_reputation: Option<IpReputationState>,
 }
 
 impl RateLimitLayer {
-    pub fn new(state: RateLimitState) -> Self {
-        Self { state }
+    pub fn new(
+        state: RateLimitState,
+        trust_proxy: bool,
+        ip_reputation: Option<IpReputationState>,
+    ) -> Self {
+        Self {
+            state,
+            trust_proxy,
+            ip_reputation,
+        }
     }
 }
 
@@ -162,6 +176,8 @@ impl<S> Layer<S> for RateLimitLayer {
         RateLimitMiddleware {
             inner,
             state: self.state.clone(),
+            trust_proxy: self.trust_proxy,
+            ip_reputation: self.ip_reputation.clone(),
         }
     }
 }
@@ -170,6 +186,8 @@ impl<S> Layer<S> for RateLimitLayer {
 pub struct RateLimitMiddleware<S> {
     inner: S,
     state: RateLimitState,
+    trust_proxy: bool,
+    ip_reputation: Option<IpReputationState>,
 }
 
 impl<S, ResBody> Service<Request<Body>> for RateLimitMiddleware<S>
@@ -188,9 +206,10 @@ where
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let ip = extract_client_ip(&req);
+        let ip = crate::middleware::client_ip::client_ip(&req, self.trust_proxy);
         let path = req.uri().path().to_string();
         let state = self.state.clone();
+        let ip_reputation = self.ip_reputation.clone();
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
@@ -207,6 +226,14 @@ where
                     Ok(mapped)
                 }
                 Err(retry_after) => {
+                    // Feed the rate-limit violation into IP reputation (10 points
+                    // per the module contract) so repeat abusers accrue toward an
+                    // auto-block. Skipped for the "unknown" bucket.
+                    if let Some(rep) = &ip_reputation
+                        && ip != "unknown"
+                    {
+                        rep.record_violation(&ip, 10.0, "rate_limit_exceeded");
+                    }
                     let resp = (
                         StatusCode::TOO_MANY_REQUESTS,
                         [("retry-after", retry_after.to_string())],
@@ -222,31 +249,6 @@ where
             }
         })
     }
-}
-
-/// Extract client IP from X-Forwarded-For or fall back to peer address.
-fn extract_client_ip<B>(req: &Request<B>) -> String {
-    // Try X-Forwarded-For first (first IP in the chain)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for")
-        && let Ok(val) = forwarded.to_str()
-        && let Some(first_ip) = val.split(',').next()
-    {
-        let trimmed = first_ip.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    // Fall back to ConnectInfo if available (axum injects this from the socket)
-    if let Some(addr) = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-    {
-        return addr.0.ip().to_string();
-    }
-
-    // Last resort — unknown (still rate-limited as a single bucket)
-    "unknown".to_string()
 }
 
 #[cfg(test)]

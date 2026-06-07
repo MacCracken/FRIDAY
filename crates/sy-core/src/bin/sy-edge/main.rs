@@ -18,6 +18,7 @@ mod server;
 mod updater;
 
 use clap::{Parser, Subcommand};
+use std::net::{IpAddr, SocketAddr};
 use tracing::{info, warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -141,6 +142,37 @@ async fn run_start(port: u16, host: String, parent_url: Option<String>) {
     let a2a_manager = a2a::A2AManager::new(caps.clone());
     let rate_limiter = ratelimit::RateLimiter::new(100.0, 200);
 
+    // Resolve edge API authentication and fail closed on exposed binds. The edge
+    // API exposes command execution, so an unauthenticated, internet-reachable
+    // instance is a remote-code-execution surface.
+    let api_token = std::env::var("SECUREYEOMAN_EDGE_API_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let dev_mode = std::env::var("SY_EDGE_DEV_MODE").is_ok_and(|v| v == "true" || v == "1");
+    let bind_is_loopback = host
+        .parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false);
+    if api_token.is_none() && !dev_mode && !bind_is_loopback {
+        tracing::error!(
+            host = %host,
+            "refusing to start: edge API exposes command execution but no \
+             SECUREYEOMAN_EDGE_API_TOKEN is set and the bind address is not loopback. Set a \
+             token, bind to 127.0.0.1, or set SY_EDGE_DEV_MODE=true to run unauthenticated on a \
+             trusted network."
+        );
+        std::process::exit(1);
+    }
+    if api_token.is_none() && dev_mode {
+        warn!(
+            "SY_EDGE_DEV_MODE enabled — edge API is UNAUTHENTICATED; use only on a trusted network"
+        );
+    }
+    let auth = server::EdgeAuth {
+        token: api_token,
+        dev_mode,
+    };
+
     // Start background tasks
     let metrics_handle = metrics_collector.start();
     let scheduler_handle = scheduler.start(llm_client.clone(), messenger.clone());
@@ -182,6 +214,7 @@ async fn run_start(port: u16, host: String, parent_url: Option<String>) {
         scheduler,
         a2a: a2a_manager,
         rate_limiter,
+        auth,
     };
 
     let app = server::build_router(state);
@@ -202,12 +235,15 @@ async fn run_start(port: u16, host: String, parent_url: Option<String>) {
         info!("Shutdown signal received");
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(error = %e, "Server error");
-        });
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
+    .unwrap_or_else(|e| {
+        tracing::error!(error = %e, "Server error");
+    });
 
     // Cleanup
     metrics_handle.abort();

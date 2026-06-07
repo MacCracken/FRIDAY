@@ -239,11 +239,13 @@ pub struct BlockInfo {
 #[derive(Clone)]
 pub struct IpReputationLayer {
     state: IpReputationState,
+    /// Whether to trust `X-Forwarded-For` for client-IP (behind a trusted proxy).
+    trust_proxy: bool,
 }
 
 impl IpReputationLayer {
-    pub fn new(state: IpReputationState) -> Self {
-        Self { state }
+    pub fn new(state: IpReputationState, trust_proxy: bool) -> Self {
+        Self { state, trust_proxy }
     }
 }
 
@@ -254,6 +256,7 @@ impl<S> Layer<S> for IpReputationLayer {
         IpReputationMiddleware {
             inner,
             state: self.state.clone(),
+            trust_proxy: self.trust_proxy,
         }
     }
 }
@@ -262,6 +265,7 @@ impl<S> Layer<S> for IpReputationLayer {
 pub struct IpReputationMiddleware<S> {
     inner: S,
     state: IpReputationState,
+    trust_proxy: bool,
 }
 
 impl<S, ResBody> Service<Request<Body>> for IpReputationMiddleware<S>
@@ -280,7 +284,7 @@ where
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let ip = extract_client_ip(&req);
+        let ip = crate::middleware::client_ip::client_ip(&req, self.trust_proxy);
         let state = self.state.clone();
         let mut inner = self.inner.clone();
 
@@ -304,28 +308,6 @@ where
             Ok(Response::from_parts(parts, Body::new(body)))
         })
     }
-}
-
-/// Extract client IP from X-Forwarded-For or ConnectInfo.
-fn extract_client_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for")
-        && let Ok(val) = forwarded.to_str()
-        && let Some(first_ip) = val.split(',').next()
-    {
-        let trimmed = first_ip.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    if let Some(addr) = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-    {
-        return addr.0.ip().to_string();
-    }
-
-    "unknown".to_string()
 }
 
 #[cfg(test)]

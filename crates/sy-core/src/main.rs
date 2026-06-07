@@ -22,6 +22,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = sy_core::types::CoreConfig::load(None)?;
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
 
+    // Refuse to boot an *exposed* server (non-loopback bind or remote access
+    // enabled) without a strong JWT secret — a missing/weak/placeholder secret
+    // would let anyone forge admin tokens. Loopback-only dev runs are allowed to
+    // fall back to a random ephemeral secret (see AppState::new).
+    let remote_access_enabled =
+        std::env::var("SECUREYEOMAN_ALLOW_REMOTE_ACCESS").is_ok_and(|v| v == "true" || v == "1");
+    let exposed = !addr.ip().is_loopback() || remote_access_enabled;
+    if exposed {
+        let strong = std::env::var("SECUREYEOMAN_JWT_SECRET")
+            .ok()
+            .is_some_and(|s| sy_core::state::is_strong_jwt_secret(&s));
+        if !strong {
+            return Err(format!(
+                "refusing to start: SECUREYEOMAN_JWT_SECRET must be set to a strong value \
+                 (at least 32 bytes and not the dev placeholder) when binding to {addr} or with \
+                 SECUREYEOMAN_ALLOW_REMOTE_ACCESS enabled — otherwise admin tokens are forgeable"
+            )
+            .into());
+        }
+    }
+
     let db_url = config.database_url.clone();
     let mut app_state = state::AppState::new(config);
 
@@ -118,7 +139,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("sy-core listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Serve with ConnectInfo so the real TCP peer address is available to the
+    // client-IP helper. Without this, IP-based controls (local-network gate,
+    // rate limit, IP reputation) would have no authoritative source and fall
+    // back to the spoofable `X-Forwarded-For` header.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

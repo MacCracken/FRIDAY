@@ -10,12 +10,16 @@ use sy_core::auth::jwt::{JwtConfig, issue_access_token};
 use sy_core::server::build_router;
 use sy_core::state::AppState;
 
-/// Default JWT secret used in tests (matches CoreConfig::default()).
-const TEST_JWT_SECRET: &str = "dev-jwt-secret-change-in-production!!";
+/// Strong JWT secret used in tests (>= 32 bytes, not the dev placeholder). Both
+/// the AppState under test and the tokens we issue use this exact value.
+const TEST_JWT_SECRET: &str = "test-secret-do-not-use-in-prod-0123456789abcdef";
 
-/// Build a test AppState with no database and remote access allowed.
+/// Build a test AppState with no database, remote access allowed, and a known
+/// strong JWT secret so issued tokens validate against the state under test.
 pub fn test_state() -> AppState {
-    AppState::new(sy_core::types::CoreConfig::default()).with_allow_remote_access(true)
+    AppState::new(sy_core::types::CoreConfig::default())
+        .with_allow_remote_access(true)
+        .with_jwt_secret(TEST_JWT_SECRET)
 }
 
 /// Build the full router for integration testing (no database, remote access allowed).

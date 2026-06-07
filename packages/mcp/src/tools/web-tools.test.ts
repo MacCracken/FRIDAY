@@ -757,6 +757,26 @@ describe('validateUrl — additional SSRF vectors', () => {
       validateUrl('javascript:alert(1)', config);
     }).toThrow();
   });
+
+  it('blocks decimal-encoded loopback (2130706433 = 127.0.0.1)', () => {
+    expect(() => validateUrl('http://2130706433/', config)).toThrow('blocked');
+  });
+
+  it('blocks hex-encoded loopback (0x7f000001)', () => {
+    expect(() => validateUrl('http://0x7f000001/', config)).toThrow('blocked');
+  });
+
+  it('blocks octal-encoded loopback (017700000001)', () => {
+    expect(() => validateUrl('http://017700000001/', config)).toThrow('blocked');
+  });
+
+  it('blocks decimal-encoded cloud metadata (2852039166 = 169.254.169.254)', () => {
+    expect(() => validateUrl('http://2852039166/latest/meta-data/', config)).toThrow('blocked');
+  });
+
+  it('blocks IPv4-mapped IPv6 metadata address', () => {
+    expect(() => validateUrl('http://[::ffff:169.254.169.254]/', config)).toThrow('blocked');
+  });
 });
 
 // WebRateLimiter additional tests covered by existing suite

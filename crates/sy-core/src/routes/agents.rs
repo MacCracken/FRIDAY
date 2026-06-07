@@ -322,6 +322,25 @@ fn default_timeout_ms() -> i32 {
     60000
 }
 
+/// Upper bound on a per-run token budget. Prevents a negative or absurdly large
+/// client-supplied `i32` from becoming a huge `u32` after casting (which would
+/// schedule a runaway number of LLM calls — a resource-exhaustion DoS).
+const MAX_TOKEN_BUDGET: i32 = 10_000_000;
+/// Upper bound on council deliberation rounds (each round fans out one LLM call
+/// per member). Caps the `1..=max_rounds` loop.
+const MAX_COUNCIL_ROUNDS: i32 = 50;
+
+/// Clamp a client-supplied token budget into `[0, MAX_TOKEN_BUDGET]` before the
+/// unsigned cast.
+fn clamp_token_budget(v: i32) -> u32 {
+    v.clamp(0, MAX_TOKEN_BUDGET) as u32
+}
+
+/// Clamp client-supplied council rounds into `[1, MAX_COUNCIL_ROUNDS]`.
+fn clamp_max_rounds(v: i32) -> u32 {
+    v.clamp(1, MAX_COUNCIL_ROUNDS) as u32
+}
+
 async fn delegate_task(
     State(state): State<AppState>,
     Json(body): Json<DelegateTaskRequest>,
@@ -740,7 +759,7 @@ async fn execute_swarm(
             let template_id = body.template_id.clone();
             let task = body.task.clone();
             let context = body.context.clone();
-            let token_budget = body.token_budget as u32;
+            let token_budget = clamp_token_budget(body.token_budget);
             tokio::spawn(async move {
                 let _ = agents::start_swarm_run(&pool, &run_id).await;
 
@@ -995,8 +1014,8 @@ async fn convene_council(
             let template_id = body.template_id.clone();
             let topic = body.topic.clone();
             let context = body.context.clone();
-            let token_budget = body.token_budget as u32;
-            let max_rounds = body.max_rounds as u32;
+            let token_budget = clamp_token_budget(body.token_budget);
+            let max_rounds = clamp_max_rounds(body.max_rounds);
             tokio::spawn(async move {
                 let _ = agents::start_council_run(&pool, &run_id).await;
 
@@ -1213,7 +1232,7 @@ async fn run_team(
             let team_id = id.clone();
             let task = body.task.clone();
             let context = body.context.clone();
-            let token_budget = body.token_budget as u32;
+            let token_budget = clamp_token_budget(body.token_budget);
             tokio::spawn(async move {
                 let _ = agents::start_team_run(&pool, &spawn_run_id).await;
 

@@ -5,6 +5,7 @@
 
 pub mod backpressure;
 pub mod body_limit;
+pub mod client_ip;
 pub mod correlation_id;
 pub mod fingerprinting;
 pub mod ip_reputation;

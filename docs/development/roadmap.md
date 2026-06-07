@@ -42,6 +42,18 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 
 **Priority**: P(-1) — Blocks any new features after 0.5.0 ships. Run the hardening loop from [CLAUDE.md §P(-1)](../../CLAUDE.md) end to end before opening new work. Items below are the specific findings accumulated during the 0.5.0 release sprint and the 2026-04-27 P(-1) checkpoint; they are the input to the loop, not a substitute for it.
 
+### 2026-06-07 — 0.5.1 hardening release (shipped)
+
+A 16-dimension adversarially-verified multi-agent review drove a P(-1) hardening pass. **Tagged 0.5.1.** Full detail in the [CHANGELOG](../../CHANGELOG.md#051--2026-06-07). Highlights:
+
+- **Security:** JWT admin-token forgery (refuse-to-boot exposed without a strong secret); `X-Forwarded-For` spoofing of the local-network gate / rate-limit / IP-reputation (real-peer `ConnectInfo` + opt-in trusted-proxy); edge runtime fail-closed + constant-time token + enforced exec timeout + trimmed allowlist; audit-chain sequence + signed-head tamper-evidence; DLP engine wired up + secret detection; MCP SSH command-injection + SSRF; HSTS/CSP; CSV-injection; reachable panics; **unverified auth stubs failed-closed** (no more admin-token forgery).
+- **Hardening:** orchestration resource clamps, streamed body-limit, DB pool timeouts, forge lock-across-await, dashboard `Bearer null` fix.
+- **Deps:** Rust `cargo update` + unused ecosystem crates commented out (cleared wasmtime/aes advisories); npm react-router/vitest/mermaid/excalidraw security bumps. audit/deny green.
+- **Marketplace seed (P0):** 46 first-party items restored as a Rust first-boot seed.
+- **Build/CI:** GitHub Actions SHA-pinned (release workflow), Docker healthcheck/railway/license fixes.
+
+**Deferred:** 0.5.2 = real WebAuthn + OIDC SSO (stubs are failed-closed meanwhile). 0.6.0 = real seccomp/Landlock enforcement, full multi-tenant isolation, real cert pinning, refresh-token→cookie, SSE/avatar token-in-URL, `packages/core` deletion + Cyrius ecosystem-crate port.
+
 ### 2026-04-27 P(-1) checkpoint — done in this cycle
 
 These shipped on `main` ahead of the 0.5.1 tag. Tests still green: 462 Rust + 4140 dashboard + 1235 MCP.
@@ -96,6 +108,8 @@ A runtime crash in `SandboxConfigPanel` during 0.5.0 release prep traced to the 
 - [ ] **Type-narrowing-via-side-effect audit** — TypeScript narrowed `capabilities?.technologies.map(…)` such that `capabilities` was treated as non-`undefined` *inside* the map body. Scan for other places where a chained guard on one level masks a needed guard at another.
 
 ### Marketplace seeding regression
+
+> ✅ **RESOLVED in 0.5.1 (2026-06-07).** The 46 first-party items (skills + themes + personalities) are embedded from the canonical TS `BUILTIN_SKILLS` list and seeded idempotently (`source='builtin'`, stable id, `ON CONFLICT DO NOTHING`) by `db::seed::seed_marketplace_skills`, called from `seed_defaults` on first boot. The history below is retained for context.
 
 Reported during 0.5.0 release prep: marketplace items disappeared from the running instance. Likely a seed drift during the TS→Rust migration.
 

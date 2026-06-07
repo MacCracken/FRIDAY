@@ -190,21 +190,27 @@ impl<D: AgentDelegate> SwarmExecutor<D> {
         let coordinator_count = if coordinator_profile.is_some() { 1 } else { 0 };
         let per_budget = token_budget / (roles.len() as u32 + coordinator_count).max(1);
 
-        // Dispatch all members concurrently
-        let futures: Vec<_> = roles
-            .iter()
-            .map(|role| {
-                self.delegate.delegate(DelegationParams {
-                    profile: role.profile_name.clone(),
-                    task: task.to_string(),
-                    context: context.map(|c| c.to_string()),
-                    max_token_budget: per_budget,
-                    model_override: None,
+        // Dispatch members concurrently but cap in-flight delegations so a large
+        // template cannot open thousands of simultaneous LLM connections (memory /
+        // socket exhaustion). Chunking preserves order, so the `roles[i]` indexing
+        // below stays correct.
+        const MAX_CONCURRENCY: usize = 16;
+        let mut results = Vec::with_capacity(roles.len());
+        for chunk in roles.chunks(MAX_CONCURRENCY) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|role| {
+                    self.delegate.delegate(DelegationParams {
+                        profile: role.profile_name.clone(),
+                        task: task.to_string(),
+                        context: context.map(|c| c.to_string()),
+                        max_token_budget: per_budget,
+                        model_override: None,
+                    })
                 })
-            })
-            .collect();
-
-        let results = futures::future::join_all(futures).await;
+                .collect();
+            results.extend(futures::future::join_all(futures).await);
+        }
 
         let mut members = Vec::new();
         let mut total_tokens = 0u32;

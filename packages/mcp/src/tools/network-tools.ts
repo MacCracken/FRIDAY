@@ -221,6 +221,28 @@ async function openSshSession(
   });
 }
 
+/**
+ * Strict allowlist for values interpolated into device CLI commands (targets,
+ * VRF/interface/ACL names, prefixes, address families). Permits the characters
+ * that appear in IPs, hostnames, CIDRs and interface identifiers, and rejects
+ * whitespace and shell/CLI metacharacters — preventing command injection into
+ * the remote device shell via `runSshCommand`. Throws on invalid input.
+ */
+const SAFE_NET_ARG = /^[A-Za-z0-9._:/-]+$/;
+function safeNetArg(value: string, field: string): string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 256 ||
+    !SAFE_NET_ARG.test(value)
+  ) {
+    throw new Error(
+      `Invalid ${field}: only letters, digits and . _ : / - are allowed (no spaces or shell metacharacters)`
+    );
+  }
+  return value;
+}
+
 async function runSshCommand(sessionId: string, command: string): Promise<string> {
   const sess = sshSessions.get(sessionId);
   if (!sess) {
@@ -723,7 +745,10 @@ export async function registerNetworkTools(
         target: string;
         count: number;
       };
-      const output = await runSshCommand(sessionId, `ping ${target} repeat ${count ?? 5}`);
+      const output = await runSshCommand(
+        sessionId,
+        `ping ${safeNetArg(target, 'target')} repeat ${count ?? 5}`
+      );
       return jsonResponse({ target, output });
     })
   );
@@ -744,7 +769,10 @@ export async function registerNetworkTools(
         target: string;
         maxHops: number;
       };
-      const output = await runSshCommand(sessionId, `traceroute ${target} ttl 1 ${maxHops ?? 30}`);
+      const output = await runSshCommand(
+        sessionId,
+        `traceroute ${safeNetArg(target, 'target')} ttl 1 ${maxHops ?? 30}`
+      );
       return jsonResponse({ target, output });
     })
   );
@@ -873,7 +901,7 @@ export async function registerNetworkTools(
     },
     wrapToolHandler('network_arp_table', middleware, async (args) => {
       const { sessionId, vrf } = args as { sessionId: string; vrf?: string };
-      const cmd = vrf ? `show arp vrf ${vrf}` : 'show arp';
+      const cmd = vrf ? `show arp vrf ${safeNetArg(vrf, 'vrf')}` : 'show arp';
       const output = await runSshCommand(sessionId, cmd);
       return jsonResponse({ raw: output });
     })
@@ -923,7 +951,7 @@ export async function registerNetworkTools(
       };
       let cmd = ipv6 ? 'show ipv6 route' : 'show ip route';
       if (protocol && protocol !== 'all') cmd += ` ${protocol}`;
-      if (prefix) cmd += ` ${prefix}`;
+      if (prefix) cmd += ` ${safeNetArg(prefix, 'prefix')}`;
       const output = await runSshCommand(sessionId, cmd);
       return jsonResponse({ raw: output });
     })
@@ -994,7 +1022,9 @@ export async function registerNetworkTools(
     },
     wrapToolHandler('network_interface_status', middleware, async (args) => {
       const { sessionId, interface: iface } = args as { sessionId: string; interface?: string };
-      const cmd = iface ? `show interfaces ${iface}` : 'show interfaces status';
+      const cmd = iface
+        ? `show interfaces ${safeNetArg(iface, 'interface')}`
+        : 'show interfaces status';
       const output = await runSshCommand(sessionId, cmd);
       return jsonResponse({ raw: output });
     })
@@ -1029,7 +1059,9 @@ export async function registerNetworkTools(
     },
     wrapToolHandler('network_acl_audit', middleware, async (args) => {
       const { sessionId, aclName } = args as { sessionId: string; aclName?: string };
-      const cmd = aclName ? `show ip access-lists ${aclName}` : 'show ip access-lists';
+      const cmd = aclName
+        ? `show ip access-lists ${safeNetArg(aclName, 'aclName')}`
+        : 'show ip access-lists';
       const output = await runSshCommand(sessionId, cmd);
       return jsonResponse({ raw: output });
     })
@@ -1065,7 +1097,9 @@ export async function registerNetworkTools(
     },
     wrapToolHandler('network_port_security', middleware, async (args) => {
       const { sessionId, interface: iface } = args as { sessionId: string; interface?: string };
-      const cmd = iface ? `show port-security interface ${iface}` : 'show port-security';
+      const cmd = iface
+        ? `show port-security interface ${safeNetArg(iface, 'interface')}`
+        : 'show port-security';
       const output = await runSshCommand(sessionId, cmd);
       return jsonResponse({ raw: output });
     })

@@ -199,25 +199,24 @@ pub fn topological_sort(steps: &[WorkflowStep]) -> Result<Vec<Vec<String>>, Work
 ///
 /// Supports `{{steps.X.output.field}}` and `{{input.key}}` patterns.
 pub fn resolve_template(template: &str, context: &WorkflowContext) -> String {
-    let mut result = template.to_string();
-    let re_pattern = "{{";
-    let re_end = "}}";
-
-    // Simple iterative replacement (no regex dependency needed)
-    loop {
-        let Some(start) = result.find(re_pattern) else {
-            break;
+    // Single left-to-right pass. Substituted values are NOT re-scanned, which
+    // (a) avoids re-resolving template syntax that appears *inside* a resolved
+    // value (a template-injection vector) and (b) guarantees termination: a
+    // self-referential value such as `{{input.x}}` resolving to `"{{input.x}}"`
+    // previously looped forever via `replace_range` (CPU-exhaustion DoS).
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let Some(end_rel) = rest[start + 2..].find("}}") else {
+            break; // no closing delimiter — emit the remainder verbatim below
         };
-        let Some(end) = result[start + 2..].find(re_end) else {
-            break;
-        };
-        let end = start + 2 + end;
-
-        let path = result[start + 2..end].trim();
-        let value = resolve_path(path, context);
-        result.replace_range(start..end + 2, &value);
+        let end = start + 2 + end_rel;
+        result.push_str(&rest[..start]);
+        let path = rest[start + 2..end].trim();
+        result.push_str(&resolve_path(path, context));
+        rest = &rest[end + 2..];
     }
-
+    result.push_str(rest);
     result
 }
 

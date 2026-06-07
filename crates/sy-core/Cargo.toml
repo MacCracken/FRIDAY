@@ -46,9 +46,13 @@ sysinfo = "0.35"
 bhava = { version = "2.0.0", features = ["presets", "psychology", "sociology", "physiology", "microbiology", "neuroscience", "instinct"] }
 szal = { version = "1.0", features = ["majra"] }
 bote = { version = "0.50", features = ["bridge"] }
-dhvani = { version = "1.0.0", features = ["voice", "g2p", "synthesis", "analysis"] }
-agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
-majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
+# TODO(cyrius-port): re-enable when these are wired to their Cyrius versions.
+# Currently unused (no `use` in src) — kept here as planned-work markers.
+# `agnosai` also pulled the vulnerable wasmtime-wasi (RUSTSEC-2026-0149) and a
+# yanked `aes`; commenting it out clears both for the 0.5.1 hardening release.
+# dhvani = { version = "1.0.0", features = ["voice", "g2p", "synthesis", "analysis"] }
+# agnosai = { version = "1.0.0", features = ["definitions", "sandbox"] }
+# majra = { version = "1.0.3", features = ["pubsub", "ratelimit", "heartbeat", "barrier", "queue"] }
 
 axum = { version = "0.8", features = ["json", "ws"] }
 toml = "0.8"
@@ -60,7 +64,9 @@ tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip",
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
-ifran = { version = "1.2", default-features = false }
+# TODO(cyrius-port): re-enable when wired (routes/ifran_proxy.rs currently proxies
+# an external Ifran HTTP server via reqwest, not this crate). Unused today.
+# ifran = { version = "1.2", default-features = false }
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid", "json"] }
 uuid = { version = "1", features = ["v7", "serde"] }

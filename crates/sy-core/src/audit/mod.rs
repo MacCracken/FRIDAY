@@ -1,8 +1,12 @@
 //! HMAC-SHA256 Linked Audit Chain
 //!
-//! Append-only cryptographic audit log where each entry is signed with
-//! HMAC-SHA256(entryHash:previousHash, signingKey). Provides tamper detection
-//! and key rotation support.
+//! Append-only cryptographic audit log. Each entry is signed with
+//! HMAC-SHA256(entryHash:previousHash:sequence, signingKey) — the strictly
+//! increasing `sequence` binds an entry to its position, so reordering or
+//! middle-deletion is detectable. The chain also maintains a signed head
+//! commitment HMAC(lastHash:count, signingKey); verify() recomputes it from the
+//! actual entries, so dropping the most recent entries (tail truncation) — which
+//! a plain forward hash-walk cannot catch — is detected too.
 //!
 //! Genesis block starts with previousHash = "0000...0000" (64 zeros).
 
@@ -10,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
-const CHAIN_VERSION: &str = "1.0.0";
+const CHAIN_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
@@ -26,6 +30,10 @@ pub struct AuditEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
     pub timestamp: u64,
+    /// Strictly-increasing 0-based position in the chain, bound into the
+    /// signature so reordering / middle-deletion is detectable.
+    #[serde(default)]
+    pub sequence: u64,
     pub integrity: IntegrityFields,
 }
 
@@ -40,6 +48,9 @@ pub struct IntegrityFields {
 pub struct AuditChain {
     signing_key: String,
     last_hash: String,
+    /// Signed commitment to (last_hash, count). Updated on every append; checked
+    /// by verify() to detect tail truncation.
+    head_signature: String,
     entries: Vec<AuditEntry>,
 }
 
@@ -48,6 +59,7 @@ impl AuditChain {
         Self {
             signing_key: signing_key.to_string(),
             last_hash: GENESIS_HASH.to_string(),
+            head_signature: compute_head(GENESIS_HASH, 0, signing_key),
             entries: Vec::new(),
         }
     }
@@ -91,8 +103,11 @@ impl AuditChain {
         let sorted_json = serde_json::to_string(&entry_data).unwrap_or_default();
         let entry_hash = crate::crypto::sha256(sorted_json.as_bytes());
 
-        // Compute signature: HMAC-SHA256(entryHash:previousHash, signingKey)
-        let sig_input = format!("{}:{}", entry_hash, self.last_hash);
+        // Sequence binds the entry to its position in the chain.
+        let sequence = self.entries.len() as u64;
+
+        // Compute signature: HMAC-SHA256(entryHash:previousHash:sequence, signingKey)
+        let sig_input = format!("{}:{}:{}", entry_hash, self.last_hash, sequence);
         let signature =
             crate::crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
 
@@ -106,6 +121,7 @@ impl AuditChain {
             task_id: task_id.map(|s| s.to_string()),
             metadata,
             timestamp,
+            sequence,
             integrity: IntegrityFields {
                 version: CHAIN_VERSION.to_string(),
                 signature,
@@ -115,6 +131,12 @@ impl AuditChain {
 
         self.last_hash = entry_hash;
         self.entries.push(entry.clone());
+        // Re-sign the head over the new (last_hash, count).
+        self.head_signature = compute_head(
+            &self.last_hash,
+            self.entries.len() as u64,
+            &self.signing_key,
+        );
         entry
     }
 
@@ -134,11 +156,22 @@ impl AuditChain {
                 );
             }
 
+            // Sequence continuity — detects reordering and middle-deletion.
+            if entry.sequence != i as u64 {
+                return (
+                    false,
+                    Some(format!(
+                        "Entry {} ({}): sequence mismatch (expected {}, got {})",
+                        i, entry.id, i, entry.sequence
+                    )),
+                );
+            }
+
             // Recompute entry hash
             let entry_hash = self.compute_entry_hash(entry);
 
-            // Verify signature
-            let sig_input = format!("{}:{}", entry_hash, prev_hash);
+            // Verify signature (binds entryHash, previousHash and sequence)
+            let sig_input = format!("{}:{}:{}", entry_hash, prev_hash, entry.sequence);
             let expected_sig =
                 crate::crypto::hmac_sha256(sig_input.as_bytes(), self.signing_key.as_bytes());
 
@@ -156,6 +189,18 @@ impl AuditChain {
             }
 
             prev_hash = entry_hash;
+        }
+
+        // Head commitment — detects tail truncation. The signed head over
+        // (last_hash, count) cannot be re-forged without the signing key, so a
+        // dropped tail leaves a head that no longer matches the actual entries.
+        let expected_head = compute_head(&prev_hash, self.entries.len() as u64, &self.signing_key);
+        if !crate::crypto::secure_compare(self.head_signature.as_bytes(), expected_head.as_bytes())
+        {
+            return (
+                false,
+                Some("audit chain head commitment mismatch (possible truncation)".to_string()),
+            );
         }
 
         (true, None)
@@ -212,6 +257,13 @@ impl AuditChain {
         let json = serde_json::to_string(&data).unwrap_or_default();
         crate::crypto::sha256(json.as_bytes())
     }
+}
+
+/// Signed commitment to the chain head: HMAC-SHA256(last_hash:count, signing_key).
+/// Lets verify() detect tail truncation that a forward hash-walk would miss.
+fn compute_head(last_hash: &str, count: u64, signing_key: &str) -> String {
+    let input = format!("{last_hash}:{count}");
+    crate::crypto::hmac_sha256(input.as_bytes(), signing_key.as_bytes())
 }
 
 fn generate_id() -> String {
@@ -329,6 +381,31 @@ mod tests {
     }
 
     #[test]
+    fn tail_truncation_detected() {
+        let mut chain = AuditChain::new("key");
+        chain.record("e1", "info", "first", None, None, None);
+        chain.record("e2", "info", "second", None, None, None);
+        chain.record("e3", "info", "third", None, None, None);
+
+        // Attacker drops the two most recent entries. The remaining prefix is
+        // internally consistent, but the signed head no longer matches.
+        chain.entries.truncate(1);
+        let (valid, err) = chain.verify();
+        assert!(!valid, "tail truncation must be detected");
+        assert!(err.unwrap().contains("head commitment"));
+    }
+
+    #[test]
+    fn reorder_detected_via_sequence() {
+        let mut chain = AuditChain::new("key");
+        chain.record("e1", "info", "first", None, None, None);
+        chain.record("e2", "info", "second", None, None, None);
+        chain.entries.swap(0, 1);
+        let (valid, _) = chain.verify();
+        assert!(!valid, "reordering must be detected");
+    }
+
+    #[test]
     fn tamper_previous_hash_link() {
         let mut chain = AuditChain::new("key");
         chain.record("e1", "info", "first", None, None, None);
@@ -400,7 +477,7 @@ mod tests {
     fn integrity_version_is_set() {
         let mut chain = AuditChain::new("key");
         chain.record("test", "info", "msg", None, None, None);
-        assert_eq!(chain.entries[0].integrity.version, "1.0.0");
+        assert_eq!(chain.entries[0].integrity.version, "1.1.0");
     }
 
     #[test]

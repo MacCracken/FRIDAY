@@ -16,7 +16,7 @@ use crate::middleware::backpressure::check_backpressure;
 use crate::middleware::body_limit::BodyLimitLayer;
 use crate::middleware::correlation_id::CorrelationIdLayer;
 use crate::middleware::fingerprinting::check_fingerprint;
-use crate::middleware::ip_reputation::{IpReputationLayer, IpReputationState};
+use crate::middleware::ip_reputation::IpReputationLayer;
 use crate::middleware::local_network::check_local_network;
 use crate::middleware::rate_limit::{RateLimitLayer, RateLimitState};
 use crate::middleware::security_headers::SecurityHeadersLayer;
@@ -175,12 +175,22 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(CorrelationIdLayer)
         .layer(BodyLimitLayer)
-        .layer(RateLimitLayer::new(RateLimitState::new()))
+        .layer(RateLimitLayer::new(
+            RateLimitState::new(),
+            state.trust_proxy_headers(),
+            state.ip_reputation().cloned(),
+        ))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             check_backpressure,
         ))
-        .layer(IpReputationLayer::new(IpReputationState::default()))
+        // Share the AppState Ip-reputation instance so the blocking layer sees the
+        // violations the fingerprint/rate-limit feeders record (they all use
+        // `state.ip_reputation()`).
+        .layer(IpReputationLayer::new(
+            state.ip_reputation().cloned().unwrap_or_default(),
+            state.trust_proxy_headers(),
+        ))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             check_local_network,
@@ -319,5 +329,17 @@ mod tests {
             "nosniff"
         );
         assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+        assert!(
+            resp.headers()
+                .get("strict-transport-security")
+                .is_some_and(|v| v.to_str().unwrap_or("").contains("max-age=")),
+            "HSTS header should be set"
+        );
+        assert!(
+            resp.headers()
+                .get("content-security-policy")
+                .is_some_and(|v| v.to_str().unwrap_or("").contains("default-src")),
+            "CSP header should be set"
+        );
     }
 }

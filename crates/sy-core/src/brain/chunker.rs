@@ -188,11 +188,18 @@ pub fn chunk(content: &str, options: Option<ChunkOptions>) -> Vec<DocumentChunk>
 
 /// Extract the tail of text worth approximately `token_count` tokens.
 fn extract_tail(text: &str, token_count: usize) -> String {
-    let char_budget = token_count * 4;
+    let char_budget = token_count.saturating_mul(4);
     if text.len() <= char_budget {
         return text.to_string();
     }
-    text[text.len() - char_budget..].to_string()
+    // Advance to the next UTF-8 char boundary so we never slice mid-codepoint —
+    // a raw byte slice here panics (process-killing DoS under panic=abort) on
+    // multi-byte input from the document-ingest path.
+    let mut start = text.len() - char_budget;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_string()
 }
 
 #[cfg(test)]

@@ -60,8 +60,12 @@ ENV SECUREYEOMAN_LOG_FORMAT=json
 
 EXPOSE 18789 443 5432 8088 8090
 
+# HTTP liveness probe. The Rust `sy-core` binary starts the server regardless of
+# args (it does not implement a `health` subcommand), so probe the live endpoint
+# instead of the legacy `secureyeoman health --json` CLI. /health returns 200 even
+# when degraded, which is the correct liveness signal.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD secureyeoman health --json || exit 1
+  CMD wget -qO- http://127.0.0.1:18789/health >/dev/null 2>&1 || exit 1
 
 # Entrypoint runs as root for PG init; supervisord drops to secureyeoman/postgres per program.
 ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint-combined.sh"]

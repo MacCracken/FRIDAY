@@ -35,6 +35,46 @@ const BLOCKED_IP_RANGES = [
 
 const BLOCKED_HOSTNAMES = ['localhost', 'metadata.google.internal', 'metadata.internal'];
 
+/**
+ * Normalize alternate IP encodings to canonical dotted-quad / embedded IPv4 so
+ * the range checks below cannot be bypassed, e.g. `http://2130706433/` (decimal
+ * for 127.0.0.1), `http://0x7f000001/` (hex), `http://017700000001/` (octal),
+ * or `http://[::ffff:169.254.169.254]/` (IPv4-mapped IPv6). Returns the input
+ * unchanged when it is not a recognized numeric form.
+ *
+ * NOTE: this does not resolve DNS names — a name that resolves to a private IP
+ * (DNS rebinding) is not caught here and requires connect-time IP pinning
+ * (tracked for a follow-up).
+ */
+function normalizeHost(host: string): string {
+  const h = host.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
+  if (mapped) return mapped[1]!;
+  // IPv4-mapped IPv6 in hex form (Node normalizes ::ffff:169.254.169.254 →
+  // ::ffff:a9fe:a9fe).
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1]!, 16);
+    const lo = parseInt(mappedHex[2]!, 16);
+    return [(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255].join('.');
+  }
+  const toDotted = (n: number): string =>
+    [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  if (/^\d+$/.test(h)) {
+    const n = Number(h);
+    if (Number.isInteger(n) && n >= 0 && n <= 0xffffffff) return toDotted(n);
+  }
+  if (/^0x[0-9a-f]+$/i.test(h)) {
+    const n = parseInt(h, 16);
+    if (Number.isFinite(n) && n >= 0 && n <= 0xffffffff) return toDotted(n);
+  }
+  if (/^0[0-7]+$/.test(h)) {
+    const n = parseInt(h, 8);
+    if (Number.isFinite(n) && n >= 0 && n <= 0xffffffff) return toDotted(n);
+  }
+  return h;
+}
+
 class UrlValidationError extends Error {
   constructor(url: string, reason: string) {
     super(`URL "${url}" blocked: ${reason}`);
@@ -95,10 +135,12 @@ function validateUrl(urlStr: string, config: McpServiceConfig): URL {
     );
   }
 
-  // Hostname checks
-  const hostname = parsed.hostname.toLowerCase();
+  // Hostname checks. Normalize alternate IP encodings first so decimal/hex/octal
+  // /IPv4-mapped forms can't slip past the dotted-quad range patterns.
+  const rawHostname = parsed.hostname.toLowerCase();
+  const hostname = normalizeHost(rawHostname);
 
-  if (BLOCKED_HOSTNAMES.includes(hostname)) {
+  if (BLOCKED_HOSTNAMES.includes(hostname) || BLOCKED_HOSTNAMES.includes(rawHostname)) {
     throw new UrlValidationError(urlStr, 'Hostname blocked (private/reserved)');
   }
 

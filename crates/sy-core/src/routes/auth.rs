@@ -1526,7 +1526,11 @@ async fn sso_exchange(
     State(state): State<AppState>,
     Json(body): Json<SsoExchangeRequest>,
 ) -> impl IntoResponse {
-    // Stub: exchange SSO authorization code for a local JWT
+    // SECURITY: this stub does not perform a real OIDC code→token exchange or
+    // validate the IdP's ID token, so it must not mint a token in production.
+    if !dev_auth_enabled() {
+        return auth_not_implemented("SSO code exchange");
+    }
     let jwt_config = state.jwt_config();
     let placeholder_user = format!("sso-user-{}", &body.provider_id);
     let permissions = vec!["*:read".to_string()];
@@ -1736,17 +1740,46 @@ struct WebAuthnAuthVerifyRequest {
     signature: String,
 }
 
+/// Whether the unimplemented auth stubs (WebAuthn verify, SSO/OAuth exchange) may
+/// mint tokens. OFF by default — these stubs do NOT verify any cryptographic
+/// assertion, so allowing them in production is an authentication bypass. Set
+/// `SY_DEV_AUTH=1` only on a trusted dev machine.
+fn dev_auth_enabled() -> bool {
+    std::env::var("SY_DEV_AUTH").is_ok_and(|v| v == "1" || v == "true")
+}
+
+/// 501 response for an auth flow that is not yet implemented (real WebAuthn/OIDC
+/// verification is pending). Returned instead of minting an unverified token.
+fn auth_not_implemented(flow: &str) -> axum::response::Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": format!("{flow} is not implemented"),
+            "statusCode": 501,
+            "hint": "cryptographic verification is pending; set SY_DEV_AUTH=1 on a trusted dev host to use the unverified stub",
+        })),
+    )
+        .into_response()
+}
+
 async fn webauthn_authenticate_verify(
     State(state): State<AppState>,
     Json(body): Json<WebAuthnAuthVerifyRequest>,
 ) -> impl IntoResponse {
-    // Stub: verify WebAuthn assertion — in production, verify signature against stored public key
+    // SECURITY: this stub does not verify the WebAuthn assertion against a stored
+    // credential, so it must NOT mint a token in production. Fail closed unless a
+    // dev host explicitly opts in. (Real verification is tracked for the
+    // WebAuthn/OIDC implementation work.)
+    if !dev_auth_enabled() {
+        return auth_not_implemented("WebAuthn authentication");
+    }
     let jwt_config = state.jwt_config();
 
-    // Placeholder: issue a token if the credential_id looks valid
+    // Char-safe truncation (never byte-slice user input — a mid-codepoint slice
+    // panics, and panic=abort would turn it into a remote DoS).
     let placeholder_user = format!(
         "webauthn-{}",
-        &body.credential_id[..8.min(body.credential_id.len())]
+        body.credential_id.chars().take(8).collect::<String>()
     );
     let permissions = vec!["*:*".to_string()];
 

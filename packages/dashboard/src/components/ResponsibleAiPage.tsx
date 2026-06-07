@@ -14,7 +14,8 @@ import {
 
 const API_HEADERS = () => ({
   'Content-Type': 'application/json',
-  Authorization: `Bearer ${localStorage.getItem('friday_token')}`,
+  // Token is stored under 'accessToken' (see api/client.ts setAuthTokens).
+  Authorization: `Bearer ${localStorage.getItem('accessToken') ?? ''}`,
 });
 
 // ── Types ────────────────────────────────────────────────────────────

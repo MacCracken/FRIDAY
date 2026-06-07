@@ -147,35 +147,13 @@ fn compute_bot_score(req: &Request<Body>, ip: &str, state: &FingerprintState) ->
     score.min(100)
 }
 
-/// Extract client IP (same logic as rate_limit/local_network).
-fn extract_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for")
-        && let Ok(val) = forwarded.to_str()
-        && let Some(first_ip) = val.split(',').next()
-    {
-        let trimmed = first_ip.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    if let Some(addr) = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-    {
-        return addr.0.ip().to_string();
-    }
-
-    "unknown".to_string()
-}
-
 /// Fingerprinting middleware — computes bot score and feeds into IP reputation.
 pub async fn check_fingerprint(
     State(state): State<AppState>,
     req: Request<Body>,
     next: Next,
 ) -> Response<Body> {
-    let ip = extract_ip(&req);
+    let ip = crate::middleware::client_ip::client_ip(&req, state.trust_proxy_headers());
     let fp_state = state.fingerprint();
     let score = compute_bot_score(&req, &ip, fp_state);
 

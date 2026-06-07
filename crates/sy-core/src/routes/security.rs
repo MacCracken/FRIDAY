@@ -402,13 +402,20 @@ async fn classify_text(
     State(s): State<AppState>,
     Json(body): Json<ClassifyTextRequest>,
 ) -> impl IntoResponse {
-    // Placeholder classifier: label based on length heuristic.
-    let label = if body.text.len() > 500 {
-        "sensitive"
-    } else {
-        "public"
+    // Real DLP classification via the shared regex engine.
+    let result = s.pii_engine().classify(&body.text);
+    let label = match result.level {
+        crate::privacy::ClassificationLevel::Public => "public",
+        crate::privacy::ClassificationLevel::Internal => "internal",
+        crate::privacy::ClassificationLevel::Confidential => "confidential",
+        crate::privacy::ClassificationLevel::Restricted => "restricted",
     };
-    let confidence: f64 = 0.85;
+    // Higher confidence when concrete PII/secret/keyword rules fired.
+    let confidence: f64 = if result.rules_triggered.is_empty() {
+        0.6
+    } else {
+        0.95
+    };
     let content_id = body
         .content_id
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
@@ -423,7 +430,10 @@ async fn classify_text(
         "contentId": content_id,
         "label": label,
         "confidence": confidence,
-        "engine": "placeholder-v1",
+        "piiFound": result.pii_found,
+        "keywordsFound": result.keywords_found,
+        "rulesTriggered": result.rules_triggered,
+        "engine": "dlp-rust-v1",
     }))
     .into_response()
 }
@@ -483,15 +493,22 @@ struct ScanOutboundRequest {
     destination: Option<String>,
 }
 
-async fn scan_outbound(Json(body): Json<ScanOutboundRequest>) -> impl IntoResponse {
-    // Placeholder: always allow, flag if content is very long.
-    let blocked = body.content.len() > 10_000;
+async fn scan_outbound(
+    State(s): State<AppState>,
+    Json(body): Json<ScanOutboundRequest>,
+) -> impl IntoResponse {
+    // Block egress of confidential/restricted content (PII, leaked secrets, or
+    // sensitivity keywords) detected by the DLP engine.
+    let result = s.pii_engine().classify(&body.content);
+    let blocked = result.level >= crate::privacy::ClassificationLevel::Confidential;
     Json(serde_json::json!({
         "allowed": !blocked,
         "blocked": blocked,
         "destination": body.destination,
-        "matchedPolicies": [],
-        "engine": "placeholder-v1",
+        "level": result.level,
+        "matchedPolicies": result.rules_triggered,
+        "piiFound": result.pii_found,
+        "engine": "dlp-rust-v1",
     }))
     .into_response()
 }

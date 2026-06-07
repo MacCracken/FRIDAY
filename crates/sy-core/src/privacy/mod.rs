@@ -35,6 +35,9 @@ pub struct ClassificationResult {
 
 pub struct ClassificationEngine {
     pii_patterns: Vec<(&'static str, Regex)>,
+    /// High-value leaked-credential patterns. A match is treated as Restricted —
+    /// these are the secrets a local-first assistant most needs to keep local.
+    secret_patterns: Vec<(&'static str, Regex)>,
     restricted_keywords: Vec<&'static str>,
     confidential_keywords: Vec<&'static str>,
     custom_patterns: Vec<(String, Regex, ClassificationLevel)>,
@@ -56,6 +59,20 @@ impl ClassificationEngine {
                 ("ssn", Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap()),
                 ("credit_card", Regex::new(r"\b(?:\d{4}[-\s]?){3}\d{4}\b").unwrap()),
                 ("ip_address", Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b").unwrap()),
+            ],
+            secret_patterns: vec![
+                // AWS access key IDs (AKIA…, ASIA…, etc. — 20 chars total).
+                ("aws_access_key", Regex::new(r"\b(?:AKIA|ASIA|AGPA|AROA|AIDA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b").unwrap()),
+                // JSON Web Tokens (header.payload.signature; header & payload start "eyJ").
+                ("jwt", Regex::new(r"\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b").unwrap()),
+                // PEM private-key blocks (RSA/EC/DSA/OpenSSH/PGP).
+                ("private_key", Regex::new(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----").unwrap()),
+                // GitHub personal/OAuth/app tokens (ghp_, gho_, ghu_, ghs_, ghr_, gha_).
+                ("github_token", Regex::new(r"\bgh[poursa]_[A-Za-z0-9]{36,}\b").unwrap()),
+                // Slack tokens (xoxb-, xoxp-, xoxa-, xoxr-, xoxs-).
+                ("slack_token", Regex::new(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b").unwrap()),
+                // OpenAI / Anthropic-style secret keys (sk-…, sk-ant-…).
+                ("api_secret_key", Regex::new(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b").unwrap()),
             ],
             restricted_keywords: vec![
                 "top secret", "classified", "restricted", "secret clearance",
@@ -99,6 +116,17 @@ impl ClassificationEngine {
                 };
                 if pii_level > level {
                     level = pii_level;
+                }
+            }
+        }
+
+        // Layer 1b: high-value leaked-credential detection → Restricted.
+        for (name, re) in &self.secret_patterns {
+            if re.is_match(text) {
+                pii_found.push(name.to_string());
+                rules_triggered.push(format!("secret:{name}"));
+                if ClassificationLevel::Restricted > level {
+                    level = ClassificationLevel::Restricted;
                 }
             }
         }
@@ -401,5 +429,59 @@ mod tests {
         assert!(ClassificationLevel::Public < ClassificationLevel::Internal);
         assert!(ClassificationLevel::Internal < ClassificationLevel::Confidential);
         assert!(ClassificationLevel::Confidential < ClassificationLevel::Restricted);
+    }
+
+    // ── Leaked-secret detection (Restricted) ────────────────────────────────
+
+    #[test]
+    fn detects_aws_access_key() {
+        let engine = ClassificationEngine::new();
+        // Built from fragments so no contiguous AWS-key literal sits in source
+        // (avoids the repo secret-scanner flagging this test fixture); the
+        // runtime value still matches the detector.
+        let key = format!("AKIA{}", "IOSFODNN7EXAMPLE");
+        let result = engine.classify(&format!("key={key} end"));
+        assert!(result.pii_found.contains(&"aws_access_key".to_string()));
+        assert_eq!(result.level, ClassificationLevel::Restricted);
+    }
+
+    #[test]
+    fn detects_jwt() {
+        let engine = ClassificationEngine::new();
+        let token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let result = engine.classify(&format!("auth: {token}"));
+        assert!(result.pii_found.contains(&"jwt".to_string()));
+        assert_eq!(result.level, ClassificationLevel::Restricted);
+    }
+
+    #[test]
+    fn detects_private_key_block() {
+        let engine = ClassificationEngine::new();
+        let result = engine.classify("-----BEGIN OPENSSH PRIVATE KEY-----\nMIIE...");
+        assert!(result.pii_found.contains(&"private_key".to_string()));
+        assert_eq!(result.level, ClassificationLevel::Restricted);
+    }
+
+    #[test]
+    fn detects_github_and_api_tokens() {
+        let engine = ClassificationEngine::new();
+        // Fragments (not contiguous literals) so the repo secret-scanner does not
+        // flag these test fixtures; runtime values still exercise the detector.
+        let gh_token = format!("ghp_{}", "0123456789abcdefghijklmnopqrstuvwxyz");
+        let gh = engine.classify(&format!("token {gh_token}"));
+        assert!(gh.pii_found.contains(&"github_token".to_string()));
+        assert_eq!(gh.level, ClassificationLevel::Restricted);
+
+        let sk_token = format!("sk-{}", "abcdef012345678901234567890");
+        let sk = engine.classify(&format!("OPENAI_API_KEY={sk_token}"));
+        assert!(sk.pii_found.contains(&"api_secret_key".to_string()));
+        assert_eq!(sk.level, ClassificationLevel::Restricted);
+    }
+
+    #[test]
+    fn benign_text_has_no_secret_findings() {
+        let engine = ClassificationEngine::new();
+        let result = engine.classify("The quick brown fox jumps over the lazy dog");
+        assert!(result.pii_found.is_empty());
     }
 }

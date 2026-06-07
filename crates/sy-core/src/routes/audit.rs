@@ -209,10 +209,27 @@ fn format_csv(row: &audit::AuditEntryRow) -> String {
     ];
     fields
         .iter()
-        .map(|f| format!("\"{}\"", f.replace('"', "\"\"")))
+        .map(|f| format!("\"{}\"", csv_safe(f)))
         .collect::<Vec<_>>()
         .join(",")
         + "\n"
+}
+
+/// Make a value safe for CSV export. Escapes embedded quotes, and neutralizes
+/// spreadsheet formula injection: a cell that begins with `=`, `+`, `-`, `@`, or
+/// a leading tab/CR is executed as a formula by Excel/Sheets even when quoted, so
+/// such values are prefixed with a single quote to force text interpretation.
+fn csv_safe(value: &str) -> String {
+    let guarded = if value
+        .chars()
+        .next()
+        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r'))
+    {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
+    guarded.replace('"', "\"\"")
 }
 
 /// Format an audit entry as syslog RFC 5424.

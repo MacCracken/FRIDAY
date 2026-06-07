@@ -6,6 +6,51 @@ All notable changes to SecureYeoman are documented in this file.
 
 ---
 
+## [0.5.1] — 2026-06-07
+
+*P(-1) scaffold-hardening release. A 16-dimension multi-agent security/correctness/perf review (adversarially verified) drove these fixes. Tooling baseline: Rust 1.96, clippy/fmt/audit/deny green; the Rust dependency tree shrank 604 → 421 crates; 482 Rust tests pass.*
+
+### Security — Fixed
+
+- **JWT admin-token forgery (critical).** `AppState::new` no longer falls back to the hardcoded `"dev-jwt-secret-change-in-production!!"` secret. A missing/weak secret now yields a random ephemeral secret (with a warning), and `sy-core` **refuses to boot** on a non-loopback bind or with `SECUREYEOMAN_ALLOW_REMOTE_ACCESS` enabled unless `SECUREYEOMAN_JWT_SECRET` is set to ≥32 bytes (and not the placeholder).
+- **Spoofable client-IP / local-network bypass (critical).** Client IP is now taken from the real socket peer (`ConnectInfo`, wired via `into_make_service_with_connect_info`) through one centralized `client_ip()` helper; `X-Forwarded-For` is honored **only** when `SECUREYEOMAN_TRUST_PROXY_HEADERS=true`. This closes the `X-Forwarded-For: 127.0.0.1` bypass of the local-network gate and the per-IP rate-limit / IP-reputation / fingerprint evasion. The IP-reputation blocking layer now shares the `AppState` instance the feeders populate (it was a dead, separate map), and 429s feed it.
+- **Edge runtime fails closed.** `sy-edge` no longer serves privileged routes (incl. `/api/v1/exec`) unauthenticated when the token is unset — it requires `SECUREYEOMAN_EDGE_API_TOKEN`, refuses to start exposed without it (override: `SY_EDGE_DEV_MODE=true`), compares the bearer token in constant time, derives the rate-limit key from the real peer, and **enforces the exec timeout** (tokio + kill-on-timeout). `curl`/`wget`/`ping`/`find`/`journalctl` removed from the default exec allowlist (SSRF/exfil/escape), and the workspace check now uses the canonical path.
+- **DLP engine wired up.** `/api/v1/security/dlp/classify` and `/dlp/scan` previously returned length-based placeholders; they now run the real `ClassificationEngine`. Added high-value secret detection (AWS keys, JWTs, PEM private keys, GitHub/Slack/OpenAI tokens) classified as **restricted**.
+- **Audit chain tamper-evidence.** Each entry now binds a strictly-increasing `sequence` into its HMAC (detects reorder/middle-deletion), and the chain carries a signed head commitment over `(last_hash, count)` so **tail truncation is detectable** (a forward hash-walk alone cannot).
+- **MCP command injection + SSRF.** Network device tools validate interpolated args (target/VRF/interface/ACL/prefix) against a strict allowlist before building the SSH command. The web-tool SSRF check normalizes decimal/hex/octal and IPv4-mapped-IPv6 host encodings (e.g. `http://2130706433/` = 127.0.0.1) so they can't slip past the private-range block.
+- **Security headers.** Added the missing HSTS and a restrictive `Content-Security-Policy` (the module claimed both but set neither).
+- **CSV/formula injection** neutralized in audit-log CSV export (cells leading with `= + - @` are quote-prefixed).
+- **Reachable panics (DoS)** fixed: the document chunker's `extract_tail` and the WebAuthn `credential_id` handling (UTF-8 byte-slice → char-boundary safe; `panic=abort` made these remote DoS).
+- **Unverified auth stubs fail closed.** The WebAuthn authenticate-verify and SSO/OIDC code-exchange endpoints previously minted real tokens (admin `*:*` and viewer) **without verifying any assertion** — a forgery path for any caller who could reach them. They now return `501 Not Implemented` unless `SY_DEV_AUTH=1` is explicitly set on a trusted dev host. (Real WebAuthn + OIDC verification is the next feature; see below.)
+
+### Changed / Hardened
+
+- **Resource bounds.** Council `max_rounds` and per-run `token_budget` are clamped before the `u32` cast (a negative/huge `i32` no longer becomes a runaway loop); the workflow template resolver is single-pass (no infinite loop on self-referential input); swarm fan-out is concurrency-capped.
+- **Request body limit** is enforced on the actual stream for chunked/no-Content-Length bodies (was Content-Length-only, trivially bypassed).
+- **DB pool** now sets acquire/idle/max-lifetime timeouts and a server-side `statement_timeout` (was `max_connections` only).
+- **Forge proxy** no longer holds a `RwLock` read guard across the upstream request and adds a 30s client timeout (a hung forge could stall the subsystem).
+- **Dashboard:** ResponsibleAI and Experiments pages read the correct `accessToken` key (they were sending `Bearer null` and were silently broken).
+
+### Dependencies
+
+- **Rust:** `cargo update` (95 packages within-major); commented out the unused `agnosai`/`dhvani`/`majra`/`ifran` ecosystem crates pending the Cyrius port — this also cleared the `wasmtime-wasi` HIGH advisory (RUSTSEC-2026-0149), the `wasmtime` panic advisory, and a yanked `aes 0.9.0`. `cargo audit`/`cargo deny` clean (the residual rsa/RUSTSEC-2023-0071 is an unbuilt sqlx-mysql lock entry, ignored in `audit.toml` with rationale). Fixed a clippy 1.96 `while_let_loop` lint.
+- **npm:** `react-router-dom` → 7.17 (RCE fix), `vitest` → 4.1.8 across workspaces (critical UI-server RCE fix), `mermaid`/`@excalidraw/excalidraw` XSS fixes. Remaining advisories are confined to the orphan legacy `packages/core` (OTel/protobufjs/baileys chain) and clear when it is deleted.
+
+### Build / CI
+
+- **GitHub Actions SHA-pinned** in the high-privilege release workflow (`release-binary.yml`) — every external action now references a 40-char commit SHA (supply-chain hardening).
+- **Deploy/runtime fixes:** the Docker `HEALTHCHECK` now probes the live `/health` endpoint (the Rust binary ignores the legacy `secureyeoman health --json` CLI and would otherwise start the server); `railway.json` no longer runs the deleted `node packages/core/dist/index.js`; `Dockerfile.agent` license label corrected to AGPL-3.0-only.
+
+### Marketplace seed (P0)
+
+- **First-party marketplace items restored.** The TS→Rust migration dropped the builtin marketplace seed, leaving the marketplace empty on a fresh boot. The 46 first-party items (skills + themes + personalities) are now embedded and seeded idempotently (`source='builtin'`, stable id, `ON CONFLICT DO NOTHING`) on first boot.
+
+### Planned next
+- **0.5.2 — Real WebAuthn + OIDC SSO.** The unverified token-minting stubs are failed-closed in 0.5.1; the real flows (webauthn-rs ceremonies + a credentials table; openidconnect code→token exchange + ID-token validation) are an env-driven feature build.
+- **0.6.0** — real seccomp/Landlock/cgroup enforcement, full multi-tenant isolation, real TLS cert pinning, refresh-token→HttpOnly cookie, SSE/avatar token-in-URL (browser-API transport change), `packages/core` deletion (re-enabling the Cyrius ecosystem crates).
+
+---
+
 ## [0.5.0] — 2026-04-18
 
 *The Rust-native release. Node.js removed from the runtime. `sy-core` is the sole application binary, packaged as a flat single-crate workspace with TOML config and a dedicated edge bin target.*

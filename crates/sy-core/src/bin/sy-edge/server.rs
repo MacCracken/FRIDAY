@@ -2,16 +2,28 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 use crate::{a2a, capabilities, llm, memory, messaging, metrics, ratelimit, sandbox, scheduler};
+
+/// Resolved authentication policy for the edge API.
+#[derive(Clone, Default)]
+pub struct EdgeAuth {
+    /// Configured bearer token. `None` = no token configured.
+    pub token: Option<String>,
+    /// Explicit opt-in to serve privileged routes UNAUTHENTICATED (dev/trusted LAN
+    /// only). Without this, a missing token causes authed routes to fail closed.
+    pub dev_mode: bool,
+}
 
 pub struct AppState {
     pub capabilities: capabilities::EdgeCapabilities,
@@ -23,6 +35,7 @@ pub struct AppState {
     pub scheduler: scheduler::Scheduler,
     pub a2a: a2a::A2AManager,
     pub rate_limiter: ratelimit::RateLimiter,
+    pub auth: EdgeAuth,
 }
 
 type SharedState = Arc<AppState>;
@@ -82,34 +95,42 @@ async fn auth_middleware(
     req: axum::http::Request<axum::body::Body>,
     next: middleware::Next,
 ) -> impl IntoResponse {
-    // Check rate limit
+    // Rate-limit on the real socket peer (not the spoofable X-Forwarded-For).
     let peer_ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
 
     if !state.rate_limiter.check(&peer_ip) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
-    let expected_token = std::env::var("SECUREYEOMAN_EDGE_API_TOKEN").unwrap_or_default();
-    if expected_token.is_empty() {
-        // No token configured — allow (dev mode)
-        return next.run(req).await.into_response();
-    }
-
-    let auth = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if auth == format!("Bearer {expected_token}") {
-        next.run(req).await.into_response()
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
+    match &state.auth.token {
+        Some(expected) => {
+            let provided = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .unwrap_or("");
+            // Constant-time comparison to avoid a timing oracle on the token.
+            if provided.as_bytes().ct_eq(expected.as_bytes()).into() {
+                next.run(req).await.into_response()
+            } else {
+                StatusCode::UNAUTHORIZED.into_response()
+            }
+        }
+        // No token configured: fail CLOSED unless dev mode is explicitly enabled.
+        None if state.auth.dev_mode => next.run(req).await.into_response(),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "edge API authentication is not configured",
+                "hint": "set SECUREYEOMAN_EDGE_API_TOKEN, or SY_EDGE_DEV_MODE=true to allow unauthenticated access on a trusted network",
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -261,12 +282,16 @@ async fn exec_command(
     State(state): State<SharedState>,
     Json(body): Json<ExecRequest>,
 ) -> impl IntoResponse {
-    match state.sandbox.execute(
-        &body.command,
-        body.args.as_deref().unwrap_or(&[]),
-        body.workspace.as_deref(),
-        body.timeout_seconds.unwrap_or(30),
-    ) {
+    match state
+        .sandbox
+        .execute(
+            &body.command,
+            body.args.as_deref().unwrap_or(&[]),
+            body.workspace.as_deref(),
+            body.timeout_seconds.unwrap_or(30),
+        )
+        .await
+    {
         Ok(output) => Json(serde_json::json!({
             "stdout": output.stdout,
             "stderr": output.stderr,
@@ -419,12 +444,77 @@ mod tests {
             scheduler: crate::scheduler::Scheduler::new(),
             a2a: crate::a2a::A2AManager::new(crate::capabilities::detect()),
             rate_limiter: crate::ratelimit::RateLimiter::new(100.0, 200),
+            auth: EdgeAuth {
+                token: None,
+                dev_mode: true,
+            },
         }
     }
 
     async fn body_string(body: Body) -> String {
         let bytes = body.collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn state_with_auth(auth: EdgeAuth) -> AppState {
+        AppState {
+            auth,
+            ..test_state()
+        }
+    }
+
+    #[tokio::test]
+    async fn authed_route_fails_closed_without_token() {
+        // No token configured and dev mode OFF → privileged routes are unavailable.
+        let app = build_router(state_with_auth(EdgeAuth {
+            token: None,
+            dev_mode: false,
+        }));
+        let req = Request::get("/api/v1/metrics").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), SC::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn authed_route_requires_correct_token() {
+        let token = "edge-secret-token-abcdef0123456789";
+
+        // Missing credential → 401.
+        let app = build_router(state_with_auth(EdgeAuth {
+            token: Some(token.to_string()),
+            dev_mode: false,
+        }));
+        let resp = app
+            .oneshot(Request::get("/api/v1/metrics").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), SC::UNAUTHORIZED);
+
+        // Correct bearer token → allowed.
+        let app2 = build_router(state_with_auth(EdgeAuth {
+            token: Some(token.to_string()),
+            dev_mode: false,
+        }));
+        let req = Request::get("/api/v1/metrics")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp2 = app2.oneshot(req).await.unwrap();
+        assert_eq!(resp2.status(), SC::OK);
+    }
+
+    #[tokio::test]
+    async fn public_routes_bypass_auth_when_unconfigured() {
+        // /health is public — reachable even with no token and dev mode off.
+        let app = build_router(state_with_auth(EdgeAuth {
+            token: None,
+            dev_mode: false,
+        }));
+        let resp = app
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), SC::OK);
     }
 
     #[tokio::test]

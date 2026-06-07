@@ -125,17 +125,36 @@ async fn remove_connection(Path(key): Path<String>) -> impl IntoResponse {
 
 /// Resolve a forge connection and build an authenticated GET request.
 async fn forge_get(key: &str, api_path: &str) -> axum::response::Response {
-    let forges = forges().read().await;
-    let Some(conn) = forges.get(key) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Forge connection not found"})),
-        )
-            .into_response();
+    // Resolve the connection and DROP the lock before the network call. Holding
+    // the RwLock read guard across an upstream request lets a single hung forge
+    // pin the lock and (since tokio's RwLock is write-preferring) stall every
+    // other forge request behind a pending writer.
+    let (base_url, token) = {
+        let forges = forges().read().await;
+        let Some(conn) = forges.get(key) else {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Forge connection not found"})),
+            )
+                .into_response();
+        };
+        (conn.base_url.clone(), conn.token.clone())
     };
-    let url = format!("{}{api_path}", conn.base_url);
-    let client = reqwest::Client::new();
-    match client.get(&url).bearer_auth(&conn.token).send().await {
+    let url = format!("{base_url}{api_path}");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    match client.get(&url).bearer_auth(&token).send().await {
         Ok(res) if res.status().is_success() => {
             let body: serde_json::Value = res.json().await.unwrap_or(serde_json::json!(null));
             Json(body).into_response()

@@ -24,7 +24,7 @@ pub async fn check_local_network(
         return next.run(req).await;
     }
 
-    let ip = extract_client_ip(&req);
+    let ip = crate::middleware::client_ip::client_ip(&req, state.trust_proxy_headers());
 
     if !is_private_ip(&ip) {
         return (
@@ -63,28 +63,6 @@ pub fn is_private_ip(ip: &str) -> bool {
                 || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
         }
     }
-}
-
-/// Extract client IP from X-Forwarded-For or ConnectInfo.
-fn extract_client_ip(req: &Request<Body>) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for")
-        && let Ok(val) = forwarded.to_str()
-        && let Some(first_ip) = val.split(',').next()
-    {
-        let trimmed = first_ip.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    if let Some(addr) = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-    {
-        return addr.0.ip().to_string();
-    }
-
-    "unknown".to_string()
 }
 
 #[cfg(test)]
