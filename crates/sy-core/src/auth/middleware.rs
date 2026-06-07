@@ -28,6 +28,7 @@ const PUBLIC_ROUTES: &[&str] = &[
     "/api/v1/auth/login",
     "/api/v1/auth/oauth/config",
     "/api/v1/auth/oauth/claim",
+    "/api/v1/auth/sso/exchange", // OIDC login completion (pre-auth)
     "/api/v1/federation/knowledge/search",
     "/api/v1/federation/marketplace",
     "/api/v1/internal/mcp-bootstrap",
@@ -36,6 +37,7 @@ const PUBLIC_ROUTES: &[&str] = &[
 /// Prefixes that bypass auth (dynamic paths like /oauth/:provider).
 const PUBLIC_PREFIXES: &[&str] = &[
     "/api/v1/auth/oauth/",
+    "/api/v1/auth/sso/authorize/", // OIDC login initiation (pre-auth)
     "/api/v1/auth/sso/callback/",
     "/api/v1/auth/sso/saml/",
     "/api/v1/federation/marketplace/",

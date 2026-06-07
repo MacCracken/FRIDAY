@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 
 use crate::auth::jwt::JwtConfig;
 use crate::auth::middleware::{AuthContext, AuthMethod};
+use crate::auth::oidc::OidcRuntime;
 use crate::brain::embedding::{
     EmbeddingProvider, NoopEmbeddingProvider, OllamaEmbeddingProvider, OpenAiEmbeddingProvider,
 };
@@ -118,6 +119,8 @@ struct AppStateInner {
     pub webauthn: Arc<Webauthn>,
     pub webauthn_reg: Arc<WebauthnRegStore>,
     pub webauthn_auth: Arc<WebauthnAuthStore>,
+    /// OIDC SSO runtime — `Some` only when `OIDC_*` env vars are configured.
+    pub oidc: Option<Arc<OidcRuntime>>,
     pub bridge_tx: broadcast::Sender<BridgeEvent>,
     pub brain: Option<Arc<DynBrainManager>>,
     pub github_client: Option<Arc<GitHubClient>>,
@@ -153,6 +156,21 @@ fn generate_ephemeral_secret() -> String {
 /// for TTL eviction (ceremonies are short-lived; ~60s challenge timeout).
 pub type WebauthnRegStore = dashmap::DashMap<String, (PasskeyRegistration, Instant)>;
 pub type WebauthnAuthStore = dashmap::DashMap<String, (PasskeyAuthentication, Instant)>;
+
+/// Build the OIDC runtime from `OIDC_*` env vars, or `None` if unconfigured.
+fn build_oidc() -> Option<Arc<OidcRuntime>> {
+    let config = crate::auth::oidc::OidcConfig::from_env()?;
+    match OidcRuntime::new(config) {
+        Ok(rt) => {
+            tracing::info!("OIDC SSO configured");
+            Some(Arc::new(rt))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OIDC configured but runtime init failed; SSO disabled");
+            None
+        }
+    }
+}
 
 /// Build the WebAuthn relying-party instance from `SECUREYEOMAN_RP_ID` /
 /// `SECUREYEOMAN_RP_ORIGIN` (defaults: localhost). `rp_id` is the registrable
@@ -296,6 +314,7 @@ impl AppState {
                 webauthn: Arc::new(build_webauthn()),
                 webauthn_reg: Arc::new(WebauthnRegStore::new()),
                 webauthn_auth: Arc::new(WebauthnAuthStore::new()),
+                oidc: build_oidc(),
                 bridge_tx,
                 brain: None,
                 github_client,
@@ -377,6 +396,11 @@ impl AppState {
     /// In-flight WebAuthn authentication ceremony state (keyed by user id).
     pub fn webauthn_auth(&self) -> &WebauthnAuthStore {
         &self.inner.webauthn_auth
+    }
+
+    /// The OIDC SSO runtime, if configured via `OIDC_*` env vars.
+    pub fn oidc(&self) -> Option<&Arc<OidcRuntime>> {
+        self.inner.oidc.as_ref()
     }
 
     /// Check if a token JTI has been revoked (cache → DB fallback).

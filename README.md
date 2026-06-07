@@ -1,6 +1,6 @@
 # SECUREYEOMAN
 
-[![Version](https://img.shields.io/badge/Version-0.5.2-blue.svg)](https://github.com/MacCracken/secureyeoman/releases/tag/0.5.2)
+[![Version](https://img.shields.io/badge/Version-0.5.3-blue.svg)](https://github.com/MacCracken/secureyeoman/releases/tag/0.5.3)
 [![CI](https://github.com/MacCracken/secureyeoman/actions/workflows/ci.yml/badge.svg)](https://github.com/MacCracken/secureyeoman/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Commercial License](https://img.shields.io/badge/License-Commercial-green.svg)](LICENSE.commercial)

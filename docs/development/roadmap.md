@@ -46,7 +46,17 @@ Replaced the failed-closed auth stubs with real implementations. See the [CHANGE
 - **Argon2id admin password** — `SECUREYEOMAN_ADMIN_PASSWORD_HASH` preferred over plaintext at rest.
 - **Per-principal RBAC scope enforcement** — `enforce_rbac` now restricts a token/API-key to its `permissions` scope (narrows below the role; empty = role-only, backward compatible).
 
-**Deferred to 0.5.3 (focused release):** real **OIDC SSO** — `openidconnect` 4 via a custom `AsyncHttpClient` over reqwest 0.13 (avoids a duplicate reqwest tree), env-configured IdP, PKCE/CSRF/nonce, ID-token validation → local token; plus the OAuth/SSO/roles `db/auth.rs` schema reconciliation (same latent-mismatch class as the WebAuthn fix). Design notes + crate API guides saved under `.claude/052-*.md`.
+---
+
+## 0.5.3 — Real OIDC SSO (shipped 2026-06-07)
+
+Replaced the failed-closed SSO stub with a complete OpenID Connect Authorization Code + PKCE flow. See the [CHANGELOG](../../CHANGELOG.md#053--2026-06-07).
+
+- **OIDC login** (`openidconnect` 4, env single-IdP): `sso/authorize` builds the IdP URL (PKCE + CSRF + nonce, state persisted in `auth.oauth_state`); `sso/exchange` validates state, exchanges the code, verifies the ID token (sig/iss/aud/exp + nonce), and mints a local token (`oidc:<sub>`, role via `OIDC_DEFAULT_ROLE`). Login endpoints are public; provider CRUD stays authed.
+- Wired to our **reqwest 0.13** via oauth2's closure `AsyncHttpClient` (no duplicate reqwest tree); redirect-disabled client (SSRF-safe); lazy + TTL-cached discovery.
+- Removed the `SY_DEV_AUTH` / `auth_not_implemented` unverified-token path entirely.
+
+**Still open:** DB-backed **multi-provider** SSO management (`auth.sso_providers`/`oauth_tokens`/`roles` tables are absent from the migrations) — the supported path is the env-configured single IdP. SAML ACS remains a stub.
 
 ---
 

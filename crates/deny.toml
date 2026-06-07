@@ -11,13 +11,15 @@
 [advisories]
 version = 2
 yanked = "deny"
-# No ignores needed here. cargo-deny is feature/graph aware: the only advisory
-# crate in the lock, rsa 0.9.10 (RUSTSEC-2023-0071), is reachable solely via
-# sqlx-mysql, which is never built (postgres-only), so deny does not report it.
-# (cargo-audit is lockfile-literal and still flags it — see crates/.cargo/audit.toml
-# for that ignore.) The wasmtime-wasi advisory (RUSTSEC-2026-0149) + yanked `aes`
-# came via the unused `agnosai` crate, now commented out in Cargo.toml (Cyrius port).
-ignore = []
+# RUSTSEC-2023-0071 (Marvin timing attack on `rsa` 0.9): as of 0.5.3 `rsa` is
+# reachable in the build graph via openidconnect → RS256 ID-token signature
+# verification. The Marvin attack is a timing side-channel on RSA *private-key*
+# operations (decryption/signing); our only use is *public-key signature
+# verification* of the IdP's ID token — we never hold or operate an RSA private
+# key — so it is not exploitable here, and the `rsa` crate has no fixed release.
+# (Also flagged lockfile-literally by cargo-audit — see crates/.cargo/audit.toml.)
+# Revisit when `rsa` ships a constant-time fix.
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 version = 2

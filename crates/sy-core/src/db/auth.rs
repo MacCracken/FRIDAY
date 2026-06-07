@@ -759,6 +759,72 @@ pub async fn delete_webauthn_credential(
     Ok(result.rows_affected() > 0)
 }
 
+// ── OIDC / OAuth login state ───────────────────────────────────────────────
+
+/// Transient OIDC/OAuth authorization state (PKCE verifier + nonce live in
+/// `code_verifier` as JSON), stored between the redirect and the callback.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OAuthStateRow {
+    pub state: String,
+    pub provider: String,
+    pub redirect_uri: String,
+    pub code_verifier: Option<String>,
+    pub expires_at: i64,
+}
+
+/// Delete expired authorization-request state rows (bounds unbounded growth from
+/// abandoned login flows). Cheap thanks to the `expires_at` index.
+pub async fn prune_expired_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM auth.oauth_state WHERE expires_at < $1")
+        .bind(now_ms())
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
+/// Persist an authorization-request state row (single-use, short TTL). Expired
+/// rows are pruned opportunistically on each write so the table stays bounded.
+pub async fn store_oauth_state(
+    pool: &PgPool,
+    state: &str,
+    provider: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    expires_at: i64,
+) -> Result<(), sqlx::Error> {
+    let now = now_ms();
+    let _ = prune_expired_oauth_state(pool).await;
+    sqlx::query(
+        "INSERT INTO auth.oauth_state (state, provider, redirect_uri, code_verifier, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (state) DO NOTHING",
+    )
+    .bind(state)
+    .bind(provider)
+    .bind(redirect_uri)
+    .bind(code_verifier)
+    .bind(now)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Atomically fetch-and-delete an authorization-request state row (single-use).
+/// Returns `None` if the state is unknown or already consumed.
+pub async fn take_oauth_state(
+    pool: &PgPool,
+    state: &str,
+) -> Result<Option<OAuthStateRow>, sqlx::Error> {
+    sqlx::query_as::<_, OAuthStateRow>(
+        "DELETE FROM auth.oauth_state WHERE state = $1
+         RETURNING state, provider, redirect_uri, code_verifier, expires_at",
+    )
+    .bind(state)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Record a password reset request.
 pub async fn create_password_reset(
     pool: &PgPool,
@@ -827,6 +893,8 @@ pub async fn revoke_token(
     .bind(expires_at)
     .execute(pool)
     .await?;
+    // Opportunistically drop already-expired revocations so the table stays bounded.
+    let _ = cleanup_expired_revocations(pool).await;
     Ok(())
 }
 

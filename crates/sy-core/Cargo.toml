@@ -39,6 +39,10 @@ argon2 = "0.5"
 # memory (Passkey{Registration,Authentication} are Clone), so the state-
 # serialisation feature is intentionally NOT enabled.
 webauthn-rs = "0.5.5"
+# OIDC (Authorization Code + PKCE). default-features=false avoids pulling a second
+# reqwest (0.12) — we implement openidconnect's AsyncHttpClient over our reqwest 0.13.
+openidconnect = { version = "4", default-features = false }
+http = "1"
 
 # Hardware accelerator detection (formerly sy-hwprobe crate)
 ai-hwaccel = { version = "1.0", default-features = true }

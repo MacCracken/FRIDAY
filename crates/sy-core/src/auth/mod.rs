@@ -4,5 +4,6 @@
 
 pub mod jwt;
 pub mod middleware;
+pub mod oidc;
 pub mod ownership;
 pub mod permissions;

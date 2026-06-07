@@ -1482,6 +1482,9 @@ async fn delete_sso_provider(
     }
 }
 
+/// Begin an OIDC login: build the IdP authorization URL (PKCE + CSRF + nonce) and
+/// persist the transient ceremony state keyed by the CSRF `state`. The browser is
+/// redirected to `redirectUrl`; the IdP returns to `OIDC_REDIRECT_URI` with a code.
 async fn sso_authorize(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(pool) = state.db() else {
         return (
@@ -1490,33 +1493,56 @@ async fn sso_authorize(State(state): State<AppState>, Path(id): Path<String>) ->
         )
             .into_response();
     };
-
-    match auth::get_sso_provider(pool, &id, "default").await {
-        Ok(Some(provider)) => {
-            let state_param = uuid::Uuid::now_v7().to_string();
-            let redirect_url = format!(
-                "{}/authorize?client_id={}&state={}&response_type=code",
-                provider.issuer_url, provider.client_id, state_param
-            );
-            Json(serde_json::json!({
-                "redirectUrl": redirect_url,
-                "state": state_param,
-                "providerId": id,
-                "protocol": provider.protocol,
-            }))
-            .into_response()
-        }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "SSO provider not found"})),
+    let Some(oidc) = state.oidc() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "OIDC SSO is not configured (set OIDC_* env vars)"})),
         )
-            .into_response(),
-        Err(e) => (
+            .into_response();
+    };
+
+    let auth_req = match oidc.authorize_url().await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(error = %e, "OIDC authorize URL build failed");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": "SSO is temporarily unavailable"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Persist the PKCE verifier + nonce server-side, keyed by the CSRF state,
+    // with a short TTL. They are never exposed to the browser.
+    let verifier_blob = serde_json::json!({
+        "pkce": auth_req.pkce_verifier,
+        "nonce": auth_req.nonce,
+    })
+    .to_string();
+    if let Err(e) = auth::store_oauth_state(
+        pool,
+        &auth_req.state,
+        &id,
+        &id,
+        &verifier_blob,
+        now_ms() + 600_000, // 10 minutes
+    )
+    .await
+    {
+        return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
         )
-            .into_response(),
+            .into_response();
     }
+
+    Json(serde_json::json!({
+        "redirectUrl": auth_req.url,
+        "state": auth_req.state,
+        "providerId": id,
+    }))
+    .into_response()
 }
 
 async fn sso_callback(Path(id): Path<String>) -> impl IntoResponse {
@@ -1541,20 +1567,113 @@ struct SsoExchangeRequest {
     state: Option<String>,
 }
 
+/// Complete an OIDC login: validate the CSRF `state`, exchange the authorization
+/// `code` for tokens, verify the ID token (signature/iss/aud/exp + nonce), map the
+/// subject to a local identity, and mint a local session token.
 async fn sso_exchange(
     State(state): State<AppState>,
     Json(body): Json<SsoExchangeRequest>,
 ) -> impl IntoResponse {
-    // SECURITY: this stub does not perform a real OIDC code→token exchange or
-    // validate the IdP's ID token, so it must not mint a token in production.
-    if !dev_auth_enabled() {
-        return auth_not_implemented("SSO code exchange");
-    }
-    let jwt_config = state.jwt_config();
-    let placeholder_user = format!("sso-user-{}", &body.provider_id);
-    let permissions = vec!["*:read".to_string()];
+    let Some(pool) = state.db() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Database not available"})),
+        )
+            .into_response();
+    };
+    let Some(oidc) = state.oidc() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "OIDC SSO is not configured"})),
+        )
+            .into_response();
+    };
+    let Some(state_param) = body.state.filter(|s| !s.is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "missing CSRF state"})),
+        )
+            .into_response();
+    };
 
-    let token = match issue_access_token(jwt_config, &placeholder_user, "viewer", &permissions) {
+    // Single-use: fetch-and-delete the ceremony state, validating CSRF by lookup.
+    let row = match auth::take_oauth_state(pool, &state_param).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid or already-used state"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    if row.expires_at < now_ms() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "login state expired; restart sign-in"})),
+        )
+            .into_response();
+    }
+
+    // Bind the consumed ceremony to the provider the client claims (defends
+    // against state/provider confusion if multiple providers are ever wired).
+    if row.provider != body.provider_id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "login state does not match provider"})),
+        )
+            .into_response();
+    }
+
+    let blob: serde_json::Value =
+        serde_json::from_str(row.code_verifier.as_deref().unwrap_or("{}")).unwrap_or_default();
+    let pkce = blob["pkce"].as_str().unwrap_or_default().to_string();
+    let nonce = blob["nonce"].as_str().unwrap_or_default().to_string();
+    if pkce.is_empty() || nonce.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "corrupt login state"})),
+        )
+            .into_response();
+    }
+
+    let identity = match oidc.exchange(body.code, pkce, nonce).await {
+        Ok(i) => i,
+        Err(e) => {
+            // Log the detail server-side; return an opaque message to the caller.
+            tracing::warn!(error = %e, "OIDC code exchange / verification failed");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "SSO sign-in failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Map to a local identity keyed on (issuer, subject) — `sub` is only unique
+    // per-issuer. Role is clamped to a non-admin default (see sso_default_role).
+    let user_id = format!("oidc:{}|{}", identity.issuer, identity.subject);
+    let role = sso_default_role();
+
+    let jwt_config = state.jwt_config();
+    let access_token = match issue_access_token(jwt_config, &user_id, &role, &[]) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Token generation failed: {e}")})),
+            )
+                .into_response();
+        }
+    };
+    let refresh_token = match issue_refresh_token(jwt_config, &user_id, &role) {
         Ok(t) => t,
         Err(e) => {
             return (
@@ -1565,12 +1684,25 @@ async fn sso_exchange(
         }
     };
 
+    // Record the SSO login.
+    let _ = sqlx::query(
+        "INSERT INTO audit.entries (id, tenant_id, event, level, message, user_id, timestamp, metadata)
+         VALUES ($1, 'default', 'auth.sso_login', 'info', 'User logged in via OIDC', $2, $3, '{}'::jsonb)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(&user_id)
+    .bind(now_ms())
+    .execute(pool)
+    .await;
+
     Json(serde_json::json!({
-        "accessToken": token,
+        "accessToken": access_token,
+        "refreshToken": refresh_token,
         "expiresIn": jwt_config.access_token_expiry_secs,
         "tokenType": "Bearer",
+        "subject": identity.subject,
+        "email": identity.email,
         "providerId": body.provider_id,
-        "stub": true,
     }))
     .into_response()
 }
@@ -1623,28 +1755,6 @@ async fn saml_acs(Path(id): Path<String>) -> impl IntoResponse {
 
 // ── WebAuthn handlers ───────────────────────────────────────────────────
 
-/// Whether the unimplemented auth stubs (SSO/OAuth exchange) may mint tokens. OFF
-/// by default — those stubs do NOT verify any cryptographic assertion, so allowing
-/// them in production is an authentication bypass. Set `SY_DEV_AUTH=1` only on a
-/// trusted dev machine. (WebAuthn below is now fully implemented and not gated.)
-fn dev_auth_enabled() -> bool {
-    std::env::var("SY_DEV_AUTH").is_ok_and(|v| v == "1" || v == "true")
-}
-
-/// 501 response for an auth flow that is not yet implemented (real OIDC exchange
-/// is pending). Returned instead of minting an unverified token.
-fn auth_not_implemented(flow: &str) -> axum::response::Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": format!("{flow} is not implemented"),
-            "statusCode": 501,
-            "hint": "cryptographic verification is pending; set SY_DEV_AUTH=1 on a trusted dev host to use the unverified stub",
-        })),
-    )
-        .into_response()
-}
-
 /// Stable, opaque per-user handle for WebAuthn (the value stored on the
 /// authenticator). Deterministic so it is identical across ceremonies; derived
 /// from the user id rather than PII.
@@ -1654,6 +1764,32 @@ fn stable_user_uuid(user_id: &str) -> uuid::Uuid {
 
 fn b64url(bytes: &[u8]) -> String {
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// Resolve the role granted to SSO-authenticated users. A single env default must
+/// never be able to hand `admin` to an entire IdP population, so the value is
+/// clamped to a least-privilege, non-admin allow-list; anything else (including
+/// `admin` or a typo) falls back to `viewer` with a warning.
+fn sso_default_role() -> String {
+    const ALLOWED: [&str; 4] = ["viewer", "operator", "auditor", "service"];
+    match std::env::var("OIDC_DEFAULT_ROLE") {
+        Ok(r) if ALLOWED.contains(&r.as_str()) => r,
+        Ok(r) if !r.is_empty() => {
+            tracing::warn!(
+                role = %r,
+                "OIDC_DEFAULT_ROLE is not an allowed non-admin role; using viewer"
+            );
+            "viewer".to_string()
+        }
+        _ => "viewer".to_string(),
+    }
 }
 
 /// Load and deserialize a user's stored passkeys.

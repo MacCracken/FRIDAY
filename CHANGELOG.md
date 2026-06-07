@@ -6,6 +6,25 @@ All notable changes to SecureYeoman are documented in this file.
 
 ---
 
+## [0.5.3] — 2026-06-07
+
+*Real OIDC SSO — the failed-closed SSO stub is replaced with a complete OpenID Connect Authorization Code + PKCE flow.*
+
+### Added / Security
+
+- **OIDC SSO login** (`openidconnect` 4). A single env-configured identity provider (`OIDC_ISSUER_URL` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URI`):
+  - `GET /api/v1/auth/sso/authorize/{id}` builds the IdP authorization URL with PKCE, CSRF state, and a nonce; the transient PKCE verifier + nonce are stored server-side in `auth.oauth_state` (single-use, 10-min TTL), never exposed to the browser.
+  - `POST /api/v1/auth/sso/exchange` validates the CSRF state (atomic fetch-and-delete), checks it is bound to the claimed provider, exchanges the code for tokens, and **verifies the ID token** (signature against the discovered JWKS, issuer, audience, expiry, and nonce) before minting a local session token. The identity maps to `oidc:<issuer>|<sub>` (subject namespaced by issuer); the role is **clamped to a non-admin default** (`viewer`; `OIDC_DEFAULT_ROLE` may select another non-admin role but can never grant `admin` to the IdP population). Email is only surfaced when the IdP asserts `email_verified`.
+  - Both login endpoints are public (reachable pre-auth); SSO **provider-management** CRUD stays authenticated.
+- **SSRF-safe + no dependency bloat.** The HTTP client disables redirects (per the crate's SSRF guidance) with request/connect timeouts and a capped response body. openidconnect is wired to our existing **reqwest 0.13** via oauth2's closure-based `AsyncHttpClient` (`default-features = false`), avoiding a second (0.12) reqwest tree. Provider metadata/JWKS are discovered lazily and cached with a 1-hour TTL (honors key rotation).
+- **Removed the unverified auth stub.** The `SY_DEV_AUTH` escape hatch and the `auth_not_implemented` 501 path are gone — there is no longer a code path that mints a token without cryptographic verification.
+- **Adversarial review pass.** A multi-lens security review (flow integrity / token-identity / network-data) ran against the OIDC flow; all confirmed findings were fixed — role clamping, issuer namespacing, provider binding, generic client-facing errors (details logged server-side), capped response body, and opportunistic pruning of `auth.oauth_state` and `auth.revoked_tokens`.
+
+### Notes
+DB-backed **multi-provider** SSO management (the `auth.sso_providers` CRUD handlers) remains schema-pending (those tables are not in the migrations); the supported path is the env-configured single IdP above.
+
+---
+
 ## [0.5.2] — 2026-06-07
 
 *Real authentication: WebAuthn passkeys, admin password hashing, and per-principal RBAC scope enforcement (the 0.5.1 stubs were failed-closed). 492 Rust tests pass.*

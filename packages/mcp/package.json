@@ -1,6 +1,6 @@
 {
   "name": "@secureyeoman/mcp",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "SecureYeoman MCP (Model Context Protocol) Service",
   "type": "module",
   "main": "./dist/index.js",
