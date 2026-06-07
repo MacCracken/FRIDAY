@@ -34,7 +34,7 @@ All notable changes to SecureYeoman are documented in this file.
 ### Dependencies
 
 - **Rust:** `cargo update` (95 packages within-major); commented out the unused `agnosai`/`dhvani`/`majra`/`ifran` ecosystem crates pending the Cyrius port — this also cleared the `wasmtime-wasi` HIGH advisory (RUSTSEC-2026-0149), the `wasmtime` panic advisory, and a yanked `aes 0.9.0`. `cargo audit`/`cargo deny` clean (the residual rsa/RUSTSEC-2023-0071 is an unbuilt sqlx-mysql lock entry, ignored in `audit.toml` with rationale). Fixed a clippy 1.96 `while_let_loop` lint.
-- **npm:** `react-router-dom` → 7.17 (RCE fix), `vitest` → 4.1.8 across workspaces (critical UI-server RCE fix), `mermaid`/`@excalidraw/excalidraw` XSS fixes. Remaining advisories are confined to the orphan legacy `packages/core` (OTel/protobufjs/baileys chain) and clear when it is deleted.
+- **npm:** `react-router-dom` → 7.17 (RCE fix), `vitest` → 4.1.8 across workspaces (critical UI-server RCE fix), `mermaid`/`@excalidraw/excalidraw` XSS fixes, `@anthropic-ai/sdk` → 0.102 (insecure-file-permissions fix), and the root `protobufjs` override raised `8.0.1 → 8.6.1` — the old pin had become the *vulnerable* version, and bumping it past the `8.0.0–8.1.6` advisory range clears the entire grpc / OpenTelemetry / baileys / libsignal code-injection chain transitively. **`npm audit` now reports 0 vulnerabilities.**
 
 ### Build / CI
 

@@ -64,7 +64,7 @@
     "dompurify": "3.4.0",
     "nanoid": "5.1.9",
     "lodash-es": "4.18.1",
-    "protobufjs": "8.0.1",
+    "protobufjs": "8.6.1",
     "zod": "3.25.76",
     "@excalidraw/mermaid-to-excalidraw": {
       "dompurify": "3.4.0",
