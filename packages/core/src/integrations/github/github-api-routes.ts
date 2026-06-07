@@ -139,11 +139,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send({
@@ -178,11 +174,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          githubErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -206,11 +198,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          githubErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -240,11 +228,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -267,11 +251,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          githubErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -302,11 +282,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -329,11 +305,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          githubErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -379,11 +351,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -444,11 +412,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -469,11 +433,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -516,11 +476,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -553,11 +509,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
       );
       if (!resp.ok) {
         const errBody = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          githubErrorMessage(resp.status, errBody)
-        );
+        return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
       }
       return reply.code(204).send();
     }
@@ -612,11 +564,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -672,11 +620,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     // GitHub returns 202 Accepted for forks (async operation)
@@ -738,11 +682,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     }
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -783,11 +723,7 @@ export function registerGithubApiRoutes(app: FastifyInstance, opts: GithubApiRou
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        githubErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, githubErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);

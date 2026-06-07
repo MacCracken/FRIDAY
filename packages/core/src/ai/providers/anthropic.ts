@@ -219,7 +219,7 @@ export class AnthropicProvider extends BaseProvider {
         text: system,
         cache_control: { type: 'ephemeral' as const },
       },
-    ] as unknown as Anthropic.MessageCreateParams['system'];
+    ];
   }
 
   private mapMessages(messages: AIMessage[]): {

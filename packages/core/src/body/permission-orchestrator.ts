@@ -74,7 +74,7 @@ export class PermissionOrchestrator {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

@@ -316,7 +316,7 @@ export function createNoopLogger(): SecureLogger {
     error: () => {},
     fatal: () => {},
     child: () => noop,
-    level: 'info' as LogLevel,
+    level: 'info',
   };
   return noop;
 }

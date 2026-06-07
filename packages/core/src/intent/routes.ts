@@ -75,7 +75,7 @@ export function registerIntentRoutes(app: FastifyInstance, opts: IntentRoutesOpt
         agentId: q.agentId,
         itemId: q.itemId,
         since: q.since ? Number(q.since) : undefined,
-        limit: parsePagination(q as { limit?: string }, { defaultLimit: 100 }).limit,
+        limit: parsePagination(q, { defaultLimit: 100 }).limit,
       });
       return reply.send({ entries });
     } catch (err) {

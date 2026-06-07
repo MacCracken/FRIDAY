@@ -278,7 +278,7 @@ export function createFingerprintHook(
   return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     const result = fingerprinter.fingerprint({
       ip: request.ip,
-      headers: request.headers as Record<string, string | string[] | undefined>,
+      headers: request.headers,
       url: request.url,
     });
     (request as any).botScore = result.botScore;

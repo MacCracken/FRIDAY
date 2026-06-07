@@ -100,7 +100,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   update_skill: async (args, sy) => {
     const soulManager = sy.getSoulManager();
     const { id, ...rest } = args;
-    const skill = await soulManager.updateSkill(str(id), rest as any);
+    const skill = await soulManager.updateSkill(str(id), rest);
     return { output: { skill }, isError: false };
   },
 
@@ -162,7 +162,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
       return { output: { error: 'Task storage not available' }, isError: true };
     }
     const { id, ...updates } = args;
-    void taskStorage.updateTask(str(id), updates as any);
+    void taskStorage.updateTask(str(id), updates);
     return { output: { updated: true, id }, isError: false };
   },
 
@@ -193,7 +193,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   update_personality: async (args, sy) => {
     const soulManager = sy.getSoulManager();
     const { id, ...rest } = args;
-    const personality = await soulManager.updatePersonality(str(id), rest as any);
+    const personality = await soulManager.updatePersonality(str(id), rest);
     return { output: { personality }, isError: false };
   },
 
@@ -418,7 +418,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
       return { output: { error: 'Workflow manager not available' }, isError: true };
     }
     const { id, ...rest } = args;
-    const workflow = await workflowManager.updateDefinition(str(id), rest as any);
+    const workflow = await workflowManager.updateDefinition(str(id), rest);
     return { output: { workflow }, isError: false };
   },
 
@@ -442,7 +442,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     }
     const run = await workflowManager.triggerRun(str(args.id), {
       triggeredBy: 'manual',
-      input: (args.input as Record<string, unknown>) ?? {},
+      input: args.input ?? {},
     });
     return { output: { run }, isError: false };
   },

@@ -80,7 +80,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: GatewayRoutesO
       }
 
       // 4. Delegate to chat pipeline via internal request
-      // eslint-disable-next-line no-useless-assignment -- initial value needed for finally block
+
       let statusCode = 200;
       try {
         // Forward to the chat endpoint internally
@@ -109,7 +109,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: GatewayRoutesO
         reply.code(chatResponse.statusCode);
         for (const [k, v] of Object.entries(chatResponse.headers)) {
           if (k !== 'content-length') {
-            reply.header(k, v as string);
+            reply.header(k, v);
           }
         }
         return reply.send(chatResponse.rawPayload);

@@ -333,7 +333,7 @@ function RuleForm({
               className="mt-1 w-full px-3 py-1.5 rounded border bg-background text-sm"
               value={form.operator}
               onChange={(e) => {
-                set('operator', e.target.value as AlertRule['operator']);
+                set('operator', e.target.value);
               }}
             >
               {Object.entries(OPERATOR_LABELS).map(([v, l]) => (

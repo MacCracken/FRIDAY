@@ -80,7 +80,7 @@ Options:
 
     const rl = readline.createInterface({
       input: process.stdin,
-      output: ctx.stdout as NodeJS.WriteStream,
+      output: ctx.stdout,
       prompt: 'secureyeoman> ',
       history,
       historySize: 500,

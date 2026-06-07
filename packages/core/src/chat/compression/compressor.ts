@@ -58,7 +58,7 @@ export class HistoryCompressor {
         previousTimestamp: prevTimestamp,
         currentTopicTokens: topicTokens,
       },
-      this.config.topicBoundary as TopicBoundaryConfig
+      this.config.topicBoundary
     );
 
     if (boundaryResult.isBoundary) {

@@ -57,8 +57,11 @@ async function getNut(): Promise<NutLib> {
   try {
     // @ts-expect-error — @nut-tree/nut-js is an optional dependency
     const mod = await import('@nut-tree/nut-js');
-    _nut = mod as unknown as NutLib;
-    return _nut;
+    // Assign through a typed local so the return narrows to NutLib (the module
+    // import is untyped, so `_nut` would otherwise stay `NutLib | null`).
+    const lib: NutLib = mod;
+    _nut = lib;
+    return lib;
   } catch (err) {
     _nutLoadError =
       '@nut-tree/nut-js is not installed. ' +

@@ -706,13 +706,13 @@ export class AuthService {
     // Try current secret first
     try {
       const { payload } = await jwtVerify(token, this.secret, verifyOpts);
-      return payload as JWTPayload & Record<string, unknown>;
+      return payload;
     } catch {
       // Fall back to previous secret during grace period
       if (this.previousSecret) {
         try {
           const { payload } = await jwtVerify(token, this.previousSecret, verifyOpts);
-          return payload as JWTPayload & Record<string, unknown>;
+          return payload;
         } catch {
           // Both keys failed
         }
@@ -723,7 +723,7 @@ export class AuthService {
         const { payload } = await jwtVerify(token, this.secret, {
           algorithms: ['HS256'],
         });
-        return payload as JWTPayload & Record<string, unknown>;
+        return payload;
       } catch {
         // Also try previous secret without iss/aud
         if (this.previousSecret) {
@@ -731,7 +731,7 @@ export class AuthService {
             const { payload } = await jwtVerify(token, this.previousSecret, {
               algorithms: ['HS256'],
             });
-            return payload as JWTPayload & Record<string, unknown>;
+            return payload;
           } catch {
             // All attempts failed
           }

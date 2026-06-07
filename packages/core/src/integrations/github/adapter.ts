@@ -346,7 +346,7 @@ export class GitHubIntegration implements WebhookIntegration {
 
     await this.webhooks.verifyAndReceive({
       id: `wh_${Date.now()}`,
-      name: eventName as any,
+      name: eventName,
       payload,
       signature,
     });

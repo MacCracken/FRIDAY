@@ -48,7 +48,7 @@ export class DingTalkIntegration implements WebhookIntegration {
     this.config = config;
     this.deps = deps;
     this.logger = deps.logger;
-    this.dtConfig = config.config as unknown as DingTalkConfig;
+    this.dtConfig = config.config;
     this.logger?.info('DingTalk integration initialized');
   }
 

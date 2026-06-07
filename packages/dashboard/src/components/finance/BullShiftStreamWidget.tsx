@@ -247,7 +247,7 @@ export function BullShiftStreamWidget() {
         addTrade();
         if (eventCountRef.current % 3 === 0) refreshDemoTicks();
         scheduleNext();
-      }, delay) as unknown as ReturnType<typeof setInterval>;
+      }, delay);
     };
     scheduleNext();
 

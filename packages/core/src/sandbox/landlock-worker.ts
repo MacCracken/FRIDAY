@@ -167,7 +167,7 @@ if (process.send) {
             success: false,
             error:
               error instanceof Error
-                ? ({ message: error.message, name: error.name } as any)
+                ? { message: error.message, name: error.name }
                 : new Error(String(error)),
             resourceUsage: {
               memoryPeakMb: peakMemoryBytes / 1024 / 1024,

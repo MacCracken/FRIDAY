@@ -181,7 +181,7 @@ export class ScopeValidator {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

@@ -281,7 +281,7 @@ function ThemeEditorDialog({
   const defaultColors = (): Record<ThemeCssVar, string> => {
     const c: Record<string, string> = {};
     for (const v of THEME_CSS_VARS) c[v] = '0 0% 50%';
-    return c as Record<ThemeCssVar, string>;
+    return c;
   };
 
   const [editorName, setEditorName] = useState('My Theme');
@@ -664,7 +664,7 @@ function AppearanceTab() {
         }
         const added = addCustomTheme(result.theme);
         refreshCustomThemes();
-        setTheme(`custom:${added.id}` as ThemeId);
+        setTheme(`custom:${added.id}`);
       } catch {
         setUploadError('Invalid JSON file');
       }
@@ -683,7 +683,7 @@ function AppearanceTab() {
     }
     const added = addCustomTheme(result.theme);
     refreshCustomThemes();
-    setTheme(`custom:${added.id}` as ThemeId);
+    setTheme(`custom:${added.id}`);
     setEditorOpen(false);
     setEditorInit(null);
   };

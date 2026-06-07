@@ -1093,11 +1093,7 @@ export class MultimodalManager {
         durationMs,
       };
 
-      await this.storage.completeJob(
-        jobId,
-        result as unknown as Record<string, unknown>,
-        durationMs
-      );
+      await this.storage.completeJob(jobId, result, durationMs);
       void this.deps.extensionManager
         ?.emit('multimodal:image-analyzed', {
           event: 'multimodal:image-analyzed',
@@ -1214,11 +1210,7 @@ export class MultimodalManager {
       const durationMs = Date.now() - start;
       const result: STTResult = { text: data.text, language: data.language, durationMs };
 
-      await this.storage.completeJob(
-        jobId,
-        result as unknown as Record<string, unknown>,
-        durationMs
-      );
+      await this.storage.completeJob(jobId, result, durationMs);
       void this.deps.extensionManager
         ?.emit('multimodal:audio-transcribed', {
           event: 'multimodal:audio-transcribed',
@@ -1547,11 +1539,7 @@ export class MultimodalManager {
         durationMs,
       };
 
-      await this.storage.completeJob(
-        jobId,
-        result as unknown as Record<string, unknown>,
-        durationMs
-      );
+      await this.storage.completeJob(jobId, result, durationMs);
       void this.deps.extensionManager
         ?.emit('multimodal:image-generated', {
           event: 'multimodal:image-generated',
@@ -1599,11 +1587,7 @@ export class MultimodalManager {
       const durationMs = Date.now() - start;
       const result: HapticResult = { triggered: true, patternMs, durationMs };
 
-      await this.storage.completeJob(
-        jobId,
-        result as unknown as Record<string, unknown>,
-        durationMs
-      );
+      await this.storage.completeJob(jobId, result, durationMs);
       void this.deps.extensionManager
         ?.emit('multimodal:haptic-triggered', {
           event: 'multimodal:haptic-triggered',

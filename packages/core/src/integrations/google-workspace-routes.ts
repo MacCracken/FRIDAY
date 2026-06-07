@@ -67,11 +67,7 @@ async function handleGoogleResponse(
 ): Promise<unknown> {
   if (!resp.ok) {
     const body = await resp.text();
-    return sendError(
-      reply as never,
-      resp.status as 400 | 401 | 403 | 404 | 500,
-      googleErrorMessage(resp.status, body)
-    );
+    return sendError(reply as never, resp.status, googleErrorMessage(resp.status, body));
   }
   const data = await resp.json();
   return reply.send(data);
@@ -212,11 +208,7 @@ export function registerGoogleWorkspaceRoutes(
 
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        googleErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, googleErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -277,11 +269,7 @@ export function registerGoogleWorkspaceRoutes(
 
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        googleErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, googleErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -314,11 +302,7 @@ export function registerGoogleWorkspaceRoutes(
 
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          googleErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, googleErrorMessage(resp.status, body));
       }
       return reply.send({ success: true, fileId: req.params.fileId, trashed: true });
     }
@@ -357,11 +341,7 @@ export function registerGoogleWorkspaceRoutes(
 
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        googleErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, googleErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -522,11 +502,7 @@ export function registerGoogleWorkspaceRoutes(
 
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        googleErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, googleErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -590,11 +566,7 @@ export function registerGoogleWorkspaceRoutes(
 
     if (!createResp.ok) {
       const body = await createResp.text();
-      return sendError(
-        reply,
-        createResp.status as 400 | 401 | 403 | 404 | 500,
-        googleErrorMessage(createResp.status, body)
-      );
+      return sendError(reply, createResp.status, googleErrorMessage(createResp.status, body));
     }
 
     const doc = (await createResp.json()) as { documentId: string };
@@ -624,11 +596,7 @@ export function registerGoogleWorkspaceRoutes(
 
       if (!batchResp.ok) {
         const body = await batchResp.text();
-        return sendError(
-          reply,
-          batchResp.status as 400 | 401 | 403 | 404 | 500,
-          googleErrorMessage(batchResp.status, body)
-        );
+        return sendError(reply, batchResp.status, googleErrorMessage(batchResp.status, body));
       }
     }
 

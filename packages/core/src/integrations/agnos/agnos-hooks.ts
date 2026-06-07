@@ -182,7 +182,7 @@ export function registerAgnosHooks(config: AgnosHooksConfig, deps: AgnosHooksDep
     const topics = config.subscribeTopics ?? ['agent.*', 'task.*'];
     const sseController = deps.agnosClient.subscribeEvents(topics, (event) => {
       deps.extensionManager
-        .emit('system:startup' as HookPoint, {
+        .emit('system:startup', {
           event: `agnos:${event.topic}`,
           data: event.data,
           timestamp: Date.now(),

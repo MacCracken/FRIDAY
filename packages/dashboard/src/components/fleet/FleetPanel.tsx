@@ -309,7 +309,7 @@ export function FleetPanel() {
     refetchInterval: 30_000,
   });
 
-  const peers: PeerAgent[] = (peersData?.peers ?? []) as PeerAgent[];
+  const peers: PeerAgent[] = peersData?.peers ?? [];
 
   // Fetch health/capabilities for each online node
   const healthQueries = useQuery({

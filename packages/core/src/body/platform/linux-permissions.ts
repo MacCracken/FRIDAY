@@ -39,7 +39,7 @@ export class LinuxPermissionManager implements PlatformPermissionManager {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
 
     this.usePortal = process.env.WAYLAND_DISPLAY !== undefined;

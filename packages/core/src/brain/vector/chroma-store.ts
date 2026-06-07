@@ -39,13 +39,11 @@ export class ChromaVectorStore implements VectorStore {
   // ── HTTP helper ────────────────────────────────────────────────
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
-    return fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...((init?.headers as Record<string, string> | undefined) ?? {}),
-      },
-    });
+    // Use the Headers API to merge: a `HeadersInit` may be an array or `Headers`,
+    // so spreading it into an object literal is unsafe (lists indices).
+    const headers = new Headers(init?.headers);
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    return fetch(`${this.baseUrl}${path}`, { ...init, headers });
   }
 
   // ── Collection lifecycle ───────────────────────────────────────

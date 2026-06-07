@@ -571,7 +571,7 @@ export function registerBrainRoutes(app: FastifyInstance, opts: BrainRoutesOptio
     '/api/v1/brain/consolidation/history',
     async (request: FastifyRequest<{ Querystring: { limit?: string } }>, reply: FastifyReply) => {
       try {
-        const { limit } = parsePagination(request.query as { limit?: string }, {
+        const { limit } = parsePagination(request.query, {
           defaultLimit: 50,
           maxLimit: MAX_QUERY_LIMIT,
         });

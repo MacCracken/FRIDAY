@@ -82,7 +82,7 @@ export class CaptureProcess {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

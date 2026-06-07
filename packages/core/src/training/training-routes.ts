@@ -533,7 +533,7 @@ export function registerTrainingRoutes(app: FastifyInstance, opts: TrainingRoute
       const manager = secureYeoman.getPipelineApprovalManager();
       if (!manager) return sendError(reply, 503, 'Approval manager not available');
 
-      const { runId, status } = request.query as { runId?: string; status?: string };
+      const { runId, status } = request.query;
       const requests =
         status === 'pending' ? await manager.listPending() : await manager.listAll(runId);
       return { requests };
@@ -569,7 +569,7 @@ export function registerTrainingRoutes(app: FastifyInstance, opts: TrainingRoute
       const manager = secureYeoman.getPipelineApprovalManager();
       if (!manager) return sendError(reply, 503, 'Approval manager not available');
 
-      const body = (request.body ?? {}) as { reason?: string };
+      const body = request.body ?? {};
       const ok = await manager.approve(request.params.id, undefined, body.reason);
       if (!ok) return sendError(reply, 404, 'Approval request not found or already decided');
       return { approved: true };
@@ -589,7 +589,7 @@ export function registerTrainingRoutes(app: FastifyInstance, opts: TrainingRoute
       const manager = secureYeoman.getPipelineApprovalManager();
       if (!manager) return sendError(reply, 503, 'Approval manager not available');
 
-      const body = (request.body ?? {}) as { reason?: string };
+      const body = request.body ?? {};
       const ok = await manager.reject(request.params.id, undefined, body.reason);
       if (!ok) return sendError(reply, 404, 'Approval request not found or already decided');
       return { rejected: true };

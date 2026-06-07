@@ -91,7 +91,7 @@ export function registerDlpRoutes(app: FastifyInstance, deps: DlpRouteDeps): voi
     async (req, reply) => {
       try {
         const { contentId } = req.params;
-        const contentType = (req.query as { contentType?: string }).contentType ?? 'message';
+        const contentType = req.query.contentType ?? 'message';
         const record = await classificationStore.getByContentId(contentId, contentType);
         return reply.send({ classification: record });
       } catch (err) {
@@ -135,12 +135,7 @@ export function registerDlpRoutes(app: FastifyInstance, deps: DlpRouteDeps): voi
     };
   }>('/api/v1/security/dlp/classifications', async (req, reply) => {
     try {
-      const query = req.query as {
-        level?: ClassificationLevel;
-        contentType?: string;
-        limit?: string;
-        offset?: string;
-      };
+      const query = req.query;
       const parsedLimit = query.limit ? parseInt(query.limit, 10) : undefined;
       const parsedOffset = query.offset ? parseInt(query.offset, 10) : undefined;
       const result = await classificationStore.list({
@@ -238,12 +233,7 @@ export function registerDlpRoutes(app: FastifyInstance, deps: DlpRouteDeps): voi
       Querystring: { active?: string; appliesTo?: string; limit?: string; offset?: string };
     }>('/api/v1/security/dlp/policies', async (req, reply) => {
       try {
-        const query = req.query as {
-          active?: string;
-          appliesTo?: string;
-          limit?: string;
-          offset?: string;
-        };
+        const query = req.query;
         const result = await dlpPolicyStore.list({
           active: query.active !== undefined ? query.active === 'true' : undefined,
           appliesTo: query.appliesTo,
@@ -316,7 +306,7 @@ export function registerDlpRoutes(app: FastifyInstance, deps: DlpRouteDeps): voi
       Querystring: { from?: string; to?: string };
     }>('/api/v1/security/dlp/egress/stats', async (req, reply) => {
       try {
-        const query = req.query as { from?: string; to?: string };
+        const query = req.query;
         const from = query.from ? parseInt(query.from, 10) : Date.now() - 24 * 60 * 60 * 1000;
         const to = query.to ? parseInt(query.to, 10) : Date.now();
         const stats = await egressMonitor.getStats(from, to);

@@ -370,7 +370,7 @@ export function registerCicdWebhookRoutes(
   app.post<{ Params: { provider: string } }>(
     '/api/v1/webhooks/ci/:provider',
     {
-      config: { skipAuth: true } as Record<string, unknown>,
+      config: { skipAuth: true },
       preHandler: cicdPreHandlers,
     } as Record<string, unknown>,
     async (request: FastifyRequest<{ Params: { provider: string } }>, reply: FastifyReply) => {

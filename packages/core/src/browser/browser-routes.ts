@@ -24,7 +24,7 @@ export function registerBrowserRoutes(
   // List sessions
   app.get('/api/v1/browser/sessions', async (request) => {
     const query = request.query as Record<string, string | undefined>;
-    const { limit, offset } = parsePagination(query as { limit?: string; offset?: string });
+    const { limit, offset } = parsePagination(query);
     return browserSessionStorage.listSessions({
       status: query.status,
       toolName: query.toolName,

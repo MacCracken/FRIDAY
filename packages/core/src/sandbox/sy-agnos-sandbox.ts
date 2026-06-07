@@ -145,7 +145,7 @@ export class SyAgnosSandbox implements Sandbox {
       rlimits: true,
       platform: process.platform === 'linux' ? 'linux' : 'other',
       syAgnos: this.isAvailable(),
-    } as SandboxCapabilities;
+    };
   }
 
   /**

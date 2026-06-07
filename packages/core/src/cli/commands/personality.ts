@@ -355,7 +355,7 @@ async function runCreate(
   const readline = await import('node:readline');
   const rl = readline.createInterface({
     input: process.stdin,
-    output: ctx.stdout as NodeJS.WriteStream,
+    output: ctx.stdout,
   });
 
   const ask = (prompt: string): Promise<string> =>

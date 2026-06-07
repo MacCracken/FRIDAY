@@ -737,10 +737,7 @@ export function AgentWorldWidget({
 
   if (personalities.length === 0 && delegations.length === 0) {
     return (
-      <p
-        ref={containerRef as React.RefObject<HTMLParagraphElement>}
-        className={`text-sm text-muted-foreground font-mono ${className}`}
-      >
+      <p ref={containerRef} className={`text-sm text-muted-foreground font-mono ${className}`}>
         No agents found.
       </p>
     );

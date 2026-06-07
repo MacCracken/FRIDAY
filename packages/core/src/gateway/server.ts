@@ -503,9 +503,7 @@ export class GatewayServer {
         }
         this.app.addHook(
           'onRequest',
-          (
-            rateLimiter as import('../security/rate-limiter.js').RateLimiter
-          ).createFastifyHook() as any
+          (rateLimiter as import('../security/rate-limiter.js').RateLimiter).createFastifyHook()
         );
       }
     }
@@ -1786,7 +1784,7 @@ export class GatewayServer {
           federationStorage,
           brainManager,
           marketplaceManager: marketplaceManager as any,
-          soulManager: soulManager as any,
+          soulManager: soulManager,
           secureYeoman: this.secureYeoman,
         });
         this.getLogger().info('Federation routes registered');
@@ -4185,7 +4183,7 @@ export class GatewayServer {
           // Evaluate alert rules against current snapshot (fire-and-forget)
           const alertManager = this.secureYeoman.getAlertManager?.();
           if (alertManager) {
-            void alertManager.evaluate(metrics as Record<string, unknown>);
+            void alertManager.evaluate(metrics);
           }
         } catch (error) {
           this.getLogger().error(

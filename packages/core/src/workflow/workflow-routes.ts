@@ -177,14 +177,14 @@ export function registerWorkflowRoutes(
         const definition = await workflowManager.createDefinition({
           name: payload.workflow.name,
           description: payload.workflow.description ?? '',
-          steps: (payload.workflow.steps ?? []) as any,
-          edges: (payload.workflow.edges ?? []) as any,
-          triggers: (payload.workflow.triggers ?? []) as any,
+          steps: payload.workflow.steps ?? [],
+          edges: payload.workflow.edges ?? [],
+          triggers: payload.workflow.triggers ?? [],
           isEnabled: true,
           version: 1,
           createdBy: 'imported',
           autonomyLevel: payload.workflow.autonomyLevel ?? 'L2',
-        } as any);
+        });
         return reply.code(201).send({ definition, compatibility });
       } catch (err) {
         return sendError(reply, 400, toErrorMessage(err));
@@ -354,10 +354,7 @@ export function registerWorkflowRoutes(
         /* best-effort */
       }
 
-      const definition = await workflowManager.updateDefinition(
-        request.params.id,
-        request.body as any
-      );
+      const definition = await workflowManager.updateDefinition(request.params.id, request.body);
       if (!definition) return sendError(reply, 404, 'Workflow not found');
 
       const warnings: string[] = [];

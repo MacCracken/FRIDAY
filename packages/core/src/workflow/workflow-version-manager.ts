@@ -158,7 +158,7 @@ export class WorkflowVersionManager {
       }
     }
 
-    await this.workflowStorage.updateDefinition(workflowId, updateData as any);
+    await this.workflowStorage.updateDefinition(workflowId, updateData);
 
     return this.recordVersion(workflowId, author ?? 'system');
   }

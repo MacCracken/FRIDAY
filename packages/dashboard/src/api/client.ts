@@ -1929,12 +1929,7 @@ export async function fetchExternalSyncStatus(): Promise<{
 }> {
   try {
     const result = await request<Record<string, unknown>>('/brain/sync/status');
-    return { configured: true, ...result } as {
-      configured: boolean;
-      provider?: string;
-      path?: string;
-      lastSync?: { timestamp: number; entriesExported: number; errors: string[] } | null;
-    };
+    return { configured: true, ...result };
   } catch {
     return { configured: false };
   }
@@ -2144,7 +2139,7 @@ export async function fetchCicdConfig(): Promise<import('../types').CicdPlatform
 export async function updateCicdConfig(
   cfg: Partial<import('../types').CicdPlatformConfig>
 ): Promise<McpConfigResponse> {
-  return updateMcpConfig(cfg as Partial<McpConfigResponse>);
+  return updateMcpConfig(cfg);
 }
 
 export async function patchMcpConfig(data: Partial<McpConfigResponse>): Promise<McpConfigResponse> {

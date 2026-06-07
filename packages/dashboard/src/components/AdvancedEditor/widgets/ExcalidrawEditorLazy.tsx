@@ -51,7 +51,7 @@ export function ExcalidrawEditorLazy({
         initialData={initialData as never}
         onChange={handleChange as never}
         theme={theme}
-        excalidrawAPI={excalidrawAPI as never}
+        excalidrawAPI={excalidrawAPI}
       />
     </Suspense>
   );

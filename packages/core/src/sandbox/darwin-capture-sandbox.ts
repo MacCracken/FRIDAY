@@ -39,7 +39,7 @@ export class DarwinCaptureSandbox {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

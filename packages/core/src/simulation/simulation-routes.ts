@@ -183,7 +183,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as { limit?: string; since?: string };
+      const qs = request.query;
       const events = await store.listMoodEvents(request.params.id, {
         limit: safeNum(qs.limit),
         since: safeNum(qs.since),
@@ -246,7 +246,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as { zoneId?: string; limit?: string };
+      const qs = request.query;
       const items = await spatialEngine.listEntities(request.params.personalityId, {
         zoneId: qs.zoneId,
         limit: safeNum(qs.limit),
@@ -369,7 +369,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as { limit?: string; sinceTick?: string };
+      const qs = request.query;
       const items = await spatialEngine.listProximityEvents(request.params.personalityId, {
         limit: safeNum(qs.limit),
         sinceTick: safeNum(qs.sinceTick),
@@ -487,7 +487,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as { limit?: string };
+      const qs = request.query;
       const items = await experimentRunner.listRuns(request.params.sessionId, {
         limit: safeNum(qs.limit),
       });
@@ -540,12 +540,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as {
-        entityId?: string;
-        type?: string;
-        minAffinity?: string;
-        limit?: string;
-      };
+      const qs = request.query;
       const items = await relationshipGraph.listRelationships(request.params.personalityId, {
         entityId: qs.entityId,
         type: qs.type,
@@ -661,7 +656,7 @@ export function registerSimulationRoutes(app: FastifyInstance, opts: SimulationR
       }>,
       reply: FastifyReply
     ) => {
-      const qs = request.query as { entityId?: string; limit?: string; since?: string };
+      const qs = request.query;
       const items = await relationshipGraph.listEvents(request.params.personalityId, {
         entityId: qs.entityId,
         limit: safeNum(qs.limit),

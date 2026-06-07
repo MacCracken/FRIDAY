@@ -111,11 +111,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -141,11 +137,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -191,11 +183,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -224,11 +212,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.code(201).send(data);
@@ -274,11 +258,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, errBody));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -304,11 +284,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, errBody));
     }
     // Google Calendar returns 204 No Content on successful delete
     return reply.code(204).send();
@@ -334,11 +310,7 @@ export function registerGoogleCalendarRoutes(
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        calendarErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, calendarErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);

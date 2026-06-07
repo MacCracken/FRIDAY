@@ -103,7 +103,7 @@ export function registerMarketplaceRoutes(
     '/api/v1/marketplace/publish',
     async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply: FastifyReply) => {
       try {
-        const skill = await marketplaceManager.publish(request.body as any);
+        const skill = await marketplaceManager.publish(request.body);
         return reply.code(201).send({ skill });
       } catch (err) {
         return sendError(reply, 400, toErrorMessage(err));

@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 /**
  * Shared hooks for catalog install/uninstall, personality initialization, and community sync.
  * Extracted from CommunityTab + MarketplaceTab to eliminate duplication.

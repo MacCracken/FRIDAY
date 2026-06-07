@@ -246,7 +246,7 @@ export class WorkflowEngine {
         steps.map((s) => ({
           id: s.id,
           dependsOn: s.dependsOn,
-          triggerMode: s.triggerMode as 'all' | 'any' | undefined,
+          triggerMode: s.triggerMode,
         }))
       );
     } catch {
@@ -691,7 +691,7 @@ export class WorkflowEngine {
             datasetId: descriptor.datasetId,
             path: descriptor.path,
             sampleCount: descriptor.sampleCount,
-            filters: descriptor.filters as Record<string, unknown>,
+            filters: descriptor.filters,
             snapshotAt: descriptor.snapshotAt,
           });
         }

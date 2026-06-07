@@ -557,7 +557,7 @@ export class BrainStorage extends PgBaseStorage {
     const globalRow = await this.queryOne<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM brain.knowledge
        WHERE topic = ANY($1) AND personality_id IS NULL AND source = 'base-knowledge'`,
-      [globalTopics as unknown as string[]]
+      [globalTopics]
     );
     if (parseInt(globalRow?.cnt ?? '0', 10) < globalTopics.length) return false;
 

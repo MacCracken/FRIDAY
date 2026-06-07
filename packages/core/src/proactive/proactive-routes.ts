@@ -84,7 +84,7 @@ export function registerProactiveRoutes(
       }>,
       reply: FastifyReply
     ) => {
-      const trigger = await proactiveManager.updateTrigger(request.params.id, request.body as any);
+      const trigger = await proactiveManager.updateTrigger(request.params.id, request.body);
       if (!trigger) return sendError(reply, 404, 'Trigger not found');
       return trigger;
     }

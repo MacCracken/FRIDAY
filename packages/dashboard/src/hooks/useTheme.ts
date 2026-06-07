@@ -312,7 +312,7 @@ export function extractThemeCssVars(): Record<ThemeCssVar, string> {
   for (const v of THEME_CSS_VARS) {
     result[v] = style.getPropertyValue(`--${v}`).trim() || '0 0% 50%';
   }
-  return result as Record<ThemeCssVar, string>;
+  return result;
 }
 
 // ── CSS Injection for Custom Themes ────────────────────────────────────
@@ -406,7 +406,7 @@ export function applyTheme(theme: ThemeId) {
     const custom = loadCustomThemes().find((t) => t.id === customId);
     dark = custom?.isDark ?? false;
   } else {
-    dark = DARK_THEMES.has(resolved as ThemeId);
+    dark = DARK_THEMES.has(resolved);
   }
 
   document.documentElement.classList.toggle('dark', dark);

@@ -31,7 +31,7 @@ export class ZapierIntegration implements WebhookIntegration {
     this.config = config;
     this.deps = deps;
     this.logger = deps.logger;
-    this.zapierConfig = config.config as unknown as ZapierConfig;
+    this.zapierConfig = config.config;
     this.logger?.info('Zapier integration initialized');
   }
 

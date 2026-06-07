@@ -186,7 +186,7 @@ export class CaptureAuditLogger {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

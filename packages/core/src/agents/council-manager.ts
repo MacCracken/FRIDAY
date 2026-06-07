@@ -362,7 +362,7 @@ Have the members converged on a shared position? Respond ONLY with JSON:
 { "converged": true/false, "reasoning": "..." }`;
 
     try {
-      const aiClient = new AIClient(this.aiClientConfig as any, this.aiClientDeps as any);
+      const aiClient = new AIClient(this.aiClientConfig as any, this.aiClientDeps);
       const response = await aiClient.chat({
         messages: [{ role: 'user', content: prompt }],
         maxTokens: Math.min(tokenBudget, 1000),
@@ -440,7 +440,7 @@ Synthesize a final decision. Respond ONLY with JSON:
 }`;
 
     try {
-      const aiClient = new AIClient(this.aiClientConfig as any, this.aiClientDeps as any);
+      const aiClient = new AIClient(this.aiClientConfig as any, this.aiClientDeps);
       const response = await aiClient.chat({
         messages: [{ role: 'user', content: prompt }],
         maxTokens: Math.min(tokenBudget, 2000),

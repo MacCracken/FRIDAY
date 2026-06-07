@@ -101,11 +101,11 @@ export class DataCurationManager {
 
       // Filter by date range
       if (config.fromTs != null && messages[0] != null) {
-        if ((messages[0].createdAt as unknown as number) < config.fromTs) continue;
+        if (messages[0].createdAt < config.fromTs) continue;
       }
       if (config.toTs != null && messages[messages.length - 1] != null) {
         const lastMsg = messages[messages.length - 1]!;
-        if ((lastMsg.createdAt as unknown as number) > config.toTs) continue;
+        if (lastMsg.createdAt > config.toTs) continue;
       }
 
       // Count turns (user+assistant pairs)

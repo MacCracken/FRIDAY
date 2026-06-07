@@ -94,7 +94,7 @@ export function registerChaosRoutes(app: FastifyInstance, opts: ChaosRouteOption
       reply: FastifyReply
     ) => {
       try {
-        const body = req.body as { scheduledAt: number };
+        const body = req.body;
         if (!body.scheduledAt || body.scheduledAt <= Date.now()) {
           return sendError(reply, 400, 'scheduledAt must be a future timestamp');
         }

@@ -118,7 +118,7 @@ export function RiskTrendChart({ departmentId, compareDepartments = [] }: RiskTr
     const comparisons = capped
       .map((dept, i) => ({
         label: dept.name,
-        data: (compQueries[i]?.data?.points ?? []) as TrendPoint[],
+        data: compQueries[i]?.data?.points ?? [],
       }))
       .filter((c) => c.data.length > 0);
 

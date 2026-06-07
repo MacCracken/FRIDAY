@@ -141,7 +141,7 @@ export function shutdownNetworkTools(): void {
 async function loadSsh2(): Promise<{ Client: new () => unknown } | null> {
   try {
     const mod = await import('ssh2');
-    return mod as unknown as { Client: new () => unknown };
+    return mod;
   } catch {
     return null;
   }

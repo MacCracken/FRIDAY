@@ -146,11 +146,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        gmailErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, gmailErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send({
@@ -186,11 +182,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        gmailErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, gmailErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);
@@ -215,11 +207,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          gmailErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, gmailErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -244,11 +232,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
       );
       if (!resp.ok) {
         const body = await resp.text();
-        return sendError(
-          reply,
-          resp.status as 400 | 401 | 403 | 404 | 500,
-          gmailErrorMessage(resp.status, body)
-        );
+        return sendError(reply, resp.status, gmailErrorMessage(resp.status, body));
       }
       const data = await resp.json();
       return reply.send(data);
@@ -314,11 +298,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
 
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        gmailErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, gmailErrorMessage(resp.status, errBody));
     }
 
     const data = await resp.json();
@@ -391,11 +371,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
 
     if (!resp.ok) {
       const errBody = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        gmailErrorMessage(resp.status, errBody)
-      );
+      return sendError(reply, resp.status, gmailErrorMessage(resp.status, errBody));
     }
 
     const data = await resp.json();
@@ -417,11 +393,7 @@ export function registerGmailRoutes(app: FastifyInstance, opts: GmailRoutesOptio
     );
     if (!resp.ok) {
       const body = await resp.text();
-      return sendError(
-        reply,
-        resp.status as 400 | 401 | 403 | 404 | 500,
-        gmailErrorMessage(resp.status, body)
-      );
+      return sendError(reply, resp.status, gmailErrorMessage(resp.status, body));
     }
     const data = await resp.json();
     return reply.send(data);

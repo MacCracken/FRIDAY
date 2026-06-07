@@ -59,7 +59,7 @@ export function linearScale(domain: [number, number], range: [number, number]): 
   };
   fn.domain = domain;
   fn.range = range;
-  return fn as LinearScale;
+  return fn;
 }
 
 export interface BandScale {
@@ -78,7 +78,7 @@ export function bandScale(labels: string[], range: [number, number], padding = 0
   const fn = (label: string): number => map.get(label) ?? range[0];
   fn.bandwidth = bw;
   fn.labels = labels;
-  return fn as BandScale;
+  return fn;
 }
 
 /** Generate ~5-8 nice tick values spanning a domain. */

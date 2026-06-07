@@ -117,7 +117,7 @@ export class SgxSandbox implements Sandbox {
       rlimits: false,
       platform: process.platform === 'linux' ? 'linux' : 'other',
       sgx: this.isAvailable(),
-    } as SandboxCapabilities & { sgx: boolean };
+    };
   }
 
   async run<T>(fn: () => Promise<T>, opts?: SandboxOptions): Promise<SandboxResult<T>> {

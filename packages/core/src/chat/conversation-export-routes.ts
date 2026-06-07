@@ -185,9 +185,7 @@ export function registerConversationExportRoutes(
         return sendError(reply, 404, 'Conversation not found');
       }
 
-      const expiresIn =
-        (request.body as { expiresInSeconds?: number } | undefined)?.expiresInSeconds ??
-        SHARE_EXPIRY_SECONDS;
+      const expiresIn = request.body?.expiresInSeconds ?? SHARE_EXPIRY_SECONDS;
 
       const secret = getShareSecret();
       const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
@@ -258,7 +256,7 @@ export function registerConversationExportRoutes(
       }>,
       reply: FastifyReply
     ) => {
-      const body = request.body as { shareId?: string } | undefined;
+      const body = request.body;
       if (!body?.shareId) {
         return sendError(reply, 400, 'shareId is required in the request body');
       }

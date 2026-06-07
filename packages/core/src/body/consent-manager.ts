@@ -133,7 +133,7 @@ export class ConsentManager {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

@@ -105,7 +105,7 @@ export class GoogleChatIntegration implements Integration {
     };
 
     if (metadata?.card) {
-      message.cards = [metadata.card as GoogleChatCard];
+      message.cards = [metadata.card];
     }
 
     const response = await fetch(`https://chat.googleapis.com/v1/spaces/${chatId}/messages`, {

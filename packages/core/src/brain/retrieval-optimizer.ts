@@ -94,7 +94,7 @@ function generateArms(count: number, prior: number): BetaArm[] {
   ];
 
   for (let i = 0; i < Math.min(count - 1, variations.length); i++) {
-    arms.push({ weights: variations[i]! as RetrievalWeights, alpha: prior, beta: prior, pulls: 0 });
+    arms.push({ weights: variations[i]!, alpha: prior, beta: prior, pulls: 0 });
   }
 
   return arms;

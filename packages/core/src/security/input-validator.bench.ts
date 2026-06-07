@@ -97,7 +97,7 @@ describe('InputValidator.validate — size limit fast-path', () => {
 });
 
 describe('InputValidator — detection disabled vs enabled', () => {
-  const noDetection = new InputValidator({ ...CONFIG, enableInjectionDetection: false as boolean });
+  const noDetection = new InputValidator({ ...CONFIG, enableInjectionDetection: false });
 
   bench('medium clean — detection disabled', () => {
     noDetection.validate(MEDIUM_CLEAN);

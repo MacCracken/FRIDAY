@@ -312,26 +312,26 @@ export class AIClient {
         const localProvider = this.createProvider({
           model: {
             ...this.primaryModelConfig,
-            provider: localModel.provider as AIProviderName,
+            provider: localModel.provider,
             model: localModel.name,
           },
         });
         const response = await this.doChatWithProvider(
           localProvider,
-          localModel.provider as AIProviderName,
+          localModel.provider,
           { ...request, model: localModel.name },
           { ...context, privacyRouted: true, routingReason: privacyDecision.reason }
         );
         return response;
       } catch (error) {
         this.logger?.warn(
-          { error: toErrorMessage(error as Error), model: localModel.name },
+          { error: toErrorMessage(error), model: localModel.name },
           'Privacy-routed local inference failed, falling back to default provider'
         );
         void this.auditRecord('ai_privacy_route_fallback', {
           reason: privacyDecision.reason,
           localModel: localModel.name,
-          error: toErrorMessage(error as Error),
+          error: toErrorMessage(error),
         });
       }
     }

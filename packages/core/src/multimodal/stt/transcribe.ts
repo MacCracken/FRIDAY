@@ -320,7 +320,7 @@ export async function transcribeViaAWSTranscribe(
 
     status = getData.TranscriptionJob.TranscriptionJobStatus;
     if (status === 'COMPLETED') {
-      resultData = getData.TranscriptionJob as unknown as Record<string, unknown>;
+      resultData = getData.TranscriptionJob;
     } else if (status === 'FAILED') {
       throw new Error('AWS Transcribe job failed');
     }

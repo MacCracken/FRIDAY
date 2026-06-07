@@ -95,7 +95,7 @@ export class TokenFederationService {
       scopes: request.scopes ?? [],
       type: 'federation',
       ...(request.metadata ? { metadata: request.metadata } : {}),
-    } as unknown as Record<string, unknown>)
+    })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime(`${ttl}s`)

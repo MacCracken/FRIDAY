@@ -1092,7 +1092,7 @@ function StandardEditorPage() {
                     ? 'active'
                     : isPending
                       ? 'thinking'
-                      : ('dormant' as EntityState)
+                      : 'dormant'
                 }
                 height={120}
                 compact

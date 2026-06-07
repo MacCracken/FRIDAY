@@ -683,7 +683,7 @@ export function patchScene(scene: ExcalidrawScene, operations: PatchOperation[])
           version: restyleEl.version + 1,
           versionNonce: generateSeed(),
           updated: Date.now(),
-        } as ExcalidrawElement;
+        };
         break;
       }
     }

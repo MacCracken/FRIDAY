@@ -492,7 +492,7 @@ export class MarketplaceManager {
                 autonomyLevel: (typeof data.autonomyLevel === 'string'
                   ? data.autonomyLevel
                   : 'L2') as any,
-              } as any);
+              });
               result.workflowsAdded++;
             }
             syncedWorkflowNames.add(workflowName);
@@ -569,7 +569,7 @@ export class MarketplaceManager {
                 autonomyLevel: (typeof data.autonomyLevel === 'string'
                   ? data.autonomyLevel
                   : 'L2') as any,
-              } as any);
+              });
               result.workflowsAdded++;
             }
             syncedWorkflowNames.add(workflowName);

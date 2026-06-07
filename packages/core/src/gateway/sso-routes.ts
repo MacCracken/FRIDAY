@@ -184,10 +184,7 @@ export function registerSsoRoutes(app: FastifyInstance, opts: SsoRoutesOptions):
       reply: FastifyReply
     ) => {
       try {
-        const provider = await ssoStorage.updateIdentityProvider(
-          request.params.id,
-          request.body as any
-        );
+        const provider = await ssoStorage.updateIdentityProvider(request.params.id, request.body);
         if (!provider) return sendError(reply, 404, 'Provider not found');
         return { provider: { ...provider, clientSecret: undefined } };
       } catch (err) {

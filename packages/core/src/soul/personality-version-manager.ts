@@ -174,7 +174,7 @@ export class PersonalityVersionManager {
       }
     }
 
-    await this.soulStorage.updatePersonality(personalityId, updateData as any);
+    await this.soulStorage.updatePersonality(personalityId, updateData);
 
     // Record a new version after rollback
     return this.recordVersion(personalityId, author ?? 'system');

@@ -1643,7 +1643,7 @@ export function registerChatRoutes(app: FastifyInstance, opts: ChatRoutesOptions
                 const now = Date.now();
                 await taskStorage.storeTask({
                   id: uuidv7(),
-                  type: 'execute' as any,
+                  type: 'execute',
                   name: `${label} ${action}: ${name}`,
                   description: toolCall.name,
                   status,
@@ -2566,7 +2566,7 @@ export function registerChatRoutes(app: FastifyInstance, opts: ChatRoutesOptions
               try {
                 return JSON.parse(tc.argsJson || '{}') as Record<string, unknown>;
               } catch {
-                return {} as Record<string, unknown>;
+                return {};
               }
             })(),
           }));
@@ -2752,7 +2752,7 @@ export function registerChatRoutes(app: FastifyInstance, opts: ChatRoutesOptions
                   const now = Date.now();
                   await taskStorage.storeTask({
                     id: uuidv7(),
-                    type: 'execute' as any,
+                    type: 'execute',
                     name: `${label} ${action}: ${name}`,
                     description: toolCall.name,
                     status,

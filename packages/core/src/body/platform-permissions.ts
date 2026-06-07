@@ -97,7 +97,7 @@ class NoopPermissionManager implements PlatformPermissionManager {
         fatal: () => {},
         child: () => this.logger,
         level: 'info',
-      } as SecureLogger;
+      };
     }
   }
 

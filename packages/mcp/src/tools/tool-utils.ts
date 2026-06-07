@@ -49,7 +49,7 @@ export function wrapToolHandler<T extends Record<string, unknown>>(
     }
 
     // 2. Input validation
-    const validation = middleware.inputValidator.validate(args as Record<string, unknown>);
+    const validation = middleware.inputValidator.validate(args);
     if (validation.blocked) {
       return {
         content: [
@@ -64,13 +64,9 @@ export function wrapToolHandler<T extends Record<string, unknown>>(
 
     // 3. Execute with audit logging
     try {
-      const result = await middleware.auditLogger.wrap(
-        toolName,
-        args as Record<string, unknown>,
-        async () => {
-          return handler(args);
-        }
-      );
+      const result = await middleware.auditLogger.wrap(toolName, args, async () => {
+        return handler(args);
+      });
 
       // 4. Redact secrets from output
       const redacted = middleware.secretRedactor.redact(result) as ToolResult;

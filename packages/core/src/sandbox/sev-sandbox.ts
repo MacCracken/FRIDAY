@@ -119,7 +119,7 @@ export class SevSandbox implements Sandbox {
       rlimits: false,
       platform: process.platform === 'linux' ? 'linux' : 'other',
       sev: this.isAvailable(),
-    } as SandboxCapabilities & { sev: boolean };
+    };
   }
 
   async run<T>(fn: () => Promise<T>, opts?: SandboxOptions): Promise<SandboxResult<T>> {
