@@ -38,6 +38,18 @@ As the project ecosystem grows (SecureYeoman, AGNOS, Agnostic, Ifran, Shruti, Ta
 
 ---
 
+## 0.5.2 — Real authentication (shipped 2026-06-07)
+
+Replaced the failed-closed auth stubs with real implementations. See the [CHANGELOG](../../CHANGELOG.md#052--2026-06-07). 492 Rust tests pass; gates green.
+
+- **WebAuthn passkeys** (`webauthn-rs` 0.5) — real registration + authentication ceremonies; in-memory ceremony state; credentials in `webauthn_credentials`; step-up mints a fresh same-identity token (no forgery). Fixed a latent DB schema mismatch (`db/auth.rs` had queried a non-existent `auth.webauthn_credentials`).
+- **Argon2id admin password** — `SECUREYEOMAN_ADMIN_PASSWORD_HASH` preferred over plaintext at rest.
+- **Per-principal RBAC scope enforcement** — `enforce_rbac` now restricts a token/API-key to its `permissions` scope (narrows below the role; empty = role-only, backward compatible).
+
+**Deferred to 0.5.3 (focused release):** real **OIDC SSO** — `openidconnect` 4 via a custom `AsyncHttpClient` over reqwest 0.13 (avoids a duplicate reqwest tree), env-configured IdP, PKCE/CSRF/nonce, ID-token validation → local token; plus the OAuth/SSO/roles `db/auth.rs` schema reconciliation (same latent-mismatch class as the WebAuthn fix). Design notes + crate API guides saved under `.claude/052-*.md`.
+
+---
+
 ## 0.5.1 — P(-1) Scaffold Hardening
 
 **Priority**: P(-1) — Blocks any new features after 0.5.0 ships. Run the hardening loop from [CLAUDE.md §P(-1)](../../CLAUDE.md) end to end before opening new work. Items below are the specific findings accumulated during the 0.5.0 release sprint and the 2026-04-27 P(-1) checkpoint; they are the input to the loop, not a substitute for it.

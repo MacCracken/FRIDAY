@@ -168,15 +168,42 @@ pub fn role_permissions(role: &str) -> &'static [(&'static str, &'static [&'stat
     }
 }
 
+/// Whether a `resource` pattern (`*`, exact, or `prefix.*`) matches `resource`.
+fn resource_matches(res_pattern: &str, resource: &str) -> bool {
+    res_pattern == "*"
+        || res_pattern == resource
+        || (res_pattern.ends_with(".*")
+            && resource.starts_with(&res_pattern[..res_pattern.len() - 2]))
+}
+
 /// Check if a role has a specific permission.
 pub fn check_permission(role: &str, resource: &str, action: &str) -> bool {
     for &(res_pattern, actions) in role_permissions(role) {
-        let res_match = res_pattern == "*"
-            || res_pattern == resource
-            || (res_pattern.ends_with(".*")
-                && resource.starts_with(&res_pattern[..res_pattern.len() - 2]));
+        if resource_matches(res_pattern, resource)
+            && (actions.contains(&"*") || actions.contains(&action))
+        {
+            return true;
+        }
+    }
+    false
+}
 
-        if res_match && (actions.contains(&"*") || actions.contains(&action)) {
+/// Check whether a set of principal permission strings grants `action` on
+/// `resource`. Each string is `"resource:action1,action2"` (e.g. `"*:*"`,
+/// `"*:read"`, `"brain:read,write"`, `"capture.*:read"`) — the same wildcard
+/// semantics as role permissions. Used to let a token/API-key carry its own
+/// least-privilege scope that further restricts (never expands) its role.
+pub fn check_permission_strings(perms: &[String], resource: &str, action: &str) -> bool {
+    for p in perms {
+        let Some((res_pattern, actions_csv)) = p.split_once(':') else {
+            continue;
+        };
+        if resource_matches(res_pattern.trim(), resource)
+            && actions_csv
+                .split(',')
+                .map(str::trim)
+                .any(|a| a == "*" || a == action)
+        {
             return true;
         }
     }
@@ -243,5 +270,47 @@ mod tests {
     fn resolve_unmapped() {
         let perm = resolve_permission(&Method::GET, "/api/v1/unknown/route");
         assert!(perm.is_none());
+    }
+
+    #[test]
+    fn permission_strings_wildcards() {
+        let all = vec!["*:*".to_string()];
+        assert!(check_permission_strings(&all, "brain", "write"));
+        assert!(check_permission_strings(&all, "anything", "whatever"));
+    }
+
+    #[test]
+    fn permission_strings_scoped() {
+        let scope = vec!["brain:read,write".to_string(), "chat:execute".to_string()];
+        assert!(check_permission_strings(&scope, "brain", "read"));
+        assert!(check_permission_strings(&scope, "brain", "write"));
+        assert!(check_permission_strings(&scope, "chat", "execute"));
+        // Outside the scope:
+        assert!(!check_permission_strings(&scope, "brain", "execute"));
+        assert!(!check_permission_strings(&scope, "audit", "read"));
+    }
+
+    #[test]
+    fn permission_strings_action_and_resource_wildcards() {
+        assert!(check_permission_strings(
+            &["*:read".to_string()],
+            "brain",
+            "read"
+        ));
+        assert!(!check_permission_strings(
+            &["*:read".to_string()],
+            "brain",
+            "write"
+        ));
+        assert!(check_permission_strings(
+            &["capture.*:read".to_string()],
+            "capture.screen",
+            "read"
+        ));
+    }
+
+    #[test]
+    fn permission_strings_empty_denies() {
+        assert!(!check_permission_strings(&[], "brain", "read"));
     }
 }

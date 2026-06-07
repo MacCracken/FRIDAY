@@ -14,7 +14,7 @@ use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::auth::jwt::validate_token;
-use crate::auth::permissions::{check_permission, resolve_permission};
+use crate::auth::permissions::{check_permission, check_permission_strings, resolve_permission};
 use crate::state::AppState;
 
 /// Routes that bypass authentication entirely.
@@ -155,6 +155,7 @@ pub async fn enforce_rbac(req: Request<Body>, next: Next) -> Response<Body> {
 
     match resolve_permission(&method, &path) {
         Some(perm) => {
+            // 1. The role must grant this resource:action.
             if !check_permission(&auth.role, perm.resource, perm.action) {
                 return (
                     StatusCode::FORBIDDEN,
@@ -164,6 +165,24 @@ pub async fn enforce_rbac(req: Request<Body>, next: Next) -> Response<Body> {
                         "resource": perm.resource,
                         "action": perm.action,
                         "role": auth.role,
+                    })),
+                )
+                    .into_response();
+            }
+            // 2. Per-principal least privilege: when the token / API key carries an
+            //    explicit permission scope, it must ALSO grant this action (a scope
+            //    can restrict below the role, never expand it). An empty scope means
+            //    "inherit the role" (backward compatible with unscoped tokens).
+            if !auth.permissions.is_empty()
+                && !check_permission_strings(&auth.permissions, perm.resource, perm.action)
+            {
+                return (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(json!({
+                        "error": "Outside token permission scope",
+                        "statusCode": 403,
+                        "resource": perm.resource,
+                        "action": perm.action,
                     })),
                 )
                     .into_response();

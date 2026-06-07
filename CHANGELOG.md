@@ -6,21 +6,22 @@ All notable changes to SecureYeoman are documented in this file.
 
 ---
 
-## [Unreleased] — 0.5.2 (in progress)
+## [0.5.2] — 2026-06-07
 
-*Real authentication: WebAuthn passkeys + admin password hashing (the 0.5.1 stubs were failed-closed).*
+*Real authentication: WebAuthn passkeys, admin password hashing, and per-principal RBAC scope enforcement (the 0.5.1 stubs were failed-closed). 492 Rust tests pass.*
 
 ### Added / Security
 
 - **Real WebAuthn passkeys.** The registration and authentication ceremonies are now implemented with `webauthn-rs` 0.5 (replacing the failed-closed stubs): `register/options` + `register/verify` perform real attestation verification and persist the resulting `Passkey`; `authenticate/options` + `authenticate/verify` perform real assertion verification (step-up for the authenticated user) and, on success, advance the signature counter and mint a **fresh token for the same identity** — no more unconditional admin-token minting. In-flight ceremony state is held in memory (short TTL); credentials persist in `webauthn_credentials`. RP config via `SECUREYEOMAN_RP_ID` / `SECUREYEOMAN_RP_ORIGIN` (default localhost).
 - **Admin password hashing (Argon2id).** `SECUREYEOMAN_ADMIN_PASSWORD_HASH` (an Argon2 PHC string) is now preferred over the plaintext `SECUREYEOMAN_ADMIN_PASSWORD`, so no plaintext credential need sit at rest. The plaintext path remains as a constant-time-compared fallback.
+- **Per-principal RBAC scope enforcement.** `enforce_rbac` now consults the token / API-key `permissions` scope in addition to the role: a principal that carries an explicit scope (e.g. a JWT minted with `["brain:read"]`, or an API key whose config has a `permissions` array) is restricted to it — the scope can narrow below the role but never expand it. An empty scope inherits the role (backward compatible with existing unscoped tokens). API-key validation now populates the scope from the key's stored config.
 
 ### Fixed
 
 - **WebAuthn DB schema mismatch.** The Rust `db/auth.rs` WebAuthn queries targeted a non-existent `auth.webauthn_credentials` schema (with `sign_count`/`tenant_id`); they now use the migrated `webauthn_credentials` table (`counter`, `text[]` transports), so credential storage actually works.
 
-### Still open for 0.5.2
-Real OIDC SSO code-exchange (still failed-closed; needs the `openidconnect` integration + SSO-table reconciliation); RBAC per-principal permission enforcement (API-key/JWT `permissions` claims are not yet consulted by `enforce_rbac`).
+### Planned for 0.5.3
+Real OIDC SSO code-exchange (still failed-closed; a focused release: `openidconnect` 4 via a custom `AsyncHttpClient` over reqwest 0.13, env-configured IdP, PKCE/CSRF/nonce, ID-token validation, plus the OAuth/SSO/roles `db/auth.rs` schema reconciliation).
 
 ---
 

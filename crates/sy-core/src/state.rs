@@ -568,6 +568,20 @@ impl AppState {
             .unwrap_or("service")
             .to_string();
 
+        // Optional least-privilege scope: a `permissions` array of
+        // "resource:action" strings in the key's config further restricts it
+        // below its role. Absent => inherit the role (backward compatible).
+        let permissions = row
+            .permissions
+            .get("permissions")
+            .and_then(|p| p.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         // Update last_used_at in background (don't block auth)
         let pool_clone = pool.clone();
         let key_id = row.id.clone();
@@ -578,7 +592,7 @@ impl AppState {
         Some(AuthContext {
             user_id: row.name.clone(),
             role,
-            permissions: vec![],
+            permissions,
             auth_method: AuthMethod::ApiKey,
             jti: None,
         })

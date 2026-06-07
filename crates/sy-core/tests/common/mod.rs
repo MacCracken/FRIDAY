@@ -45,6 +45,13 @@ pub fn test_token_for(user_id: &str, role: &str) -> String {
     issue_access_token(&test_jwt_config(), user_id, role, &[]).unwrap()
 }
 
+/// Issue a token for a role with an explicit least-privilege permission scope
+/// (e.g. `["brain:read"]`) — used to test per-principal RBAC enforcement.
+pub fn test_token_scoped(role: &str, permissions: &[&str]) -> String {
+    let perms: Vec<String> = permissions.iter().map(|s| s.to_string()).collect();
+    issue_access_token(&test_jwt_config(), "test-user-1", role, &perms).unwrap()
+}
+
 /// Send a request through the app and return (status, body_bytes).
 pub async fn send(app: Router, req: Request<Body>) -> (StatusCode, bytes::Bytes) {
     let resp = app.oneshot(req).await.unwrap();

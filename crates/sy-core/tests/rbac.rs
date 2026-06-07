@@ -181,3 +181,40 @@ async fn public_route_bypasses_rbac() {
     assert_ne!(status, 403);
     assert_ne!(status, 401);
 }
+
+#[tokio::test]
+async fn scoped_token_allowed_within_scope() {
+    // Admin role + a token scoped to brain:read → brain read is within scope.
+    let app = common::test_app();
+    let token = common::test_token_scoped("admin", &["brain:read"]);
+    let (status, _) = common::send(app, common::authed_get("/api/v1/brain/memories", &token)).await;
+    assert_ne!(status, 403, "in-scope request must not be forbidden");
+}
+
+#[tokio::test]
+async fn scoped_token_denied_outside_scope() {
+    // Admin role would allow audit:read, but the token scope is brain:read only —
+    // the per-principal scope restricts below the role.
+    let app = common::test_app();
+    let token = common::test_token_scoped("admin", &["brain:read"]);
+    let (status, body) = common::send(app, common::authed_get("/api/v1/audit", &token)).await;
+    assert_eq!(status, 403, "out-of-scope request must be forbidden");
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["error"].as_str().unwrap().contains("scope"),
+        "expected a scope error, got {json}"
+    );
+}
+
+#[tokio::test]
+async fn unscoped_token_uses_role_only() {
+    // A token with no explicit scope (empty permissions) falls back to role-based
+    // checks — backward compatible with existing tokens.
+    let app = common::test_app();
+    let token = common::test_token("admin");
+    let (status, _) = common::send(app, common::authed_get("/api/v1/audit", &token)).await;
+    assert_ne!(
+        status, 403,
+        "unscoped admin token should pass role-based RBAC"
+    );
+}
