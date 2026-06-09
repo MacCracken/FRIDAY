@@ -3,43 +3,64 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>yeo-cy-test — Notes</title>
+    <title>SecureYeoman</title>
     <style>
-      :root { color-scheme: light dark; }
+      :root {
+        color-scheme: light dark;
+        --bg: Canvas;
+        --fg: CanvasText;
+        --muted: color-mix(in srgb, CanvasText 55%, Canvas);
+        --line: color-mix(in srgb, CanvasText 18%, Canvas);
+        --accent: #4f7cff;
+        --ok: #1faa59;
+      }
+      * { box-sizing: border-box; }
       body {
         font: 16px/1.5 system-ui, sans-serif;
-        max-width: 36rem;
-        margin: 3rem auto;
-        padding: 0 1rem;
+        margin: 0;
+        color: var(--fg);
+        background: var(--bg);
       }
-      h1 { margin-bottom: 0; }
-      .sub { color: #888; margin-top: 0.25rem; }
-      form { display: flex; gap: 0.5rem; margin: 1.5rem 0; }
-      input { flex: 1; padding: 0.5rem 0.75rem; font: inherit; }
-      button { padding: 0.5rem 1rem; font: inherit; cursor: pointer; }
-      ul { list-style: none; padding: 0; }
-      .note {
-        display: flex;
-        justify-content: space-between;
-        gap: 1rem;
-        padding: 0.6rem 0;
-        border-bottom: 1px solid #8884;
+      #app { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem 3rem; }
+
+      .topbar {
+        display: flex; align-items: center; gap: 1.25rem;
+        padding: 1rem 0; margin-bottom: 1.5rem;
+        border-bottom: 1px solid var(--line);
+        position: sticky; top: 0; background: var(--bg); z-index: 1;
       }
-      .note time { color: #888; font-size: 0.85em; white-space: nowrap; }
-      footer { margin-top: 1.5rem; color: #888; font-size: 0.9em; }
+      .brand { font-weight: 700; letter-spacing: -0.01em; }
+      .topbar nav { display: flex; gap: 0.25rem; }
+      .tab {
+        text-decoration: none; color: var(--muted);
+        padding: 0.35rem 0.75rem; border-radius: 0.5rem; font-size: 0.95rem;
+      }
+      .tab:hover { color: var(--fg); background: var(--line); }
+      .tab.active { color: var(--fg); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+      .view h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+
+      .stats { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1.25rem; margin: 0; }
+      .stats dt { color: var(--muted); }
+      .stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+      .stats dd.ok { color: var(--ok); font-weight: 600; }
+
+      .addform { display: flex; gap: 0.5rem; margin: 0 0 1.25rem; }
+      .addform input { flex: 1; padding: 0.55rem 0.75rem; font: inherit;
+        border: 1px solid var(--line); border-radius: 0.5rem; background: var(--bg); color: var(--fg); }
+      .addform button { padding: 0.55rem 1.1rem; font: inherit; cursor: pointer;
+        border: 0; border-radius: 0.5rem; background: var(--accent); color: #fff; }
+
+      ul.notes { list-style: none; padding: 0; margin: 0; }
+      .note { display: flex; justify-content: space-between; gap: 1rem;
+        padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+      .note time { color: var(--muted); font-size: 0.85em; white-space: nowrap; }
+      .count { margin-top: 1rem; color: var(--muted); font-size: 0.9em; }
+      .err { color: #d33; }
     </style>
   </head>
   <body>
-    <main>
-      <h1>yeo-cy-test</h1>
-      <p class="sub">Cyrius backend · patra storage · TS/TSX-validated frontend</p>
-      <form id="f">
-        <input id="b" placeholder="write a note…" autocomplete="off" required />
-        <button>Add</button>
-      </form>
-      <ul id="list"></ul>
-      <footer id="status"></footer>
-    </main>
+    <div id="app"></div>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

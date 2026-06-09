@@ -19,14 +19,22 @@ is fixed in 6.1.15 and the frontend workaround was removed. See
 
 ## Source
 
-- `src/main.cyr` — the entire backend: TCP server loop over `net.cyr`, request
-  routing, JSON responses (`json.cyr`), static file serving (`io.cyr`), and
-  patra-backed CRUD for `/api/notes`. Note bodies are stored in a `TEXT` column
-  via prepared statements with a bound `?` param (`patra_bind_text`) — SQL
-  injection-safe, no length cap; the base64 stopgap is retired.
-- `web/app.tsx` — typed frontend, single source of truth.
+- `src/httpd.cyr` — reusable HTTP/1.1 server abstraction (extracted from the
+  hand-rolled loop): request parsing (method / path / query / headers / body),
+  a function-pointer route table with method-aware dispatch (404 vs 405),
+  response framing helpers (`resp_json` / `resp_file` / `resp_*`), and the
+  accept loop `httpd_serve(port, router)`. Single-threaded/blocking; one
+  reusable `Req` instance shared across connections.
+- `src/main.cyr` — wires routes to handlers and owns the patra persistence.
+  `include "src/httpd.cyr"`. Registers `GET /`, `GET /app.js`,
+  `GET|POST /api/notes`, `GET /api/health`. Note bodies are stored in a `TEXT`
+  column via prepared statements with a bound `?` param (`patra_bind_text`) —
+  SQL injection-safe, no length cap; the base64 stopgap is retired.
+- `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman
+  dashboard shell with header/nav and a hash router (`#/` Home, `#/notes`
+  Notes) that swaps views into `#app`.
 - `web/app.js` — **generated** from `web/app.tsx` by `cyrius build --target=js`
-  (do not hand-edit); `web/index.html` is the page shell.
+  (do not hand-edit); `web/index.html` is a minimal mount + dashboard CSS.
 - `build.sh` — emits `web/app.js` from the TSX (`--target=js` + `node --check`),
   then builds the backend.
 

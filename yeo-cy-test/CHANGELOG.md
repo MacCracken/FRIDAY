@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`src/httpd.cyr` — an HTTP/1.1 server abstraction**, extracted from the
+  hand-rolled socket loop (addresses the FINDINGS "no HTTP server abstraction"
+  gap in-probe). Request parsing (method / path / query / headers / body), a
+  function-pointer route table with method-aware dispatch (404 for unknown
+  path, **405** for wrong method), response framing helpers (`resp_json` /
+  `resp_file` / `resp_json_err` / …), and the accept loop `httpd_serve`.
+  `main.cyr` now just registers routes; handlers share the signature
+  `fn(cfd, req): i64`.
+- **SecureYeoman dashboard shell** (`web/app.tsx`): header + nav with a hash
+  router (`#/` Home — service status + note count; `#/notes` — list + add).
+  `web/index.html` is now a minimal `#app` mount + dashboard CSS.
+
 ### Changed
 - Re-run on **cyrius 6.1.15 / patra 1.10.3 / sakshi 2.2.6** (was 6.0.3 / 1.9.5 /
   2.2.5). Both original 🔴 blockers are now closed upstream and verified here.

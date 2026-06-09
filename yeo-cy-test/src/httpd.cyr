@@ -1,0 +1,276 @@
+# httpd.cyr — a minimal HTTP/1.1 server abstraction for the SecureYeoman Cyrius
+# probe. Extracted from the hand-rolled main.cyr (FINDINGS.md: "No HTTP server
+# abstraction — everything above the raw socket is hand-rolled").
+#
+# Provides:
+#   • request parsing  — method, path, query, headers, body (req_*)
+#   • a route table    — function-pointer dispatch by (method, path) (router_*)
+#   • response framing — status line, headers, JSON / text / file / errors (resp_*)
+#   • the accept loop  — httpd_serve(port, router)
+#
+# The server is single-threaded/blocking (one connection at a time); a real port
+# needs a concurrency story (threads/epoll). One reusable Req instance is shared
+# across connections — safe precisely because handling is serialized.
+#
+# ASCII codes used inline:  SP=32  TAB=9  LF=10  CR=13  '?'=63  ':'=58  'A'=65 'Z'=90
+
+# ── Req struct (byte offsets into a heap block) ──
+# All ptr fields point INTO the per-connection receive buffer; valid only for the
+# duration of one request (which is all single-threaded dispatch needs).
+var REQ_METHOD     = 0;
+var REQ_METHOD_LEN = 8;
+var REQ_PATH       = 16;
+var REQ_PATH_LEN   = 24;
+var REQ_QUERY      = 32;
+var REQ_QUERY_LEN  = 40;
+var REQ_HDRS       = 48;
+var REQ_HDRS_LEN   = 56;
+var REQ_BODY       = 64;
+var REQ_BODY_LEN   = 72;
+var REQ_SZ         = 80;
+
+fn req_new(): i64 { return alloc(REQ_SZ); }
+
+# cstring literal -> borrowed Str (json_v_* / str_builder_add want Str).
+fn str_lit(c): Str { return str_new(c, strlen(c)); }
+
+# Offset of the body (just past the "\r\n\r\n" header terminator), or -1.
+fn find_body_offset(buf, n): i64 {
+    var i = 0;
+    while (i + 4 <= n) {
+        if (memeq(buf + i, "\r\n\r\n", 4) == 1) { return i + 4; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Parse raw request bytes into `req`. Returns 1 on success, 0 if malformed.
+fn req_parse(req, buf, n): i64 {
+    # method = bytes up to the first SP
+    var i = 0;
+    while (i < n && load8(buf + i) != 32) { i = i + 1; }
+    if (i >= n) { return 0; }
+    store64(req + REQ_METHOD, buf);
+    store64(req + REQ_METHOD_LEN, i);
+    i = i + 1;
+
+    # request-target = bytes up to the next SP, then split on '?'
+    var tstart = i;
+    while (i < n && load8(buf + i) != 32) { i = i + 1; }
+    if (i >= n) { return 0; }
+    var tend = i;
+    var q = tstart;
+    while (q < tend && load8(buf + q) != 63) { q = q + 1; }
+    store64(req + REQ_PATH, buf + tstart);
+    store64(req + REQ_PATH_LEN, q - tstart);
+    if (q < tend) {
+        store64(req + REQ_QUERY, buf + q + 1);
+        store64(req + REQ_QUERY_LEN, tend - (q + 1));
+    } else {
+        store64(req + REQ_QUERY, 0);
+        store64(req + REQ_QUERY_LEN, 0);
+    }
+
+    # headers begin just after the request-line LF
+    while (i < n && load8(buf + i) != 10) { i = i + 1; }
+    if (i >= n) { return 0; }
+    i = i + 1;
+    var hdr_start = buf + i;
+
+    var off = find_body_offset(buf, n);
+    if (off < 0) {
+        store64(req + REQ_HDRS, hdr_start);
+        store64(req + REQ_HDRS_LEN, (buf + n) - hdr_start);
+        store64(req + REQ_BODY, 0);
+        store64(req + REQ_BODY_LEN, 0);
+    } else {
+        store64(req + REQ_HDRS, hdr_start);
+        # headers run up to the blank line: boundary is buf+off-4..off; the last
+        # header's trailing CRLF ends at off-2.
+        var hlen = (buf + off - 2) - hdr_start;
+        if (hlen < 0) { hlen = 0; }
+        store64(req + REQ_HDRS_LEN, hlen);
+        store64(req + REQ_BODY, buf + off);
+        store64(req + REQ_BODY_LEN, n - off);
+    }
+    return 1;
+}
+
+# ── Req accessors ──
+fn req_method(req): Str   { return str_new(load64(req + REQ_METHOD), load64(req + REQ_METHOD_LEN)); }
+fn req_path(req): Str     { return str_new(load64(req + REQ_PATH),   load64(req + REQ_PATH_LEN)); }
+fn req_query(req): Str    { return str_new(load64(req + REQ_QUERY),  load64(req + REQ_QUERY_LEN)); }
+fn req_body_ptr(req): i64 { return load64(req + REQ_BODY); }
+fn req_body_len(req): i64 { return load64(req + REQ_BODY_LEN); }
+
+# Exact-match the path against a cstring (e.g. "/api/notes").
+fn req_path_is(req, cstr): i64 {
+    var clen = strlen(cstr);
+    if (load64(req + REQ_PATH_LEN) != clen) { return 0; }
+    return memeq(load64(req + REQ_PATH), cstr, clen);
+}
+fn req_method_is(req, cstr): i64 {
+    var clen = strlen(cstr);
+    if (load64(req + REQ_METHOD_LEN) != clen) { return 0; }
+    return memeq(load64(req + REQ_METHOD), cstr, clen);
+}
+
+# Case-insensitive compare of `len` bytes at `a` against cstring `b`.
+fn _ci_eq(a, b, len): i64 {
+    var i = 0;
+    while (i < len) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca >= 65 && ca <= 90) { ca = ca + 32; }
+        if (cb >= 65 && cb <= 90) { cb = cb + 32; }
+        if (ca != cb) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Look up a header by (case-insensitive) name. Returns its trimmed value as a
+# Str, or 0 if absent.
+fn req_header(req, name): i64 {
+    var p = load64(req + REQ_HDRS);
+    var end = p + load64(req + REQ_HDRS_LEN);
+    var nlen = strlen(name);
+    while (p < end) {
+        var le = p;
+        while (le < end && load8(le) != 10) { le = le + 1; }
+        if (p + nlen < le && load8(p + nlen) == 58 && _ci_eq(p, name, nlen) == 1) {
+            var v = p + nlen + 1;
+            while (v < le && (load8(v) == 32 || load8(v) == 9)) { v = v + 1; }
+            var ve = le;
+            if (ve > v && load8(ve - 1) == 13) { ve = ve - 1; }
+            return str_new(v, ve - v);
+        }
+        p = le + 1;
+    }
+    return 0;
+}
+
+# ── Responses ──
+# Frame and send one HTTP/1.1 response. status/ctype are cstrings; body is Str.
+fn resp_raw(cfd, status, ctype, body): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "HTTP/1.1 ");
+    str_builder_add_cstr(sb, status);
+    str_builder_add_cstr(sb, "\r\nContent-Type: ");
+    str_builder_add_cstr(sb, ctype);
+    str_builder_add_cstr(sb, "\r\nContent-Length: ");
+    str_builder_add_int(sb, str_len(body));
+    str_builder_add_cstr(sb, "\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+    str_builder_add(sb, body);
+    var resp = str_builder_build(sb);
+    sock_send(cfd, str_data(resp), str_len(resp));
+    return 0;
+}
+
+# Send a built json value (json_v_*) with the given status.
+fn resp_json(cfd, status, jv): i64 {
+    return resp_raw(cfd, status, "application/json", json_v_build(jv));
+}
+
+fn resp_json_err(cfd, status, msg): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("error"), json_v_str_new(str_lit(msg)));
+    return resp_json(cfd, status, o);
+}
+
+# Read a static file (relative to CWD) and send it, or 404 if absent.
+fn resp_file(cfd, path, ctype): i64 {
+    var buf = alloc(262144);
+    var n = file_read_all(path, buf, 262144);
+    if (n <= 0) { return resp_json_err(cfd, "404 Not Found", "file not found"); }
+    return resp_raw(cfd, "200 OK", ctype, str_new(buf, n));
+}
+
+fn resp_404(cfd): i64 { return resp_json_err(cfd, "404 Not Found", "not found"); }
+fn resp_405(cfd): i64 { return resp_json_err(cfd, "405 Method Not Allowed", "method not allowed"); }
+
+# ── Router (function-pointer route table) ──
+# Handlers have the signature  fn handler(cfd, req): i64  and are stored by
+# address (&handler), dispatched via fncall2.
+var RT_COUNT  = 0;
+var RT_ROUTES = 8;
+var RT_CAP    = 16;
+var RT_HDR_SZ = 24;
+var RE_METHOD = 0;     # route entry: cstring method
+var RE_PATH   = 8;     #              cstring path
+var RE_FP     = 16;    #              handler fn address
+var RE_SZ     = 24;
+
+fn router_new(cap): i64 {
+    var r = alloc(RT_HDR_SZ);
+    store64(r + RT_COUNT, 0);
+    store64(r + RT_CAP, cap);
+    store64(r + RT_ROUTES, alloc(cap * RE_SZ));
+    return r;
+}
+
+fn route_add(r, method, path, fp): i64 {
+    var c = load64(r + RT_COUNT);
+    if (c >= load64(r + RT_CAP)) { return 0; }
+    var e = load64(r + RT_ROUTES) + c * RE_SZ;
+    store64(e + RE_METHOD, method);
+    store64(e + RE_PATH, path);
+    store64(e + RE_FP, fp);
+    store64(r + RT_COUNT, c + 1);
+    return 1;
+}
+
+# Find a route matching (method, path) and invoke it. If the path matches but no
+# method does, reply 405; if nothing matches, 404. Always handles (returns 1).
+fn router_dispatch(r, cfd, req): i64 {
+    var c = load64(r + RT_COUNT);
+    var routes = load64(r + RT_ROUTES);
+    var path_match = 0;
+    var i = 0;
+    while (i < c) {
+        var e = routes + i * RE_SZ;
+        if (req_path_is(req, load64(e + RE_PATH)) == 1) {
+            path_match = 1;
+            if (req_method_is(req, load64(e + RE_METHOD)) == 1) {
+                fncall2(load64(e + RE_FP), cfd, req);
+                return 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (path_match == 1) { return resp_405(cfd); }
+    return resp_404(cfd);
+}
+
+# ── Server loop ──
+fn httpd_serve(port, router): i64 {
+    var sr = tcp_socket();
+    if (is_ok(sr) == 0) { println("error: tcp_socket failed"); return 1; }
+    var fd = result_unwrap(sr);
+    sock_reuse(fd);
+
+    var br = sock_bind(fd, INADDR_ANY(), port);
+    if (is_ok(br) == 0) { println("error: bind failed"); sock_close(fd); return 1; }
+
+    var lr = sock_listen(fd, 16);
+    if (is_ok(lr) == 0) { println("error: listen failed"); sock_close(fd); return 1; }
+
+    var req = req_new();
+    while (1) {
+        var ar = sock_accept(fd);
+        if (is_ok(ar) == 0) { continue; }
+        var cfd = result_unwrap(ar);
+
+        var reqbuf[8192];
+        var rr = sock_recv(cfd, &reqbuf, 8192);
+        var n = result_unwrap_or(rr, 0);
+
+        if (n > 0 && req_parse(req, &reqbuf, n) == 1) {
+            router_dispatch(router, cfd, req);
+        } else {
+            resp_404(cfd);
+        }
+        sock_close(cfd);
+    }
+    return 0;
+}

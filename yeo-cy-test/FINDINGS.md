@@ -128,6 +128,15 @@ Top things to fix, in priority order for the port:
   Everything above the socket (request parsing, response framing, headers,
   Content-Length) is hand-rolled. For the SY port this is the single biggest
   gap: SY leans on axum. A small `httpd.cyr` server helper would carry a lot.
+  **Update (6.1.15):** addressed *in-probe* by extracting `src/httpd.cyr` —
+  request parse (method/path/query/headers/body), a function-pointer route
+  table with method-aware dispatch (404/405), `resp_*` framing helpers, and an
+  `httpd_serve(port, router)` loop. The function-pointer router works cleanly
+  (`&handler` + `fncall2`). This is a candidate to upstream into the stdlib as
+  an `httpd.cyr`/`http_serve`. Still missing upstream: a stdlib server, a
+  concurrency story (below), and per-request arena/free (the bump allocator
+  never reclaims per-request `str_builder`/`Req` allocations, so a long-lived
+  server grows unboundedly — fine for the probe, not for production).
 - 🟡 The accept loop is single-threaded and blocking — one slow client stalls
   all others. `sock_set_recv_timeout` exists (slowloris guard) but real
   concurrency needs `thread.cyr` or an epoll loop, neither wired into a server
