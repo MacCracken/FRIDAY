@@ -28,15 +28,12 @@ function NoteRow({ note }) {
   const when = new Date(note.created * 1000).toLocaleString();
   return (h("li", { className: "note", "data-id": note.id }, h("span", { className: "body" }, note.body), h("time", null, when)));
 }
-function noteRows(notes) {
-  return notes.map((note) => NoteRow({ note }));
-}
 async function render() {
   const list = document.getElementById("list");
   const status = document.getElementById("status");
   try {
     const notes = await listNotes();
-    list.replaceChildren(...noteRows(notes));
+    list.replaceChildren(...notes.map((note) => NoteRow({ note })));
     status.textContent = `${notes.length} note(s)`;
   } catch(e) {
     status.textContent = `error: ${e.message}`;

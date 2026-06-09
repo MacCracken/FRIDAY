@@ -41,21 +41,12 @@ function NoteRow({ note }: { note: Note }): JSX.Element {
   );
 }
 
-// Workaround (cyrius emit bug, see FINDINGS.md): the TS/TSX→JS emitter
-// misplaces `async` when an `async function` contains a nested arrow —
-// it strips async from the owning function and stamps it on the inner
-// arrow. So the `notes.map((note) => …)` arrow is hoisted out of the
-// async `render` into this plain sync helper; both emit correctly.
-function noteRows(notes: Note[]): JSX.Element[] {
-  return notes.map((note) => NoteRow({ note }));
-}
-
 async function render(): Promise<void> {
   const list = document.getElementById("list");
   const status = document.getElementById("status");
   try {
     const notes = await listNotes();
-    list.replaceChildren(...noteRows(notes));
+    list.replaceChildren(...notes.map((note) => NoteRow({ note })));
     status.textContent = `${notes.length} note(s)`;
   } catch (e) {
     status.textContent = `error: ${e.message}`;

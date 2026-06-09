@@ -1,4 +1,7 @@
 /build/
+# lib/ is a regenerable sync artifact: `cyrius lib sync` (stdlib, pinned
+# snapshot) + `cyrius deps` (external deps). Not source — kept out of git.
+/lib/
 *.core
 
 # runtime artifacts

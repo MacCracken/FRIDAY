@@ -5,13 +5,17 @@
 
 ## Version
 
-**0.1.0** — full-stack slice working end to end. Re-run on cyrius 6.1.14 /
+**0.1.0** — full-stack slice working end to end. Re-run on cyrius 6.1.15 /
 patra 1.10.3 / sakshi 2.2.6 (2026-06-08): both original 🔴 blockers closed
-(TS/TSX→JS emit, patra string safety). See [`../../FINDINGS.md`](../../FINDINGS.md).
+(TS/TSX→JS emit, patra string safety); the 6.1.14 `async`+nested-arrow emit bug
+is fixed in 6.1.15 and the frontend workaround was removed. See
+[`../../FINDINGS.md`](../../FINDINGS.md).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.1.14` (in `cyrius.cyml [package].cyrius`)
+- **Cyrius pin**: `6.1.15` (in `cyrius.cyml [package].cyrius`)
+- `lib/` is untracked + gitignored; regenerate with `cyrius lib sync` +
+  `cyrius deps`.
 
 ## Source
 

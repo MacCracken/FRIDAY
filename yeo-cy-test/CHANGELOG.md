@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Re-run on **cyrius 6.1.14 / patra 1.10.3 / sakshi 2.2.6** (was 6.0.3 / 1.9.5 /
+- Re-run on **cyrius 6.1.15 / patra 1.10.3 / sakshi 2.2.6** (was 6.0.3 / 1.9.5 /
   2.2.5). Both original 🔴 blockers are now closed upstream and verified here.
 - **Frontend is now built by cyrius.** `web/app.js` is generated from
   `web/app.tsx` via `cyrius build --target=js` (TS/TSX→JS + JSX→`h` emitter,
@@ -19,14 +19,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `src/test.cyr` rewritten to assert the patra bound-text invariant (verbatim
   round-trip + injection safety) instead of the retired base64 invariant.
 - Dropped `base64` from the stdlib dep list (no longer used).
+- `lib/` is now untracked + gitignored; regenerated locally with `cyrius lib
+  sync` + `cyrius deps` (was a 6.0.3-era vendored copy shadowing the pinned
+  toolchain snapshot).
 
 ### Findings (filed)
-- 🔴 `cyrius --target=js` misplaces `async` when an `async function` contains a
-  nested arrow → invalid JS. Repro + root cause filed to
-  `cyrius/docs/development/issues/2026-06-08-yeo-cy-test-emit-js-async-nested-arrow.md`;
-  worked around by hoisting the `.map` arrow out of the async `render()`.
-- 🟡 Tracked `./lib/` (6.0.3-era vendored stdlib) shadows the version-pinned
-  toolchain snapshot on 6.1.x. See FINDINGS.md.
+- ✅ `cyrius --target=js` misplaced `async` when an `async function` contains a
+  nested arrow → invalid JS. Reported from this probe; **fixed in cyrius
+  6.1.15** (`async` now binds to the function it was parsed on). The `.map`
+  arrow workaround in `web/app.tsx` has been removed.
+- ✅ Tracked `./lib/` shadowing the pinned toolchain — resolved by untracking +
+  gitignoring `lib/` and regenerating via `cyrius lib sync`. See FINDINGS.md.
 
 ## [0.1.0]
 
