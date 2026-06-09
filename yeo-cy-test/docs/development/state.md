@@ -21,15 +21,21 @@ is fixed in 6.1.15 and the frontend workaround was removed. See
 
 - `src/httpd.cyr` — reusable HTTP/1.1 server abstraction (extracted from the
   hand-rolled loop): request parsing (method / path / query / headers / body),
-  a function-pointer route table with method-aware dispatch (404 vs 405),
-  response framing helpers (`resp_json` / `resp_file` / `resp_*`), and the
-  accept loop `httpd_serve(port, router)`. Single-threaded/blocking; one
-  reusable `Req` instance shared across connections.
+  full-request read (`httpd_recv_full`: reads until headers + `Content-Length`
+  body arrive), a function-pointer route table with method-aware dispatch
+  (404 vs 405), response framing helpers (`resp_json` / `resp_file` / `resp_*`),
+  and a **concurrent** server: `httpd_serve` runs a fixed worker-thread pool
+  (`HTTPD_WORKERS`, default 4) fed by a bounded channel (`HTTPD_BACKLOG`), so a
+  slow client ties up only its worker. `alloc()` is thread-safe; each worker has
+  its own receive buffer + `Req`.
 - `src/main.cyr` — wires routes to handlers and owns the patra persistence.
   `include "src/httpd.cyr"`. Registers `GET /`, `GET /app.js`,
   `GET|POST /api/notes`, `GET /api/health`. Note bodies are stored in a `TEXT`
   column via prepared statements with a bound `?` param (`patra_bind_text`) —
-  SQL injection-safe, no length cap; the base64 stopgap is retired.
+  SQL injection-safe, no length cap; the base64 stopgap is retired. **patra is
+  not thread-safe**, so all DB access + the `g_next_id` counter are serialized
+  under a `g_db_lock` mutex (patra roadmap P1/P2). Health + static serving run
+  fully concurrent.
 - `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman
   dashboard shell with header/nav and a hash router (`#/` Home, `#/notes`
   Notes) that swaps views into `#app`.
@@ -51,7 +57,7 @@ is fixed in 6.1.15 and the frontend workaround was removed. See
 Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — string, fmt, alloc, io, vec, str, syscalls, assert, bench, net,
-  result, tagged, json, freelist, chrono
+  result, tagged, json, freelist, chrono, thread, atomic
 - **patra** `1.10.3` — SQL persistence (`[deps.patra]`)
 - **sakshi** `2.2.6` — required transitively by patra (`[deps.sakshi]`)
 

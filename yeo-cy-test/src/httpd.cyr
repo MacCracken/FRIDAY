@@ -242,7 +242,92 @@ fn router_dispatch(r, cfd, req): i64 {
     return resp_404(cfd);
 }
 
-# ── Server loop ──
+# Scan the header region [buf, buf+hdr_off) for Content-Length; return its value
+# (0 if absent / no body).
+fn _content_length(buf, hdr_off): i64 {
+    var p = buf;
+    var end = buf + hdr_off;
+    var nlen = 14;     # strlen("content-length")
+    while (p < end) {
+        var le = p;
+        while (le < end && load8(le) != 10) { le = le + 1; }
+        if (p + nlen < le && load8(p + nlen) == 58 && _ci_eq(p, "content-length", nlen) == 1) {
+            var v = p + nlen + 1;
+            while (v < le && (load8(v) == 32 || load8(v) == 9)) { v = v + 1; }
+            var val = 0;
+            while (v < le && load8(v) >= 48 && load8(v) <= 57) {
+                val = val * 10 + (load8(v) - 48);
+                v = v + 1;
+            }
+            return val;
+        }
+        p = le + 1;
+    }
+    return 0;
+}
+
+# Read a full HTTP request into buf (up to cap bytes): loop sock_recv until the
+# "\r\n\r\n" header terminator is seen, then keep reading until Content-Length
+# body bytes have arrived. A single sock_recv is NOT enough — TCP may split
+# headers and body across segments (curl coalesces, urllib doesn't), so the
+# naive one-read approach drops POST bodies under load. Returns total bytes read
+# (which may be < a full request if the peer closes early). Caps at `cap`;
+# requests larger than the buffer are truncated (probe limitation).
+fn httpd_recv_full(cfd, buf, cap): i64 {
+    var total = 0;
+    var need = 0 - 1;     # total bytes required once headers are parsed
+    while (total < cap) {
+        var rr = sock_recv(cfd, buf + total, cap - total);
+        var n = result_unwrap_or(rr, 0);
+        if (n <= 0) { return total; }
+        total = total + n;
+        if (need < 0) {
+            var off = find_body_offset(buf, total);
+            if (off >= 0) { need = off + _content_length(buf, off); }
+        }
+        if (need >= 0 && total >= need) { return total; }
+    }
+    return total;
+}
+
+# ── Server loop (fixed worker pool + bounded channel) ──
+# The accept loop hands each accepted connection to a bounded channel; a fixed
+# pool of worker threads pulls from it and handles one connection at a time.
+# This bounds resources (no thread-per-connection stack churn — thread stacks
+# are reclaimed only on join, which a per-conn model can't do) and means a slow
+# client ties up only its own worker, never the accept loop or the others —
+# fixing the single-threaded "one slow client stalls all others" gap (FINDINGS).
+#
+# alloc() is thread-safe (process-wide CAS spinlock), so concurrent JSON/string
+# building across workers is safe. Non-thread-safe shared state (the patra
+# handle) must be serialized by the application — see g_db_lock in main.cyr.
+var HTTPD_WORKERS = 4;
+var HTTPD_BACKLOG = 64;
+
+var WCTX_CHAN   = 0;
+var WCTX_ROUTER = 8;
+
+# One worker: pull a connection off the channel, read + parse + dispatch + close,
+# forever. Its receive buffer and Req are allocated once and reused per request.
+fn _httpd_worker(ctx): i64 {
+    var ch = load64(ctx + WCTX_CHAN);
+    var router = load64(ctx + WCTX_ROUTER);
+    var reqbuf = alloc(8192);
+    var req = req_new();
+    while (1) {
+        var cfd = chan_recv(ch);
+        if (cfd == 0) { return 0; }   # channel closed (an accepted fd is never 0)
+        var n = httpd_recv_full(cfd, reqbuf, 8192);
+        if (n > 0 && req_parse(req, reqbuf, n) == 1) {
+            router_dispatch(router, cfd, req);
+        } else {
+            resp_404(cfd);
+        }
+        sock_close(cfd);
+    }
+    return 0;
+}
+
 fn httpd_serve(port, router): i64 {
     var sr = tcp_socket();
     if (is_ok(sr) == 0) { println("error: tcp_socket failed"); return 1; }
@@ -252,25 +337,23 @@ fn httpd_serve(port, router): i64 {
     var br = sock_bind(fd, INADDR_ANY(), port);
     if (is_ok(br) == 0) { println("error: bind failed"); sock_close(fd); return 1; }
 
-    var lr = sock_listen(fd, 16);
+    var lr = sock_listen(fd, 128);
     if (is_ok(lr) == 0) { println("error: listen failed"); sock_close(fd); return 1; }
 
-    var req = req_new();
+    var ch = chan_new(HTTPD_BACKLOG);
+    var ctx = alloc(16);
+    store64(ctx + WCTX_CHAN, ch);
+    store64(ctx + WCTX_ROUTER, router);
+    var w = 0;
+    while (w < HTTPD_WORKERS) {
+        thread_create(&_httpd_worker, ctx);
+        w = w + 1;
+    }
+
     while (1) {
         var ar = sock_accept(fd);
         if (is_ok(ar) == 0) { continue; }
-        var cfd = result_unwrap(ar);
-
-        var reqbuf[8192];
-        var rr = sock_recv(cfd, &reqbuf, 8192);
-        var n = result_unwrap_or(rr, 0);
-
-        if (n > 0 && req_parse(req, &reqbuf, n) == 1) {
-            router_dispatch(router, cfd, req);
-        } else {
-            resp_404(cfd);
-        }
-        sock_close(cfd);
+        chan_send(ch, result_unwrap(ar));
     }
     return 0;
 }

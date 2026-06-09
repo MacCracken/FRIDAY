@@ -141,6 +141,30 @@ Top things to fix, in priority order for the port:
   all others. `sock_set_recv_timeout` exists (slowloris guard) but real
   concurrency needs `thread.cyr` or an epoll loop, neither wired into a server
   helper. Acceptable for a probe; a real port needs a concurrency story.
+  **Update (2026-06-09):** addressed in `httpd.cyr` with a **fixed worker-thread
+  pool fed by a bounded channel** (`thread.cyr` `thread_create` + `chan_*`):
+  `HTTPD_WORKERS` workers pull accepted connections off the channel, so a slow
+  client ties up only its own worker. Verified: `/api/health` returns in ~10ms
+  while 2 silent connections hold workers; 250 concurrent POSTs complete with
+  0 errors and contiguous unique ids. Two enabling notes:
+    - `thread.cyr` is solid (`thread_create`/`mutex_*`/`chan_*`/`atomic_*`) and
+      `alloc()` is **thread-safe** (process-wide CAS spinlock, v6.0.64), so
+      concurrent JSON/string building across workers is safe out of the box.
+      Thread stacks are 64 KB and reclaimed only on `thread_join` — hence a
+      fixed pool (not thread-per-connection, which would leak a stack per conn).
+    - **patra is not thread-safe** (one shared handle + global parse/bind
+      scratch), so every DB call is serialized under one app-level mutex
+      (`g_db_lock`). Filed to patra's roadmap as **P1** (make a shared handle
+      safe) / **P2** (concurrent readers). This is the real ceiling on DB
+      parallelism here.
+- 🟡 **A single `sock_recv` is not a full request read.** The original loop
+  (and the first worker cut) read once and assumed the whole request arrived —
+  fine for curl (coalesces headers+body into one segment), but POST bodies from
+  clients that write headers and body separately (e.g. Python `urllib`) landed
+  in a later segment and were dropped → spurious `400`. Concurrency surfaced it
+  (1/10 POSTs succeeded). Fixed with `httpd_recv_full`: read until `\r\n\r\n`,
+  then until `Content-Length` body bytes arrive. A stdlib `http_serve` should do
+  this framing (incl. growable buffers — the probe caps requests at 8 KB).
 - 🔵 No unary `!` operator — `if (!is_ok(x))` does not parse; use
   `if (is_ok(x) == 0)`. Minor, but a common porting papercut from Rust/TS.
 - 🔵 `json.cyr` typed builder (`json_v_obj_new`/`json_v_obj_set`/

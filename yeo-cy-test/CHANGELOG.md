@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Concurrency: a fixed worker-thread pool** in `httpd.cyr` (`thread.cyr`
+  `thread_create` + a bounded `chan_*` handoff), replacing the single-threaded
+  accept loop — a slow client now ties up only its worker. patra is not
+  thread-safe, so DB access + `g_next_id` are serialized under a `g_db_lock`
+  mutex; health/static serving run concurrent (`alloc()` is thread-safe).
+  Verified: `/api/health` ~10ms while silent connections hold workers; 250
+  concurrent POSTs → 0 errors, contiguous unique ids. Filed patra thread-safety
+  **P1/P2** to patra's roadmap. Added `thread`, `atomic` to the stdlib deps.
+- **`httpd_recv_full`** — reads a complete request (headers, then
+  `Content-Length` body) instead of a single `sock_recv`; fixes POST bodies that
+  arrive in a later TCP segment (dropped → spurious 400 under non-curl clients).
 - **`src/httpd.cyr` — an HTTP/1.1 server abstraction**, extracted from the
   hand-rolled socket loop (addresses the FINDINGS "no HTTP server abstraction"
   gap in-probe). Request parsing (method / path / query / headers / body), a

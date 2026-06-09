@@ -18,6 +18,11 @@ var PORT = 8080;
 var g_db = 0;
 var g_next_id = 1;
 
+# patra is single-threaded (one shared file handle + global parse buffers), so
+# every access from the httpd worker pool must be serialized. This mutex guards
+# all patra calls and the g_next_id counter. (See patra roadmap: thread safety.)
+var g_db_lock = 0;
+
 # ── database ──
 
 fn db_init(): i64 {
@@ -63,6 +68,10 @@ fn handle_health(cfd, req): i64 {
 }
 
 fn handle_list_notes(cfd, req): i64 {
+    # Serialize all patra access (single shared handle). The result set
+    # references patra-internal state, so the whole read + JSON build runs under
+    # the lock; the send happens after unlock (the built array is stable heap).
+    mutex_lock(g_db_lock);
     var rs = patra_query(g_db, "SELECT id, body, created FROM notes ORDER BY id");
     var arr = json_v_arr_new();
     if (rs != 0) {
@@ -86,6 +95,7 @@ fn handle_list_notes(cfd, req): i64 {
         }
         patra_result_free(rs);
     }
+    mutex_unlock(g_db_lock);
     return resp_json(cfd, "200 OK", arr);
 }
 
@@ -100,23 +110,27 @@ fn handle_create_note(cfd, req): i64 {
     var bstr = json_v_str(json_v_obj_get(v, "body"));
     if (bstr == 0) { return resp_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
 
-    var id = g_next_id;
     var ts = clock_epoch_secs();
 
+    # Serialize patra + the g_next_id counter under one lock so the id read,
+    # INSERT, and counter bump are atomic across the worker pool.
+    mutex_lock(g_db_lock);
+    var id = g_next_id;
     # Bound parameters: the body is bound as text — written to the row as bytes,
     # never reparsed as SQL — so quotes/metacharacters store verbatim. Positional
     # VALUES order matches the CREATE TABLE column order: id, body, created.
     var stmt = patra_prepare(g_db, "INSERT INTO notes VALUES (?, ?, ?)");
-    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
     patra_bind_int(stmt, 0, id);
     patra_bind_text(stmt, 1, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 2, ts);
     var rc = patra_exec_prepared(g_db, stmt);
     patra_finalize(stmt);
+    if (rc == PATRA_OK) { g_next_id = id + 1; }
+    mutex_unlock(g_db_lock);
     if (rc != PATRA_OK) {
         return resp_json_err(cfd, "500 Internal Server Error", "insert failed");
     }
-    g_next_id = id + 1;
 
     # Echo the created note back (with the original body).
     var o = json_v_obj_new();
@@ -131,6 +145,7 @@ fn handle_create_note(cfd, req): i64 {
 fn main() {
     alloc_init();
 
+    g_db_lock = mutex_new();
     if (db_init() == 0) { println("error: patra_open failed"); return 1; }
 
     var router = router_new(8);
