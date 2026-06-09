@@ -20,18 +20,20 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   - `POST /api/notes`   → create a note from `{ "body": "…" }`
 - **Storage** — [patra](https://github.com/MacCracken/patra), the sovereign
   Cyrius SQL database. Notes persist to `yeo.patra` and survive restarts.
-- **Frontend** — `web/app.tsx` is the typed source of truth (validated by
-  `cycc --parse-ts`). `web/app.js` is the browser-runnable bundle served to
-  clients. See FINDINGS.md for why these are currently two files.
+- **Frontend** — `web/app.tsx` is the typed source of truth. `web/app.js` is
+  **generated** from it by `cyrius build --target=js` (the cyrius 6.1.11+
+  TS/TSX→JS + JSX emitter); do not hand-edit `app.js`.
 
-Note bodies are base64-encoded before storage to sidestep patra's lack of SQL
-string escaping (FINDINGS.md §patra), so arbitrary text — apostrophes, unicode —
-round-trips correctly.
+Note bodies are stored in a patra `TEXT` column via a prepared statement with a
+bound `?` parameter (`patra_bind_text`, patra 1.10.3), so arbitrary text —
+apostrophes, quotes, unicode, any length — round-trips safely with no SQL
+injection. (The earlier 6.0.3 probe base64-encoded bodies as a stopgap; see
+FINDINGS.md.)
 
 ## Build & run
 
 ```sh
-./build.sh                 # validate frontend TS/TSX with cyrius, build backend
+./build.sh                 # emit web/app.js from app.tsx, build backend
 ./build/yeo-cy-test        # start the server
 # open http://localhost:8080/
 ```
@@ -40,7 +42,7 @@ Or step by step:
 
 ```sh
 cyrius deps                                     # resolve patra + sakshi + stdlib
-cycc --parse-ts web/app.tsx </dev/null          # validate the frontend (build gate)
+cyrius build --target=js web/app.tsx web/app.js # emit the frontend bundle
 cyrius build src/main.cyr build/yeo-cy-test     # build the backend
 ```
 
@@ -55,18 +57,19 @@ curl -s localhost:8080/api/notes
 
 ```
 src/main.cyr     — the whole backend (server loop, routing, JSON, patra CRUD)
-web/app.tsx      — typed frontend source (cyrius-validated)
-web/app.js       — served browser bundle (hand-lowered from app.tsx)
+web/app.tsx      — typed frontend, single source of truth
+web/app.js       — served browser bundle (generated from app.tsx by cyrius)
 web/index.html   — page shell
-build.sh         — frontend validate + backend build
+build.sh         — frontend emit + backend build
 FINDINGS.md      — Cyrius / patra viability findings (the real deliverable)
 ```
 
 ## Status
 
-Backend + storage are viable on Cyrius today. The frontend can be **validated**
-by cyrius but not yet **emitted** to JS — that codegen stage is the one blocker
-for "build the TS/TSX frontend just by cyrius." Details and priorities in
+Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
+cyrius 6.1.14 / patra 1.10.3 / sakshi 2.2.6). Both original blockers — TS/TSX→JS
+emit and patra SQL string safety — are now closed; cyrius builds the whole
+slice. Remaining items (incl. an `async`+nested-arrow emit bug) are in
 [FINDINGS.md](FINDINGS.md).
 
 ## License

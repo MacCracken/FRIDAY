@@ -1,18 +1,18 @@
 # yeo-cy-test — full-stack slice backend: routed HTTP + JSON + patra persistence
 # Steps 2-4: TCP server, request routing, JSON, SQL-backed CRUD for /api/notes.
 #
-# Persistence note: patra's SQL tokenizer stops at the first single quote and
-# has no '' / backslash escaping and no bind parameters (see FINDINGS.md), so
-# arbitrary user text cannot be stored via a raw string literal. We sidestep
-# that by base64-encoding the note body before INSERT and decoding on read —
-# the base64 alphabet contains no quote characters.
+# Persistence (patra 1.10.3): the note body is a TEXT column written through a
+# prepared statement with a bound `?` parameter (patra_bind_text). Bound bytes
+# are stored / compared as-is and never reparsed as SQL, so embedded quotes and
+# other metacharacters are safe — this retired the base64 stopgap the earlier
+# 6.0.3 probe needed (no SQL escaping / no bind params then; see FINDINGS.md).
+# TEXT also lifts the old 256-byte STR cap, so note bodies are unbounded.
 #
 # Stdlib + deps (patra, sakshi) auto-included via cyrius.cyml.
 
 var PORT = 8080;
 var g_db = 0;
 var g_next_id = 1;
-var MAX_B64 = 250;   # patra STR column is COL_STR_SZ (256) incl. NUL
 
 # ── small helpers ──
 
@@ -76,7 +76,7 @@ fn db_init(): i64 {
     patra_init();
     g_db = patra_open("yeo.patra");
     if (g_db == 0) { return 0; }
-    patra_exec(g_db, "CREATE TABLE notes (id INT, body STR, created INT)");
+    patra_exec(g_db, "CREATE TABLE notes (id INT, body TEXT, created INT)");
 
     # Seed g_next_id from the current max id so restarts don't collide.
     var rs = patra_query(g_db, "SELECT id FROM notes ORDER BY id");
@@ -123,11 +123,12 @@ fn handle_list_notes(cfd): i64 {
             var o = json_v_obj_new();
             json_v_obj_set(o, str_lit("id"), json_v_int_new(patra_result_get_int(rs, i, 0)));
 
-            # body is stored base64-encoded; decode back to the original bytes.
-            var enc = patra_result_get_str(rs, i, 1);
-            var dec = base64_decode(enc, strlen(enc));
-            var body_str = str_new(load64(dec), load64(dec + 8));
-            json_v_obj_set(o, str_lit("body"), json_v_str_new(body_str));
+            # body is a TEXT column: read its payload by length (empty -> "").
+            var blen = patra_result_get_text_len(rs, i, 1);
+            if (blen < 0) { blen = 0; }
+            var bbuf = alloc(blen + 1);
+            patra_result_read_text(g_db, rs, i, 1, bbuf);
+            json_v_obj_set(o, str_lit("body"), json_v_str_new(str_new(bbuf, blen)));
 
             var ts = patra_result_get_int(rs, i, 2);
             json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
@@ -149,28 +150,21 @@ fn handle_create_note(cfd, buf, n): i64 {
     var bstr = json_v_str(json_v_obj_get(v, "body"));
     if (bstr == 0) { return send_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
 
-    # Encode to base64 so the value is SQL-literal-safe (no quotes).
-    var enc = base64_encode(str_data(bstr), str_len(bstr));
-    if (strlen(enc) > MAX_B64) {
-        return send_json_err(cfd, "413 Payload Too Large", "note body too long");
-    }
-
     var id = g_next_id;
     var ts = clock_epoch_secs();
 
-    # patra INSERT takes positional values only (no column list); order must
-    # match the CREATE TABLE column order: id, body, created.
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "INSERT INTO notes VALUES (");
-    str_builder_add_int(sb, id);
-    str_builder_add_cstr(sb, ", '");
-    str_builder_add_cstr(sb, enc);
-    str_builder_add_cstr(sb, "', ");
-    str_builder_add_int(sb, ts);
-    str_builder_add_cstr(sb, ")");
-    var sql = str_cstr(str_builder_build(sb));
-
-    if (patra_exec(g_db, sql) != PATRA_OK) {
+    # Bound parameters (patra 1.10.3). The body is bound as text — written to the
+    # row as bytes, never reparsed as SQL — so quotes/metacharacters in user input
+    # store verbatim with no escaping. Positional VALUES order matches the
+    # CREATE TABLE column order: id, body, created.
+    var stmt = patra_prepare(g_db, "INSERT INTO notes VALUES (?, ?, ?)");
+    if (stmt == 0) { return send_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    patra_bind_int(stmt, 0, id);
+    patra_bind_text(stmt, 1, str_data(bstr), str_len(bstr));
+    patra_bind_int(stmt, 2, ts);
+    var rc = patra_exec_prepared(g_db, stmt);
+    patra_finalize(stmt);
+    if (rc != PATRA_OK) {
         return send_json_err(cfd, "500 Internal Server Error", "insert failed");
     }
     g_next_id = id + 1;

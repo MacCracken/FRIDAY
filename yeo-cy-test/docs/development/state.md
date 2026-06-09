@@ -5,26 +5,33 @@
 
 ## Version
 
-**0.1.0** — full-stack slice working end to end as of 2026-05-27.
+**0.1.0** — full-stack slice working end to end. Re-run on cyrius 6.1.14 /
+patra 1.10.3 / sakshi 2.2.6 (2026-06-08): both original 🔴 blockers closed
+(TS/TSX→JS emit, patra string safety). See [`../../FINDINGS.md`](../../FINDINGS.md).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.0.3` (in `cyrius.cyml [package].cyrius`)
+- **Cyrius pin**: `6.1.14` (in `cyrius.cyml [package].cyrius`)
 
 ## Source
 
 - `src/main.cyr` — the entire backend: TCP server loop over `net.cyr`, request
   routing, JSON responses (`json.cyr`), static file serving (`io.cyr`), and
-  patra-backed CRUD for `/api/notes` (bodies base64-encoded for SQL safety).
-- `web/app.tsx` — typed frontend source of truth (cyrius-validated).
-- `web/app.js`, `web/index.html` — served browser bundle + shell.
-- `build.sh` — validates the TS/TSX with `cycc --parse-ts`, then builds backend.
+  patra-backed CRUD for `/api/notes`. Note bodies are stored in a `TEXT` column
+  via prepared statements with a bound `?` param (`patra_bind_text`) — SQL
+  injection-safe, no length cap; the base64 stopgap is retired.
+- `web/app.tsx` — typed frontend, single source of truth.
+- `web/app.js` — **generated** from `web/app.tsx` by `cyrius build --target=js`
+  (do not hand-edit); `web/index.html` is the page shell.
+- `build.sh` — emits `web/app.js` from the TSX (`--target=js` + `node --check`),
+  then builds the backend.
 
 ## Tests
 
-- `src/test.cyr` — base64 quote-free + lossless invariant; passes via
-  `cyrius run src/test.cyr`. (`cyrius test` does not currently discover the
-  scaffolded `.tcyr` — see FINDINGS.md.)
+- `src/test.cyr` — patra bound-text invariant: a quote/injection/unicode body
+  bound via `patra_bind_text` round-trips byte-for-byte through a `TEXT` column
+  and leaves the table intact. Passes via `cyrius run src/test.cyr` (idempotent).
+  (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
 - `tests/yeo-cy-test.{tcyr,bcyr,fcyr}` — scaffold stubs.
 
 ## Dependencies
@@ -32,9 +39,9 @@
 Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — string, fmt, alloc, io, vec, str, syscalls, assert, bench, net,
-  result, tagged, json, freelist, chrono, base64
-- **patra** `1.9.5` — SQL persistence (`[deps.patra]`)
-- **sakshi** `2.2.5` — required transitively by patra (`[deps.sakshi]`)
+  result, tagged, json, freelist, chrono
+- **patra** `1.10.3` — SQL persistence (`[deps.patra]`)
+- **sakshi** `2.2.6` — required transitively by patra (`[deps.sakshi]`)
 
 ## Consumers
 

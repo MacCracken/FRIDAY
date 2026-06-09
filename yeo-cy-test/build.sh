@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # yeo-cy-test build — cyrius is the only toolchain touched.
 #
-#   1. Validate the frontend TS/TSX with cyrius   (cycc --parse-ts)
+#   1. Build the frontend: TS/TSX -> browser JS   (cyrius build --target=js)
 #   2. Build the Cyrius backend                    (cyrius build)
 #
-# There is no TS->JS emit in Cyrius yet (see FINDINGS.md), so the deployable
-# browser bundle (web/app.js) is authored by hand from web/app.tsx. Once an
-# emit stage lands, step 1 becomes a real compile and app.js is generated.
+# As of cyrius 6.1.11+ the TS/TSX -> JS emitter exists, so web/app.js is now a
+# GENERATED artifact (was hand-lowered on 6.0.3 when there was no emit — see
+# FINDINGS.md). web/app.tsx is the single source of truth; do not hand-edit
+# web/app.js. The emit also validates the source (it parses + walks the AST),
+# so the old `cycc --parse-ts` validate-only step is subsumed.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CYCC="${CYCC:-cycc}"
-
-echo "▸ Validating frontend TS/TSX with cyrius (cycc --parse-ts)…"
+echo "▸ Building frontend (cyrius build --target=js)…"
 shopt -s nullglob
-for f in web/*.tsx web/*.ts; do
-  # </dev/null: cycc --parse-ts blocks on stdin even with a file arg (FINDINGS.md).
-  if "$CYCC" --parse-ts "$f" </dev/null >/dev/null 2>&1; then
-    echo "  ✓ $f"
+for f in web/*.tsx; do
+  out="web/$(basename "${f%.tsx}").js"
+  if cyrius build --target=js "$f" "$out" </dev/null; then
+    node --check "$out" 2>/dev/null && echo "  ✓ $f → $out (node --check OK)"
   else
-    echo "  ✗ $f failed to parse" >&2
+    echo "  ✗ $f failed to emit" >&2
     exit 1
   fi
 done

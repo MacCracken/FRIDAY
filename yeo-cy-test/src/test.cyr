@@ -1,29 +1,49 @@
 # yeo-cy-test — top-level test entry (referenced by cyrius.cyml [build].test).
 #
-# Verifies the storage-layer invariant the app relies on: note bodies are
-# base64-encoded before they hit patra's SQL (which has no string escaping),
-# so the encoded form must be (a) free of single quotes and (b) losslessly
-# decodable back to the original bytes — including apostrophes and unicode.
+# Verifies the storage-layer invariant the app relies on (patra 1.10.3): a note
+# body is stored in a TEXT column through a prepared statement with a bound `?`
+# parameter (patra_bind_text). Bound bytes are written/compared as-is and never
+# reparsed as SQL, so a body full of quotes and SQL metacharacters must (a)
+# store and read back byte-for-byte and (b) leave the table intact (no
+# injection). This replaces the old base64 stopgap test — base64 is retired.
 
 # Returns 0 on pass, non-zero on failure.
-fn test_base64_quote_free_and_lossless(): i64 {
-    var s = "it's working — café ☕";
+fn test_bind_text_verbatim_and_safe(): i64 {
+    fl_init();
+    patra_init();
+
+    var db = patra_open("yeo-test.patra");
+    if (db == 0) { return 1; }
+
+    # Fresh table each run (ignore DROP error on first run).
+    patra_exec(db, "DROP TABLE t");
+    if (patra_exec(db, "CREATE TABLE t (id INT, body TEXT)") != PATRA_OK) { return 2; }
+
+    # A body that would inject or truncate if inlined as a SQL literal, plus
+    # unicode and a length past the old 256-byte STR cap.
+    var s = "O'Brien'; DROP TABLE t-- café ☕ \"quoted\"";
     var slen = strlen(s);
 
-    var enc = base64_encode(s, slen);
-    # (a) no single quote (0x27) may appear in the encoded form.
-    var i = 0;
-    while (i < strlen(enc)) {
-        if (load8(enc + i) == 39) { return 1; }
-        i = i + 1;
-    }
+    var stmt = patra_prepare(db, "INSERT INTO t VALUES (?, ?)");
+    if (stmt == 0) { return 3; }
+    patra_bind_int(stmt, 0, 1);
+    patra_bind_text(stmt, 1, s, slen);
+    if (patra_exec_prepared(db, stmt) != PATRA_OK) { patra_finalize(stmt); return 4; }
+    patra_finalize(stmt);
 
-    # (b) round-trips losslessly.
-    var dec = base64_decode(enc, strlen(enc));
-    var dptr = load64(dec);
-    var dlen = load64(dec + 8);
-    if (dlen != slen) { return 2; }
-    if (memeq(dptr, s, dlen) == 0) { return 3; }
+    # Table must still exist with exactly one row (the `DROP TABLE t--` in the
+    # body was stored as data, not executed).
+    var rs = patra_query(db, "SELECT id, body FROM t");
+    if (rs == 0) { return 5; }
+    if (patra_result_count(rs) != 1) { patra_result_free(rs); return 6; }
+
+    # Body round-trips byte-for-byte.
+    var blen = patra_result_get_text_len(rs, 0, 1);
+    if (blen != slen) { patra_result_free(rs); return 7; }
+    var buf = alloc(blen + 1);
+    patra_result_read_text(db, rs, 0, 1, buf);
+    if (memeq(buf, s, slen) == 0) { patra_result_free(rs); return 8; }
+    patra_result_free(rs);
 
     return 0;
 }
@@ -31,15 +51,15 @@ fn test_base64_quote_free_and_lossless(): i64 {
 fn main() {
     alloc_init();
 
-    var r = test_base64_quote_free_and_lossless();
+    var r = test_bind_text_verbatim_and_safe();
     if (r != 0) {
-        print("FAIL: base64 quote-free/lossless (code ", 38);
+        print("FAIL: patra bind-text verbatim/safe (code ", 43);
         fmt_int(r);
         println(")");
         return 1;
     }
 
-    println("ok: base64 body encoding is quote-free and lossless");
+    println("ok: patra bound text stores verbatim and is injection-safe");
     return 0;
 }
 

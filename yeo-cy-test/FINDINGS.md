@@ -1,10 +1,62 @@
 # Cyrius Viability Findings — yeo-cy-test
 
 Running log of rough edges, gaps, and DX notes hit while building a thin
-full-stack slice (Cyrius backend + patra persistence + TS/TSX frontend) on
-**Cyrius 6.0.3**. Purpose: de-risk the eventual SecureYeoman → Cyrius port.
+full-stack slice (Cyrius backend + patra persistence + TS/TSX frontend).
+Purpose: de-risk the eventual SecureYeoman → Cyrius port. The original probe
+was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchains.
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
+
+## Update — re-run on Cyrius 6.1.14 (2026-06-08)
+
+Re-ran the slice on **cyrius 6.1.14**, **patra 1.10.3**, **sakshi 2.2.6** (was
+6.0.3 / 1.9.5 / 2.2.5). **Both 🔴 blockers from the 6.0.3 verdict are now
+closed**, verified end to end on this machine:
+
+- ✅ **TS→JS / JSX emit — CLOSED** (cyrius 6.1.11+). `cyrius build --target=js
+  web/app.tsx web/app.js` (and `cycc --emit-js`) lowers the real `web/app.tsx`
+  to browser JS: types stripped, JSX lowered to an `h(tag, props, …children)`
+  runtime emitted as a prelude. `web/app.js` is now a **generated artifact**
+  (the hand-lowered stopgap is retired) and `build.sh` runs the real emit.
+  Verified: `node --check` clean, and the emitted bundle *runs* in a DOM shim —
+  `fetch` → JSX render → form submit all work, and a body containing
+  `<img onerror=…>` is appended as a **text node** (XSS-safe by construction).
+- ✅ **patra string safety — CLOSED** (patra 1.10.3). `?` placeholders +
+  `patra_prepare` / `patra_bind_text` / `patra_bind_int` / `patra_exec_prepared`
+  replace the base64 stopgap; the `body` column is now `TEXT` (no 256 B cap).
+  Verified: `O'Brien'; DROP TABLE notes--` and a 400-byte body round-trip
+  verbatim and survive a restart; the table is intact (no injection).
+
+New issues surfaced on 6.1.14:
+
+- 🔴 **`--target=js` misplaces `async` with a nested arrow** (still present on
+  6.1.14). An `async function` whose body contains a nested arrow (e.g.
+  `xs.map(x => …)`) emits with `async` **stripped from the owner** and stamped
+  on the inner arrow → the owner has a bare `await` → `SyntaxError` under
+  `node --check`. Minimal repro + root-cause analysis filed to
+  `cyrius/docs/development/issues/2026-06-08-yeo-cy-test-emit-js-async-nested-arrow.md`.
+  **Workaround in use:** `web/app.tsx` hoists the `.map` arrow out of the async
+  `render()` into a plain sync helper (`noteRows`). Idiomatic `async` +
+  `.map(arrow)` should emit correctly once fixed.
+- 🟡 **Vendored `./lib/` shadows the version-pinned toolchain snapshot.** The
+  probe tracks a full stdlib copy under `lib/` (from `cyrius init`, dated
+  2026-05-27 / 6.0.3-era). On 6.1.x, `cyrius build` warns it shadows
+  `~/.cyrius/versions/<ver>/lib/`, so the build compiles against **stale
+  stdlib**. `cyrius deps` refreshes the external deps (`lib/patra.cyr`,
+  `lib/sakshi.cyr`) but not stdlib. Dropping `./lib/` builds clean against the
+  pinned snapshot and shrank the lockfile 81→30 deps. Recommend `git rm -r lib/`
+  and letting the pinned toolchain resolve stdlib (set
+  `CYRIUS_NO_WARN_SHADOW_LIB=1` if vendoring is kept deliberately).
+- 🟡 **`cyrius build` warns on pin drift** — `cyrius.cyml pins X but cycc is Y`.
+  Useful (caught the 6.1.13→6.1.14 bump mid-session), but the only remedy is to
+  edit the pin by hand; a `cyrius pin --latest` convenience would help.
+
+Note: the 6.0.3 findings below are **historical** — the two blockers are
+resolved above; the patra INSERT-column-list / STR-cap / sakshi-transitive
+items were tracked separately into patra and are partly addressed (TEXT column,
+bind params). Left intact as the original record.
+
+---
 
 ## Verdict
 
