@@ -108,11 +108,59 @@ milestone**, not a stdlib gap. Known `sandhi` caveat: `run_async` leaks ~32 B
 per connection via `lib/async.cyr`'s task structs (filed cyrius-side:
 `docs/issues/2026-06-09-async-runtime-no-free-task-leak.md`).
 
-**Next step for the probe:** port the service layer from hand-rolled
-`src/httpd.cyr` onto `sandhi_server_*` (gaining smuggling defenses + native
-concurrency), keeping a thin route table + path-param dispatch on top until
-sandhi's routing milestone lands. App logic (the `/api/notes` CRUD handlers +
-patra storage) is unaffected.
+### Ported onto sandhi (2026-06-17)
+
+Done. `src/httpd.cyr` is now a thin shim over `sandhi/server`: each worker calls
+`sandhi_server_recv_request` / `get_method` / `get_path` / `path_only` /
+`find_header` / `body_offset` / `send_response` / `send_status`, and the
+CL-TE / duplicate-header smuggling rejects, instead of the hand-rolled
+equivalents. Kept on top (the two things sandhi lacks): the method+path route
+table + `:name` matcher (`route_match`), and the worker-thread pool (sandhi's
+`run` is single-flight, `run_async` cooperative — neither gives true multi-core
+parallelism, which SY's axum backend has). `main.cyr`'s handlers + patra storage
+were unchanged (the `resp_*` / `req_*` signatures were preserved). Deps added:
+`sandhi` + its transitive modules `tls`, `async`, `random`, `fdlopen`, `dynlib`,
+and `json` dropped in favor of `sandhi`'s bundled `bayan`.
+
+Verified end to end on the sandhi-backed server: 13-case CRUD lifecycle, 250
+concurrent POSTs → 250 unique contiguous ids, slow client holding 2/4 workers
+leaves `/api/health` ~10 ms, **and the new smuggling rejects** — `Content-Length`+
+`Transfer-Encoding` coexistence → 400, duplicate `Content-Length` → 400, sane
+request → 200. Gains over the hand-rolled server: those smuggling defenses, a
+strict RFC-7230 `Content-Length` parser, and a maintained wire layer.
+
+Findings filed to sandhi's roadmap (another session owns sandhi):
+
+- 🔴 **HIGH: the server doesn't guard SIGPIPE** — a client that sends a request
+  line then disconnects (or drops mid-response) makes `sock_send` raise SIGPIPE
+  and the **default disposition terminates the whole server** (verified: signal
+  13, a trivial remote DoS). `net.cyr` `sock_send` uses no `MSG_NOSIGNAL` and
+  sandhi installs no `SIG_IGN`. The probe works around it exactly like the patra
+  shims: `httpd_ignore_sigpipe()` installs `rt_sigaction(SIGPIPE, SIG_IGN)` at
+  `httpd_serve` startup (x86_64: syscall 13). After the fix the server survives
+  every partial/empty/disconnect case. (This bug was latent in the old
+  hand-rolled server too — same `sock_send` — the port's partial-request tests
+  just exposed it.)
+- 🟡 **Documentation** (not a bug — libs are opt-in by design): adding `sandhi`
+  needs the companion modules `tls`/`async`/`random`/`fdlopen`/`dynlib` opted in
+  too (undefined-symbol errors otherwise), and JSON must be `bayan` **not**
+  `json` — `bayan` (the `json_v_*` successor) and `json` both define `json_v_*`/
+  `_jv_*`/`_jp_*`, so opting into both collides regardless of sandhi. A
+  "Requires: …" line in sandhi's docs would close it.
+- 🔵 **Server-only use carries the whole client/h2/tls surface** (~400 KB static
+  `.bss` of h2/hpack/tls tables `CYRIUS_DCE=1` can't reclaim). Not a new ask —
+  a data point for the long-term **bundled-libs → individual-packages split**;
+  a plaintext-HTTP server is the consumer that'd benefit from a server-only
+  package.
+- **Filed a request: thread-pool / true-parallel serve mode.** Both sandhi serve
+  loops are single-threaded (`run` single-flight, `run_async` cooperative), so a
+  blocking/CPU-bound handler serializes the rest — SY's axum backend is
+  multi-threaded, so the port needs real parallelism. Filed on sandhi's roadmap
+  (yeo-cy-test as first asker) proposing `sandhi_server_run_pooled`, with this
+  probe's `httpd_serve`/`_httpd_worker` thread pool as the reference shape. Until
+  then the probe keeps that pool feeding sandhi's (pool-safe) per-request fns.
+- 🔵 Also filed: a stale `run_async` leak doc-comment (the header still claims
+  ~32 B/conn; the inline 1.5.3 note + code show it was fixed to zero residual).
 
 ## Update — re-run on Cyrius 6.1.14 → 6.1.15 (2026-06-08)
 

@@ -51,11 +51,10 @@ fn test_bind_text_verbatim_and_safe(): i64 {
     return 0;
 }
 
-# Build a minimal Req carrying just a path (route_match only reads REQ_PATH*).
+# Build a minimal Req carrying just a path cstr (route_match reads REQ_PATH).
 fn mk_req(path): i64 {
     var req = req_new();
     store64(req + REQ_PATH, path);
-    store64(req + REQ_PATH_LEN, strlen(path));
     store64(req + REQ_NPARAMS, 0);
     return req;
 }

@@ -22,17 +22,20 @@ the app-level `g_db_lock` was removed; id allocation is now lock-free
 
 ## Source
 
-- `src/httpd.cyr` — reusable HTTP/1.1 server abstraction (extracted from the
-  hand-rolled loop): request parsing (method / path / query / headers / body),
-  full-request read (`httpd_recv_full`: reads until headers + `Content-Length`
-  body arrive), a function-pointer route table with method-aware dispatch
-  (404 vs 405) and **`:name` path params** (`route_match` segment-matches +
-  captures, `req_param` / `req_param_int` accessors), response framing helpers
-  (`resp_json` / `resp_file` / `resp_*`),
-  and a **concurrent** server: `httpd_serve` runs a fixed worker-thread pool
-  (`HTTPD_WORKERS`, default 4) fed by a bounded channel (`HTTPD_BACKLOG`), so a
-  slow client ties up only its worker. `alloc()` is thread-safe; each worker has
-  its own receive buffer + `Req`.
+- `src/httpd.cyr` — a thin routing shim that **composes `sandhi/server`** (the
+  stdlib services lib). Per-request work is sandhi: `sandhi_server_recv_request`,
+  `get_method` / `get_path` / `path_only` / `find_header` / `body_offset`,
+  `send_response` / `send_status`, and the CL-TE / duplicate-header
+  **request-smuggling rejects**. Kept locally (sandhi has neither yet): a
+  function-pointer route table with method-aware dispatch (404 vs 405) and
+  **`:name` path params** (`route_match` + `req_param` / `req_param_int`), the
+  `resp_*` / `req_*` wrappers (so `main.cyr` is unchanged), and a **concurrent**
+  server — `httpd_serve` runs a fixed worker-thread pool (`HTTPD_WORKERS`,
+  default 4) fed by a bounded channel, each worker driving sandhi's per-request
+  fns (sandhi's own `run`/`run_async` aren't truly parallel). `httpd_serve` also
+  installs `SIG_IGN` for SIGPIPE (`httpd_ignore_sigpipe`) — sandhi/net's
+  `sock_send` sets no `MSG_NOSIGNAL`, so a client disconnecting mid-response
+  would otherwise crash the process (filed to sandhi as HIGH).
 - `src/main.cyr` — wires routes to handlers and owns the patra persistence.
   `include "src/httpd.cyr"`. Registers `GET /`, `GET /app.js`,
   `GET /api/health`, `GET|POST /api/notes`, and the single-note resource
@@ -71,7 +74,10 @@ the app-level `g_db_lock` was removed; id allocation is now lock-free
 Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — string, fmt, alloc, io, vec, str, syscalls, assert, bench, net,
-  result, tagged, json, freelist, chrono, thread, atomic
+  result, tagged, freelist, chrono, thread, atomic, tls, async, random, fdlopen,
+  dynlib, **sandhi** (the HTTP services lib; `json` dropped — sandhi bundles its
+  successor `bayan`. `tls`/`async`/`random`/`fdlopen`/`dynlib` are sandhi's
+  transitive modules, added by hand since `+sandhi` doesn't auto-pull them.)
 - **patra** `1.10.3` — SQL persistence (`[deps.patra]`)
 - **sakshi** `2.2.6` — required transitively by patra (`[deps.sakshi]`)
 

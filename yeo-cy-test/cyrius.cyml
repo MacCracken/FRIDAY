@@ -12,7 +12,7 @@ test = "src/test.cyr"
 output = "yeo-cy-test"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "json", "freelist", "chrono", "thread", "atomic"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "freelist", "chrono", "thread", "atomic", "tls", "async", "random", "fdlopen", "dynlib", "sandhi"]
 
 [deps.sakshi]
 git = "https://github.com/MacCracken/sakshi.git"

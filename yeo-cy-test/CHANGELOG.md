@@ -42,6 +42,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `web/index.html` is now a minimal `#app` mount + dashboard CSS.
 
 ### Changed
+- **Ported the HTTP service layer onto `sandhi/server`.** `src/httpd.cyr` is now
+  a thin shim that composes sandhi for all wire work — `sandhi_server_recv_request`
+  / `get_method` / `get_path` / `path_only` / `find_header` / `body_offset` /
+  `send_response` / `send_status`, plus the CL-TE and duplicate-header
+  **request-smuggling rejects** the hand-rolled server lacked. Kept on top: the
+  route table + `:name` matcher (sandhi has no server router yet) and the
+  worker-thread pool (sandhi's `run`/`run_async` aren't truly parallel).
+  `main.cyr` + patra storage unchanged (`resp_*`/`req_*` signatures preserved).
+  Added `httpd_ignore_sigpipe()` (`rt_sigaction(SIGPIPE, SIG_IGN)`) — sandhi/net
+  don't set `MSG_NOSIGNAL`, so a client disconnecting mid-response was crashing
+  the server (signal 13). Deps: `+sandhi` and its transitive modules
+  `tls`/`async`/`random`/`fdlopen`/`dynlib`; dropped `json` (use sandhi's bundled
+  `bayan`). Re-verified: 13-case CRUD, 250 concurrent POSTs (250 unique ids),
+  slow-client isolation (~10 ms), smuggling rejects (CL+TE / CL.CL → 400).
+  Filed to sandhi's roadmap: the SIGPIPE bug (HIGH); a docs note (opt-in
+  companion modules + "use bayan not json"); the server-only ~400 KB static
+  surface as a data point for the long-term bundled-libs→packages split; and a
+  request for a thread-pool serve mode (`sandhi_server_run_pooled`).
 - Re-run on **cyrius 6.2.18 / patra 1.11.2 / sakshi 2.3.1** (was 6.1.15 /
   1.10.3 / 2.2.6). Both original 🔴 blockers stay closed; clean build, invariant
   test, injection/unicode round-trip, restart persistence, and the concurrency
