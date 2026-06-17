@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "yeo-cy-test — Cyrius full-stack viability probe for the SecureYeoman port"
 license = "AGPL-3.0-only"
 language = "cyrius"
-cyrius = "6.1.15"
+cyrius = "6.2.18"
 
 [build]
 entry = "src/main.cyr"
@@ -16,10 +16,10 @@ stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "b
 
 [deps.sakshi]
 git = "https://github.com/MacCracken/sakshi.git"
-tag = "2.2.6"
+tag = "2.3.1"
 modules = ["dist/sakshi.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.10.3"
+tag = "1.11.2"
 modules = ["dist/patra.cyr"]

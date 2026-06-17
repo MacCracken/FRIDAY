@@ -5,14 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Full single-note REST resource** — `GET` / `PUT` / `DELETE /api/notes/:id`,
+  alongside the existing list/create. Exercises patra's `SELECT…WHERE` /
+  `UPDATE` / `DELETE` with bound `?` params (first non-INSERT bind use) and a
+  new **`:name` path-param router** in `httpd.cyr` (`route_match`:
+  segment-by-segment matching, `:name` capture, equal-segment-count rule;
+  `req_param` / `req_param_int` accessors). Verified end to end (get-by-id,
+  404/400 edges, injection-safe update, idempotent delete, 405 on unmapped
+  method, restart persistence) + a `route_match` unit test in `src/test.cyr`.
+  Surfaced findings: patra has no rows-affected/`last_insert_id` readback
+  (worked around with a pre-SELECT for `PUT`); Cyrius allows forward fn refs
+  within a file. See FINDINGS.md.
 - **Concurrency: a fixed worker-thread pool** in `httpd.cyr` (`thread.cyr`
   `thread_create` + a bounded `chan_*` handoff), replacing the single-threaded
-  accept loop — a slow client now ties up only its worker. patra is not
-  thread-safe, so DB access + `g_next_id` are serialized under a `g_db_lock`
-  mutex; health/static serving run concurrent (`alloc()` is thread-safe).
-  Verified: `/api/health` ~10ms while silent connections hold workers; 250
-  concurrent POSTs → 0 errors, contiguous unique ids. Filed patra thread-safety
-  **P1/P2** to patra's roadmap. Added `thread`, `atomic` to the stdlib deps.
+  accept loop — a slow client now ties up only its worker. `alloc()` is
+  thread-safe, so JSON/string building across workers is safe. DB access needs
+  no external lock: patra is internally thread-safe (v1.11.0+), and the app's
+  own id counter is bumped with `atomic_fetch_add` (`&g_next_id`) — see the
+  lock-removal note under _Changed_. Verified: `/api/health` ~10ms while silent
+  connections hold 2/4 workers; 250 concurrent POSTs → 0 errors, 250 unique
+  contiguous ids. Filed patra thread-safety **P1/P2** to patra's roadmap; P1
+  shipped in patra 1.11.0. Added `thread`, `atomic` to the stdlib deps.
 - **`httpd_recv_full`** — reads a complete request (headers, then
   `Content-Length` body) instead of a single `sock_recv`; fixes POST bodies that
   arrive in a later TCP segment (dropped → spurious 400 under non-curl clients).
@@ -29,8 +42,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `web/index.html` is now a minimal `#app` mount + dashboard CSS.
 
 ### Changed
-- Re-run on **cyrius 6.1.15 / patra 1.10.3 / sakshi 2.2.6** (was 6.0.3 / 1.9.5 /
-  2.2.5). Both original 🔴 blockers are now closed upstream and verified here.
+- Re-run on **cyrius 6.2.18 / patra 1.11.2 / sakshi 2.3.1** (was 6.1.15 /
+  1.10.3 / 2.2.6). Both original 🔴 blockers stay closed; clean build, invariant
+  test, injection/unicode round-trip, restart persistence, and the concurrency
+  suite all re-verified end to end on the new toolchain.
+- **Removed the `g_db_lock` workaround.** patra's thread-safety **P1 shipped in
+  v1.11.0** (a process-global mutex serializes every statement op; result-set
+  accessors are caller-owned) — the filed finding from this probe — so the
+  app-level mutex around all patra calls is gone. The only thing patra doesn't
+  cover is the app's id allocation, now done lock-free with
+  `atomic_fetch_add(&g_next_id, 1)`. Re-verified: 250 concurrent POSTs still
+  yield 250 unique contiguous ids with no lock.
+- _(earlier re-run)_ cyrius 6.1.15 / patra 1.10.3 / sakshi 2.2.6 (was 6.0.3 /
+  1.9.5 / 2.2.5). Both original 🔴 blockers were closed upstream and verified.
 - **Frontend is now built by cyrius.** `web/app.js` is generated from
   `web/app.tsx` via `cyrius build --target=js` (TS/TSX→JS + JSX→`h` emitter,
   cyrius 6.1.11+); the hand-lowered stopgap is retired. `app.tsx` is now the
@@ -48,6 +72,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   toolchain snapshot).
 
 ### Findings (filed)
+- ⚠️ **Correction: the HTTP server abstraction exists — it's `sandhi`.** The
+  original "no HTTP server abstraction" verdict looked at top-level stdlib
+  primitives; the real services lib is `sandhi` (`sandhi/server`, a lift of
+  stdlib `lib/http_server.cyr`): serve loop (sync + async), full-request read,
+  method/path/param accessors, response framing, **and request-smuggling
+  defenses** the probe lacks. What sandhi doesn't have yet is a route table
+  (roadmapped) — which is exactly what the probe's `route_match` provides. Next
+  step: port `src/httpd.cyr` onto `sandhi_server_*`. See FINDINGS.md.
 - ✅ `cyrius --target=js` misplaced `async` when an `async function` contains a
   nested arrow → invalid JS. Reported from this probe; **fixed in cyrius
   6.1.15** (`async` now binds to the function it was parsed on). The `.map`

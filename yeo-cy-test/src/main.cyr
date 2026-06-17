@@ -4,11 +4,20 @@
 # lives in src/httpd.cyr; this file wires routes to handlers and owns the patra
 # persistence for /api/notes.
 #
-# Persistence (patra 1.10.3): the note body is a TEXT column written through a
+# Persistence (patra 1.11.2): the note body is a TEXT column written through a
 # prepared statement with a bound `?` parameter (patra_bind_text). Bound bytes
 # are stored / compared as-is and never reparsed as SQL, so embedded quotes and
 # other metacharacters are safe (no SQL escaping needed); TEXT lifts the old
 # 256-byte STR cap, so bodies are unbounded.
+#
+# Concurrency (patra 1.11.0+): patra is now internally thread-safe — a
+# process-global mutex serializes every self-contained statement op
+# (patra_exec / patra_query / prepared ops), and result-set accessors operate
+# on caller-owned result sets, so the httpd worker pool can call patra directly
+# with no external lock. (The old app-level g_db_lock has been removed — see
+# patra roadmap P1, shipped v1.11.0.) The one thing patra does NOT cover is the
+# app's own id allocation, so g_next_id is bumped with an atomic fetch-add
+# rather than under a lock.
 #
 # Stdlib + deps (patra, sakshi) auto-included via cyrius.cyml.
 
@@ -17,11 +26,6 @@ include "src/httpd.cyr"
 var PORT = 8080;
 var g_db = 0;
 var g_next_id = 1;
-
-# patra is single-threaded (one shared file handle + global parse buffers), so
-# every access from the httpd worker pool must be serialized. This mutex guards
-# all patra calls and the g_next_id counter. (See patra roadmap: thread safety.)
-var g_db_lock = 0;
 
 # ── database ──
 
@@ -68,34 +72,19 @@ fn handle_health(cfd, req): i64 {
 }
 
 fn handle_list_notes(cfd, req): i64 {
-    # Serialize all patra access (single shared handle). The result set
-    # references patra-internal state, so the whole read + JSON build runs under
-    # the lock; the send happens after unlock (the built array is stable heap).
-    mutex_lock(g_db_lock);
+    # patra_query is internally serialized and returns a caller-owned result
+    # set, so no external lock is needed across the read + JSON build.
     var rs = patra_query(g_db, "SELECT id, body, created FROM notes ORDER BY id");
     var arr = json_v_arr_new();
     if (rs != 0) {
         var c = patra_result_count(rs);
         var i = 0;
         while (i < c) {
-            var o = json_v_obj_new();
-            json_v_obj_set(o, str_lit("id"), json_v_int_new(patra_result_get_int(rs, i, 0)));
-
-            # body is a TEXT column: read its payload by length (empty -> "").
-            var blen = patra_result_get_text_len(rs, i, 1);
-            if (blen < 0) { blen = 0; }
-            var bbuf = alloc(blen + 1);
-            patra_result_read_text(g_db, rs, i, 1, bbuf);
-            json_v_obj_set(o, str_lit("body"), json_v_str_new(str_new(bbuf, blen)));
-
-            var ts = patra_result_get_int(rs, i, 2);
-            json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
-            json_v_arr_push(arr, o);
+            json_v_arr_push(arr, note_row_json(rs, i));
             i = i + 1;
         }
         patra_result_free(rs);
     }
-    mutex_unlock(g_db_lock);
     return resp_json(cfd, "200 OK", arr);
 }
 
@@ -112,22 +101,20 @@ fn handle_create_note(cfd, req): i64 {
 
     var ts = clock_epoch_secs();
 
-    # Serialize patra + the g_next_id counter under one lock so the id read,
-    # INSERT, and counter bump are atomic across the worker pool.
-    mutex_lock(g_db_lock);
-    var id = g_next_id;
+    # Reserve a unique id without a lock: atomic_fetch_add returns the pre-add
+    # value, so concurrent workers never collide. patra serializes the prepare
+    # + exec internally (v1.11.0+), so the INSERT itself needs no external lock.
+    var id = atomic_fetch_add(&g_next_id, 1);
     # Bound parameters: the body is bound as text — written to the row as bytes,
     # never reparsed as SQL — so quotes/metacharacters store verbatim. Positional
     # VALUES order matches the CREATE TABLE column order: id, body, created.
     var stmt = patra_prepare(g_db, "INSERT INTO notes VALUES (?, ?, ?)");
-    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
     patra_bind_int(stmt, 0, id);
     patra_bind_text(stmt, 1, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 2, ts);
     var rc = patra_exec_prepared(g_db, stmt);
     patra_finalize(stmt);
-    if (rc == PATRA_OK) { g_next_id = id + 1; }
-    mutex_unlock(g_db_lock);
     if (rc != PATRA_OK) {
         return resp_json_err(cfd, "500 Internal Server Error", "insert failed");
     }
@@ -140,20 +127,115 @@ fn handle_create_note(cfd, req): i64 {
     return resp_json(cfd, "201 Created", o);
 }
 
+# Build a note JSON object from result-set row `row` of `rs` (cols: id, body,
+# created). The body is a TEXT column read by length. Shared by the single-note
+# read path.
+fn note_row_json(rs, row): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("id"), json_v_int_new(patra_result_get_int(rs, row, 0)));
+    var blen = patra_result_get_text_len(rs, row, 1);
+    if (blen < 0) { blen = 0; }
+    var bbuf = alloc(blen + 1);
+    patra_result_read_text(g_db, rs, row, 1, bbuf);
+    json_v_obj_set(o, str_lit("body"), json_v_str_new(str_new(bbuf, blen)));
+    json_v_obj_set(o, str_lit("created"), json_v_int_new(patra_result_get_int(rs, row, 2)));
+    return o;
+}
+
+# GET /api/notes/:id — fetch one note by id. Bound WHERE param (the id is an INT
+# column, so the patra "WHERE on TEXT never matches" constraint doesn't apply).
+fn handle_get_note(cfd, req): i64 {
+    var id = req_param_int(req, 0);
+    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    var stmt = patra_prepare(g_db, "SELECT id, body, created FROM notes WHERE id = ?");
+    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    patra_bind_int(stmt, 0, id);
+    var rs = patra_query_prepared(g_db, stmt);
+    patra_finalize(stmt);
+    if (rs == 0) { return resp_json_err(cfd, "500 Internal Server Error", "query failed"); }
+    if (patra_result_count(rs) <= 0) {
+        patra_result_free(rs);
+        return resp_json_err(cfd, "404 Not Found", "note not found");
+    }
+    var o = note_row_json(rs, 0);
+    patra_result_free(rs);
+    return resp_json(cfd, "200 OK", o);
+}
+
+# PUT /api/notes/:id — replace a note's body. {"body": "..."} in the request
+# body; the new body is a bound text param, the id a bound WHERE param.
+fn handle_update_note(cfd, req): i64 {
+    var id = req_param_int(req, 0);
+    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    var bptr = req_body_ptr(req);
+    var blen = req_body_len(req);
+    if (bptr == 0 || blen <= 0) { return resp_json_err(cfd, "400 Bad Request", "missing request body"); }
+    var v = json_v_parse_str(bptr, blen);
+    if (v == 0) { return resp_json_err(cfd, "400 Bad Request", "invalid JSON"); }
+    var bstr = json_v_str(json_v_obj_get(v, "body"));
+    if (bstr == 0) { return resp_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
+
+    # Existence check first: patra has no rows-affected API, so a bare UPDATE on
+    # a missing id would silently succeed (200). Probe the row to return a real
+    # 404. (See FINDINGS: patra_rows_affected gap.)
+    var chk = patra_prepare(g_db, "SELECT id FROM notes WHERE id = ?");
+    if (chk == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    patra_bind_int(chk, 0, id);
+    var crs = patra_query_prepared(g_db, chk);
+    patra_finalize(chk);
+    if (crs == 0) { return resp_json_err(cfd, "500 Internal Server Error", "query failed"); }
+    var found = patra_result_count(crs);
+    patra_result_free(crs);
+    if (found <= 0) { return resp_json_err(cfd, "404 Not Found", "note not found"); }
+
+    # `?` placeholders bind in occurrence order: SET body=? is slot 0, WHERE id=?
+    # is slot 1.
+    var stmt = patra_prepare(g_db, "UPDATE notes SET body = ? WHERE id = ?");
+    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    patra_bind_text(stmt, 0, str_data(bstr), str_len(bstr));
+    patra_bind_int(stmt, 1, id);
+    var rc = patra_exec_prepared(g_db, stmt);
+    patra_finalize(stmt);
+    if (rc != PATRA_OK) { return resp_json_err(cfd, "500 Internal Server Error", "update failed"); }
+
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("id"),   json_v_int_new(id));
+    json_v_obj_set(o, str_lit("body"), json_v_str_new(bstr));
+    return resp_json(cfd, "200 OK", o);
+}
+
+# DELETE /api/notes/:id — remove a note. Idempotent (REST semantics): a missing
+# id still returns 200 since patra exposes no rows-affected count to 404 on.
+fn handle_delete_note(cfd, req): i64 {
+    var id = req_param_int(req, 0);
+    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    var stmt = patra_prepare(g_db, "DELETE FROM notes WHERE id = ?");
+    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    patra_bind_int(stmt, 0, id);
+    var rc = patra_exec_prepared(g_db, stmt);
+    patra_finalize(stmt);
+    if (rc != PATRA_OK) { return resp_json_err(cfd, "500 Internal Server Error", "delete failed"); }
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("deleted"), json_v_int_new(id));
+    return resp_json(cfd, "200 OK", o);
+}
+
 # ── entry ──
 
 fn main() {
     alloc_init();
 
-    g_db_lock = mutex_new();
     if (db_init() == 0) { println("error: patra_open failed"); return 1; }
 
-    var router = router_new(8);
-    route_add(router, "GET",  "/",            &handle_index);
-    route_add(router, "GET",  "/app.js",      &handle_appjs);
-    route_add(router, "GET",  "/api/health",  &handle_health);
-    route_add(router, "GET",  "/api/notes",   &handle_list_notes);
-    route_add(router, "POST", "/api/notes",   &handle_create_note);
+    var router = router_new(16);
+    route_add(router, "GET",    "/",              &handle_index);
+    route_add(router, "GET",    "/app.js",        &handle_appjs);
+    route_add(router, "GET",    "/api/health",    &handle_health);
+    route_add(router, "GET",    "/api/notes",     &handle_list_notes);
+    route_add(router, "POST",   "/api/notes",     &handle_create_note);
+    route_add(router, "GET",    "/api/notes/:id", &handle_get_note);
+    route_add(router, "PUT",    "/api/notes/:id", &handle_update_note);
+    route_add(router, "DELETE", "/api/notes/:id", &handle_delete_note);
 
     println("yeo-cy-test listening on :8080");
     return httpd_serve(PORT, router);

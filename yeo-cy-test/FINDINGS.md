@@ -7,6 +7,113 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — re-run on Cyrius 6.2.18 (2026-06-17)
+
+Re-ran the whole slice on **cyrius 6.2.18 / patra 1.11.2 / sakshi 2.3.1** (was
+6.1.15 / 1.10.3 / 2.2.6 — a full cyrius minor forward). Bumped the three pins
+(`cyrius.cyml`), regenerated `lib/` + deps (`cyrius lib sync && cyrius deps`),
+and rebuilt. **Everything still works, nothing regressed**, and the headline
+finding from the last concurrency milestone is now **closed upstream**.
+
+- ✅ **patra thread-safety P1 — SHIPPED (patra 1.11.0), workaround removed.**
+  The 2026-06-09 milestone filed that patra was not thread-safe (one shared
+  handle + global parse/bind scratch), forcing the probe to serialize *all* DB
+  access under an app-level `g_db_lock`. patra 1.11.0 fixed it: a process-global
+  futex mutex now serializes every self-contained statement op (`patra_exec` /
+  `patra_query` / prepared ops), and result-set accessors operate on
+  caller-owned result sets. patra's own roadmap says *"consumers drop their
+  external `g_db_lock`"* — so this probe did. `src/main.cyr` no longer takes any
+  app-level DB lock; the one thing patra doesn't cover (the app's `g_next_id`
+  allocation) is now lock-free via `atomic_fetch_add(&g_next_id, 1)`. The
+  `list`/`create` handlers call patra directly.
+  - **Re-verified end to end**: clean build (frontend emit + `node --check`,
+    backend compile); the patra bound-text invariant test passes; an
+    injection+unicode body (`O'Brien'); DROP TABLE notes--  ☃ 日本語`)
+    round-trips verbatim and survives a restart; **250 concurrent POSTs → 250
+    unique contiguous ids, 0 errors, no lock**; a slow client holding 2 of 4
+    workers leaves `/api/health` at ~10 ms.
+- 🔵 **patra has no `last_insert_id` / rowid-return.** With P1 done, the natural
+  cleanup was to drop the app `g_next_id` entirely and use patra's
+  `AUTOINCREMENT` (shipped 1.10.1). But there's no API to read back the
+  auto-assigned id after an INSERT, so echoing the created row in the `201`
+  response would require a racy `SELECT MAX(id)`. Kept explicit app-assigned ids
+  (now lock-free via atomics) instead. A `patra_last_insert_id(db)` would make
+  `AUTOINCREMENT` usable for insert-then-echo APIs (the common REST shape).
+- 🔵 Both original 🔴 blockers (TS/TSX→JS emit, patra string safety) and the
+  6.1.15 `async`+nested-arrow emit fix all **hold on 6.2.18** — no re-breakage
+  across the 6.1→6.2 minor.
+
+### Widened the surface: a full single-note REST resource (2026-06-17)
+
+To flush out more SY-shaped surface, extended `/api/notes` from
+list+create to a full resource: **`GET` / `PUT` / `DELETE /api/notes/:id`**.
+Every SecureYeoman endpoint is a parameterized resource, so this stresses two
+areas the earlier probe never touched — path-param routing and patra's
+UPDATE/DELETE/WHERE SQL — and is verified end to end (13-case lifecycle:
+get-by-id, 404 on missing, 400 on non-numeric id, update w/ injection payload,
+idempotent delete, 405 on unmapped method, trailing-slash rejection, restart
+persistence) plus a `route_match` unit test in `src/test.cyr`.
+
+- ✅ **patra UPDATE / DELETE / SELECT…WHERE with bound params all work**
+  (v1.10.2 bind support, exercised here for the first time). `SELECT … WHERE
+  id = ?`, `UPDATE … SET body = ? WHERE id = ?`, and `DELETE … WHERE id = ?`
+  via `patra_prepare` + `patra_bind_int`/`patra_bind_text` + `patra_exec_prepared`
+  / `patra_query_prepared`. `?` placeholders bind in occurrence order (SET
+  before WHERE). The documented *"WHERE on a TEXT column never matches"*
+  constraint doesn't bite here — the key (`id`) is INT.
+- 🔵 **patra has no rows-affected / `changes()` API.** A bare `UPDATE`/`DELETE`
+  on a non-existent id returns `PATRA_OK` with no way to learn that zero rows
+  matched, so an endpoint can't tell "updated" from "nothing there." The probe
+  works around it for `PUT` with a pre-`SELECT` existence check (an extra
+  round-trip); `DELETE` stays idempotent-200 (valid REST). Wanted:
+  `patra_rows_affected(db)` after a write. Pairs with the `last_insert_id` gap
+  below — both are the "what did that write do?" readback that REST handlers
+  need. (Filed to patra's roadmap; another agent owns patra.)
+- 🔵 **No `last_insert_id` / rowid-return after INSERT.** (carried from above)
+  With P1 done, the natural cleanup was to drop the app `g_next_id` and use
+  patra's `AUTOINCREMENT` (1.10.1), but there's no API to read back the
+  auto-assigned id for the `201` echo. Kept app-assigned ids (lock-free atomics).
+- 🔵 **Cyrius allows forward function references within a file** (DX positive):
+  `handle_list_notes` calls `note_row_json` defined later in `main.cyr` and it
+  compiles fine — no forward declarations needed, unlike C. Worth knowing for
+  the port (don't topologically sort helpers).
+
+### ⚠️ Correction: the HTTP server abstraction exists — it's `sandhi`
+
+**The original Verdict #4 ("No HTTP server abstraction") and the
+"stdlib has no `http_serve`/router" notes below are WRONG — they looked at the
+wrong layer.** Cyrius's model is: **top-level stdlib = primitives; the fuller
+ecosystem libs hold the real functionality.** The services lib is **`sandhi`**
+(it's where patra-for-storage's equivalent lives for HTTP). `sandhi/server` —
+itself a lift of stdlib `lib/http_server.cyr` — already provides essentially
+everything `src/httpd.cyr` hand-rolled, plus security this probe lacks:
+
+- `sandhi_server_run(addr, port, handler, ctx)` (sync) and
+  `sandhi_server_run_async(…, opts)` (concurrent via `lib/async.cyr`'s event
+  loop, arena-bounded recv buffers) — so concurrency is built in; the
+  hand-rolled worker pool isn't needed.
+- `sandhi_server_recv_request` (= `httpd_recv_full`), `sandhi_server_get_method`
+  / `get_path` / `get_param` (query) / `path_segment`, `sandhi_server_send_response`
+  / `send_status` / `send_204` / chunked send (= the `resp_*` framing).
+- **Request-smuggling defenses** — `sandhi_server_request_has_cl_te_conflict`
+  and `_has_dup_smuggling_header` — which `httpd.cyr` does **not** have. This is
+  the strongest reason to sit on `sandhi` for the real SY port.
+
+What `sandhi` does **not** provide yet (its own roadmap: "routing, middleware,
+and auth primitives layer on top in later milestones"): a **route table**.
+`sandhi_server_run` dispatches to a single handler. So the probe's `route_match`
+(method + `:name` path-param dispatch, built on `path_segment`-style splitting)
+is exactly the missing layer — **useful feedback for sandhi's routing
+milestone**, not a stdlib gap. Known `sandhi` caveat: `run_async` leaks ~32 B
+per connection via `lib/async.cyr`'s task structs (filed cyrius-side:
+`docs/issues/2026-06-09-async-runtime-no-free-task-leak.md`).
+
+**Next step for the probe:** port the service layer from hand-rolled
+`src/httpd.cyr` onto `sandhi_server_*` (gaining smuggling defenses + native
+concurrency), keeping a thin route table + path-param dispatch on top until
+sandhi's routing milestone lands. App logic (the `/api/notes` CRUD handlers +
+patra storage) is unaffected.
+
 ## Update — re-run on Cyrius 6.1.14 → 6.1.15 (2026-06-08)
 
 Re-ran the slice on **cyrius 6.1.14** then **6.1.15**, **patra 1.10.3**,

@@ -4,15 +4,18 @@
 #
 # Provides:
 #   • request parsing  — method, path, query, headers, body (req_*)
-#   • a route table    — function-pointer dispatch by (method, path) (router_*)
+#   • a route table    — function-pointer dispatch by (method, path), with
+#                        `:name` path params (router_* / route_match)
 #   • response framing — status line, headers, JSON / text / file / errors (resp_*)
-#   • the accept loop  — httpd_serve(port, router)
+#   • the accept loop  — httpd_serve(port, router) — a fixed worker-thread pool
 #
-# The server is single-threaded/blocking (one connection at a time); a real port
-# needs a concurrency story (threads/epoll). One reusable Req instance is shared
-# across connections — safe precisely because handling is serialized.
+# Concurrency: httpd_serve runs a fixed worker-thread pool fed by a bounded
+# channel (see the server-loop section). Each worker owns its own receive buffer
+# and Req, so request state is never shared across connections; alloc() is
+# thread-safe. A slow client ties up only its own worker.
 #
-# ASCII codes used inline:  SP=32  TAB=9  LF=10  CR=13  '?'=63  ':'=58  'A'=65 'Z'=90
+# ASCII codes used inline:  SP=32  TAB=9  LF=10  CR=13  '?'=63  ':'=58  '/'=47
+#                           'A'=65 'Z'=90
 
 # ── Req struct (byte offsets into a heap block) ──
 # All ptr fields point INTO the per-connection receive buffer; valid only for the
@@ -27,7 +30,12 @@ var REQ_HDRS       = 48;
 var REQ_HDRS_LEN   = 56;
 var REQ_BODY       = 64;
 var REQ_BODY_LEN   = 72;
-var REQ_SZ         = 80;
+# Captured `:name` path params, filled by route_match at dispatch time. Each slot
+# is (ptr, len) into the receive buffer; valid for the request's lifetime only.
+var REQ_NPARAMS    = 80;
+var REQ_PARAMS     = 88;     # array of REQ_MAX_PARAMS × 16-byte (ptr,len) slots
+var REQ_MAX_PARAMS = 4;
+var REQ_SZ         = 152;    # REQ_PARAMS + REQ_MAX_PARAMS*16
 
 fn req_new(): i64 { return alloc(REQ_SZ); }
 
@@ -46,6 +54,7 @@ fn find_body_offset(buf, n): i64 {
 
 # Parse raw request bytes into `req`. Returns 1 on success, 0 if malformed.
 fn req_parse(req, buf, n): i64 {
+    store64(req + REQ_NPARAMS, 0);
     # method = bytes up to the first SP
     var i = 0;
     while (i < n && load8(buf + i) != 32) { i = i + 1; }
@@ -113,6 +122,35 @@ fn req_method_is(req, cstr): i64 {
     var clen = strlen(cstr);
     if (load64(req + REQ_METHOD_LEN) != clen) { return 0; }
     return memeq(load64(req + REQ_METHOD), cstr, clen);
+}
+
+# ── Path params (captured by route_match from `:name` pattern segments) ──
+fn req_nparams(req): i64 { return load64(req + REQ_NPARAMS); }
+
+# Captured param `idx` as a borrowed Str, or an empty Str if out of range.
+fn req_param(req, idx): Str {
+    if (idx < 0 || idx >= load64(req + REQ_NPARAMS)) { return str_new(0, 0); }
+    var slot = req + REQ_PARAMS + idx * 16;
+    return str_new(load64(slot), load64(slot + 8));
+}
+
+# Captured param `idx` parsed as a non-negative decimal i64, or -1 if absent /
+# empty / non-numeric. (Used for `/resource/:id`-style integer keys.)
+fn req_param_int(req, idx): i64 {
+    if (idx < 0 || idx >= load64(req + REQ_NPARAMS)) { return 0 - 1; }
+    var slot = req + REQ_PARAMS + idx * 16;
+    var p = load64(slot);
+    var len = load64(slot + 8);
+    if (len <= 0) { return 0 - 1; }
+    var val = 0;
+    var i = 0;
+    while (i < len) {
+        var c = load8(p + i);
+        if (c < 48 || c > 57) { return 0 - 1; }
+        val = val * 10 + (c - 48);
+        i = i + 1;
+    }
+    return val;
 }
 
 # Case-insensitive compare of `len` bytes at `a` against cstring `b`.
@@ -220,6 +258,58 @@ fn route_add(r, method, path, fp): i64 {
     return 1;
 }
 
+# Match the request path against a route pattern, capturing `:name` segments
+# into req's param slots. Pattern and path are compared segment-by-segment
+# (split on '/'); a literal segment must match exactly, a `:name` segment
+# matches any one non-empty segment and is captured. Segment counts must be
+# equal, so "/api/notes" does NOT match pattern "/api/notes/:id" and vice-versa.
+# Returns 1 on match (params filled), 0 otherwise. Resets req's param count.
+fn route_match(req, pattern): i64 {
+    store64(req + REQ_NPARAMS, 0);
+    var pp = pattern;                          # cstring cursor (pattern)
+    var b  = load64(req + REQ_PATH);           # cursor into the request path
+    var bend = b + load64(req + REQ_PATH_LEN);
+    # both must be absolute (begin with '/')
+    if (load8(pp) != 47) { return 0; }
+    if (b >= bend || load8(b) != 47) { return 0; }
+    pp = pp + 1;
+    b = b + 1;
+    while (1) {
+        # current pattern segment [ps, pp)
+        var ps = pp;
+        while (load8(pp) != 0 && load8(pp) != 47) { pp = pp + 1; }
+        var pseg = pp - ps;
+        # current path segment [bs, b)
+        var bs = b;
+        while (b < bend && load8(b) != 47) { b = b + 1; }
+        var bseg = b - bs;
+
+        if (pseg > 0 && load8(ps) == 58) {     # ':' → capture, matches any non-empty
+            if (bseg == 0) { return 0; }
+            var np = load64(req + REQ_NPARAMS);
+            if (np < REQ_MAX_PARAMS) {
+                var slot = req + REQ_PARAMS + np * 16;
+                store64(slot, bs);
+                store64(slot + 8, bseg);
+                store64(req + REQ_NPARAMS, np + 1);
+            }
+        } else {                               # literal segment: exact match
+            if (pseg != bseg) { return 0; }
+            if (pseg > 0 && memeq(ps, bs, pseg) == 0) { return 0; }
+        }
+
+        var pmore = 0;
+        if (load8(pp) == 47) { pmore = 1; }
+        var bmore = 0;
+        if (b < bend && load8(b) == 47) { bmore = 1; }
+        if (pmore != bmore) { return 0; }      # differing segment counts
+        if (pmore == 0) { return 1; }          # both exhausted → full match
+        pp = pp + 1;
+        b = b + 1;
+    }
+    return 0;
+}
+
 # Find a route matching (method, path) and invoke it. If the path matches but no
 # method does, reply 405; if nothing matches, 404. Always handles (returns 1).
 fn router_dispatch(r, cfd, req): i64 {
@@ -229,7 +319,7 @@ fn router_dispatch(r, cfd, req): i64 {
     var i = 0;
     while (i < c) {
         var e = routes + i * RE_SZ;
-        if (req_path_is(req, load64(e + RE_PATH)) == 1) {
+        if (route_match(req, load64(e + RE_PATH)) == 1) {
             path_match = 1;
             if (req_method_is(req, load64(e + RE_METHOD)) == 1) {
                 fncall2(load64(e + RE_FP), cfd, req);
@@ -299,8 +389,8 @@ fn httpd_recv_full(cfd, buf, cap): i64 {
 # fixing the single-threaded "one slow client stalls all others" gap (FINDINGS).
 #
 # alloc() is thread-safe (process-wide CAS spinlock), so concurrent JSON/string
-# building across workers is safe. Non-thread-safe shared state (the patra
-# handle) must be serialized by the application — see g_db_lock in main.cyr.
+# building across workers is safe. patra is internally thread-safe (v1.11.0+),
+# so workers call it directly with no application-level lock.
 var HTTPD_WORKERS = 4;
 var HTTPD_BACKLOG = 64;
 

@@ -1,11 +1,14 @@
 # yeo-cy-test — top-level test entry (referenced by cyrius.cyml [build].test).
 #
-# Verifies the storage-layer invariant the app relies on (patra 1.10.3): a note
-# body is stored in a TEXT column through a prepared statement with a bound `?`
-# parameter (patra_bind_text). Bound bytes are written/compared as-is and never
-# reparsed as SQL, so a body full of quotes and SQL metacharacters must (a)
-# store and read back byte-for-byte and (b) leave the table intact (no
-# injection). This replaces the old base64 stopgap test — base64 is retired.
+# Two invariants the app relies on:
+#   1. patra bound-text storage (1.11.2): a note body in a TEXT column written
+#      through a bound `?` param stores/reads byte-for-byte and never reparses
+#      as SQL (injection-safe).
+#   2. httpd route_match: `:name` path-param matching — segment-count rules,
+#      capture, and numeric parsing — the routing the /api/notes/:id resource
+#      depends on.
+
+include "src/httpd.cyr"
 
 # Returns 0 on pass, non-zero on failure.
 fn test_bind_text_verbatim_and_safe(): i64 {
@@ -48,8 +51,71 @@ fn test_bind_text_verbatim_and_safe(): i64 {
     return 0;
 }
 
+# Build a minimal Req carrying just a path (route_match only reads REQ_PATH*).
+fn mk_req(path): i64 {
+    var req = req_new();
+    store64(req + REQ_PATH, path);
+    store64(req + REQ_PATH_LEN, strlen(path));
+    store64(req + REQ_NPARAMS, 0);
+    return req;
+}
+
+# A captured param equals the given cstring?
+fn param_eq(req, idx, expect): i64 {
+    var s = req_param(req, idx);
+    var elen = strlen(expect);
+    if (str_len(s) != elen) { return 0; }
+    return memeq(str_data(s), expect, elen);
+}
+
+# Returns 0 on pass, non-zero (case code) on failure.
+fn test_route_match(): i64 {
+    # exact (no params) still matches
+    if (route_match(mk_req("/api/notes"), "/api/notes") != 1) { return 1; }
+    if (route_match(mk_req("/"), "/") != 1) { return 2; }
+
+    # single `:id` capture
+    var r = mk_req("/api/notes/5");
+    if (route_match(r, "/api/notes/:id") != 1) { return 3; }
+    if (req_nparams(r) != 1) { return 4; }
+    if (req_param_int(r, 0) != 5) { return 5; }
+
+    # segment-count rules: pattern longer / shorter than path
+    if (route_match(mk_req("/api/notes"), "/api/notes/:id") != 0) { return 6; }
+    if (route_match(mk_req("/api/notes/5"), "/api/notes") != 0) { return 7; }
+
+    # empty trailing segment must NOT satisfy a `:id`
+    if (route_match(mk_req("/api/notes/"), "/api/notes/:id") != 0) { return 8; }
+
+    # literal-segment mismatch
+    if (route_match(mk_req("/api/x/5"), "/api/notes/:id") != 0) { return 9; }
+
+    # multiple captures, in order
+    var r2 = mk_req("/a/b");
+    if (route_match(r2, "/:x/:y") != 1) { return 10; }
+    if (req_nparams(r2) != 2) { return 11; }
+    if (param_eq(r2, 0, "a") == 0) { return 12; }
+    if (param_eq(r2, 1, "b") == 0) { return 13; }
+
+    # non-numeric param: matches the route but req_param_int rejects it (-> -1)
+    var r3 = mk_req("/api/notes/abc");
+    if (route_match(r3, "/api/notes/:id") != 1) { return 14; }
+    if (req_param_int(r3, 0) != 0 - 1) { return 15; }
+
+    return 0;
+}
+
 fn main() {
     alloc_init();
+
+    var rm = test_route_match();
+    if (rm != 0) {
+        print("FAIL: httpd route_match (code ", 31);
+        fmt_int(rm);
+        println(")");
+        return 1;
+    }
+    println("ok: httpd route_match path params + segment rules");
 
     var r = test_bind_text_verbatim_and_safe();
     if (r != 0) {
