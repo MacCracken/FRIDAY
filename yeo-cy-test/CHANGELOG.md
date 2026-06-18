@@ -5,6 +5,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Full notes-dashboard frontend + headless full-stack proof.** `web/app.tsx`
+  grew from a list+add shell into a real CRUD UI: a `#/notes/:id` detail/edit
+  route (GET by id + PUT), per-row delete (DELETE), and live Home status — so the
+  browser now exercises the *entire* `/api/notes` resource. New
+  `tests/ui_check.mjs` loads the **real cyrius-emitted `web/app.js`** into a
+  minimal DOM+fetch shim against a running server and drives the rendered UI
+  (list → add → open detail → edit → delete), cross-checking the DOM against the
+  patra backend at each step (10 scenarios incl. XSS-safe text-node rendering).
+  **Proves the whole stack together**: app.tsx → `cyrius --target=js` → browser
+  JS → fetch → sandhi router → patra → JSX render. New `tests/run.sh` runs
+  build + unit + 32 backend + 10 UI in one command. The TS/TSX→JS emitter
+  handled a real multi-view CRUD SPA cleanly (positive finding — see FINDINGS).
+- **HTTPS listener on :8443** over `tls_native` + `sigil` (pure-Cyrius TLS 1.3,
+  Ed25519 cert/key via `gen-certs.sh`), serving the same routes as HTTP :8080 —
+  both run together (plaintext in a worker thread, TLS in main), sharing one
+  handler set and the patra backend. New `src/httpd.cyr` pieces: a `Conn`
+  transport seam (`conn_write` → `sock_send` | chunked `tls_native_write`),
+  conn-based `resp_*` framing (replicated from sandhi — it has no frame-to-buffer
+  helper), `tls_serve` / `tls_recv_request` (hand-rolled accept loop — sandhi has
+  no server-side TLS hook), and a conn-aware `srv_dispatch` over sandhi's matcher.
+  `gen-certs.sh` mints the Ed25519 cert (RSA is rejected by `tls_native`);
+  `build.sh` auto-mints if absent; cert/key are gitignored. Verified: 32 scenarios
+  (24 HTTP + 8 HTTPS) — TLS 1.3 handshake, cert verify (`Verify return code: 0`),
+  CRUD over TLS, injection/unicode-safe, untrusted-cert rejection, shared backend.
+  Findings filed (sandhi server-TLS gap; `tls_native` server-side ALPN missing;
+  RSA-key + cert-tooling gaps). See FINDINGS.md.
+- `tests/verify.py` gained scenario 9 (HTTPS): CRUD over TLS, real cert
+  verification, HTTP↔HTTPS shared-backend check.
+
+### Added (earlier)
 - **Full single-note REST resource** — `GET` / `PUT` / `DELETE /api/notes/:id`,
   alongside the existing list/create. Exercises patra's `SELECT…WHERE` /
   `UPDATE` / `DELETE` with bound `?` params (first non-INSERT bind use) and a
@@ -42,6 +72,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `web/index.html` is now a minimal `#app` mount + dashboard CSS.
 
 ### Changed
+- **Fixed the patra shared-handle readback race (confirmed under concurrency).**
+  The scenario-8 probe caught a real spurious 404 (concurrent PUTs racing on
+  `DB_ROWS_AFFECTED`). Added a narrow `g_wr_lock` pairing each `[exec_prepared;
+  readback]` (create's `last_insert_id`, PUT/DELETE's `rows_affected`) atomically;
+  reads stay lock-free. Now deterministic (8/8 runs). Upgrades the earlier
+  "latent" finding to confirmed+fixed and strengthens the filed patra
+  atomic-insert-returning-id request. See FINDINGS.md.
+- **Routing now goes through a `Conn`-aware `srv_dispatch`** (reusing sandhi's
+  `sandhi_server_route_match`) instead of `sandhi_server_router_handler`, because
+  the latter is plaintext-welded (its handlers `sock_send`). Plaintext keeps
+  `run_pooled` via a `_plain_handler` adapter; handlers now take a `Conn` instead
+  of a raw fd. sandhi's matcher remains the adopted piece.
 - **Re-run on cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1** (was
   6.2.18 / 1.11.2 / 1.6.5 / 2.3.1; sandhi is folded into the cyrius toolchain, so
   the cyrius bump pulls 1.6.7). All previously-filed findings are now resolved
@@ -120,6 +162,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   toolchain snapshot).
 
 ### Findings (filed)
+- 🔴 **sandhi has no server-side TLS** — its serve loops/options/send paths are
+  plaintext-only, so HTTPS required bypassing sandhi and hand-rolling a
+  `tls_native` accept loop. Ask: a server TLS option (cert/key/ALPN) or a
+  transport seam. (Filed to sandhi roadmap.)
+- 🟡 **`tls_native` server-side ALPN not implemented** — `set_alpn` wires only the
+  client offer; a server never negotiates ALPN (`openssl s_client` → "No ALPN
+  negotiated"), so h2-over-TLS is unreachable server-side. (Filed cyrius-side.)
+- 🔵 **`tls_native` rejects RSA server keys** (Ed25519/ECDSA only) + **no first-party
+  cert/keygen/ACME tooling** — minted via openssl (`gen-certs.sh`).
+- ✅ **Confirmed + fixed: patra shared-handle readback race** (see _Changed_) —
+  strengthens the filed `requests/2026-06-18-…-insert-returning-id`.
 - ✅ **All probe-filed ecosystem findings shipped upstream** (verified file:line):
   sandhi route table (1.6.7) + `sandhi_server_run_pooled` (1.6.7) + SIGPIPE guard
   (1.6.6) + docs (1.6.6); patra `last_insert_id`/`rows_affected` (1.11.3); cyrius

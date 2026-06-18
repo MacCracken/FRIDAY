@@ -1,45 +1,82 @@
-# httpd.cyr — response framing + request-body accessors over sandhi.
+# httpd.cyr — a transport seam (Conn) + response framing + routing over sandhi.
 #
-# This file used to hand-roll an entire HTTP/1.1 server (request parse, route
-# table, response framing, accept loop, worker pool, SIGPIPE guard) under the
-# (wrong) FINDINGS verdict "no HTTP server abstraction." That verdict was a
-# layer mistake: the services lib `sandhi` provides all of it. Over bites 3–4
-# the probe moved fully onto sandhi:
+# Backstory: the probe moved its wire I/O onto sandhi (recv/parse/accessors/
+# matcher/smuggling rejects). But adding HTTPS (TLS) exposed that sandhi's whole
+# server SEND path is welded to plaintext: sandhi_server_send_response /
+# send_status / router_handler / run_pooled all write via sock_send on a raw fd,
+# and there is no frame-to-buffer helper. So to serve BOTH http and https with
+# ONE handler set, the probe introduces a `Conn` transport seam: a handler writes
+# through resp_*(conn, ...) and conn_write dispatches to sock_send (plaintext) or
+# tls_native_write (TLS). What stays sandhi: the request accessors
+# (get_method / get_path / path_only / body_offset / find_header) and the route
+# MATCHER (sandhi_server_route_match) — those are transport-agnostic. What the
+# probe must own: the response framing (replicated from sandhi here), a tiny
+# route table + a conn-aware dispatch (sandhi's dispatch/handler are plaintext-
+# welded), and — for the hand-rolled TLS accept loop — the SIGPIPE guard
+# (run_pooled installs it only for its own plaintext loop). See FINDINGS.
 #
-#   • wire I/O + smuggling rejects → sandhi_server_* (recv_request, get_method/
-#     path, body_offset, send_response/status, has_cl_te_conflict / dup-header).
-#   • route table → sandhi 1.6.7 sandhi_router_* + sandhi_server_router_handler
-#     (`:name` capture, method dispatch, 404/405). [filed by this probe]
-#   • parallel serving → sandhi 1.6.7 sandhi_server_run_pooled (fixed worker-
-#     thread pool, SO_RCVTIMEO slowloris guard, SIGPIPE SIG_IGN installed itself).
-#     [filed by this probe] — so the probe's accept loop, worker pool, and
-#     httpd_ignore_sigpipe shim are all retired.
-#
-# What remains here is the only consumer-side glue sandhi doesn't dictate: a
-# "CODE Msg"-string response convenience over sandhi_server_send_response, JSON
-# response helpers (json_v_* → wire), a static-file responder, and body-pointer
-# accessors. Route handlers use sandhi's signature
-#   fn handler(app_ctx, cfd, req_buf, req_len, params) -> i64
-# reading the body via http_body_* and path params via sandhi_route_param_int.
+# Route handlers: fn(app_ctx, conn, req_buf, req_len, params): i64
+#   body via http_body_*, path params via sandhi_route_param_int.
 
-# cstring literal -> borrowed Str (json_v_* / str_builder_add want Str).
+# cstring literal -> borrowed Str (json_v_* want Str).
 fn str_lit(c): Str { return str_new(c, strlen(c)); }
 
-# ── Request body (bytes after the "\r\n\r\n" terminator; sandhi finds offset) ──
-fn http_body_ptr(buf, blen): i64 {
-    var bo = sandhi_server_body_offset(buf, blen);
-    if (bo < 0) { return 0; }
-    return buf + bo;
-}
-fn http_body_len(buf, blen): i64 {
-    var bo = sandhi_server_body_offset(buf, blen);
-    if (bo < 0) { return 0; }
-    return blen - bo;
+# cstring equality (both NUL-terminated; case-sensitive, for method match).
+fn _cstr_eq(a, b): i64 {
+    var i = 0;
+    while (load8(a + i) != 0 && load8(b + i) != 0) {
+        if (load8(a + i) != load8(b + i)) { return 0; }
+        i = i + 1;
+    }
+    return load8(a + i) == load8(b + i);
 }
 
-# ── Responses (framed by sandhi_server_send_*) ──
-# Status stays a "CODE Msg" cstr (e.g. "200 OK") so handlers read naturally; we
-# split it into sandhi's (code:int, msg:cstr).
+# ── Conn: the transport seam ──
+# {kind, handle}: kind 0 = plaintext fd, 1 = tls_native ctx.
+var CONN_KIND   = 0;
+var CONN_HANDLE = 8;
+var CONN_SZ     = 16;
+var CONN_PLAIN  = 0;
+var CONN_TLS    = 1;
+fn conn_plain(fd): i64  { var c = alloc(CONN_SZ); store64(c + CONN_KIND, CONN_PLAIN); store64(c + CONN_HANDLE, fd);  return c; }
+fn conn_tls(ctx): i64   { var c = alloc(CONN_SZ); store64(c + CONN_KIND, CONN_TLS);   store64(c + CONN_HANDLE, ctx); return c; }
+
+# Write all `len` bytes to the raw fd, looping over partial sys_writes.
+fn _sock_write_all(fd, buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var r = sock_send(fd, buf + off, len - off);
+        if (is_ok(r) == 0) { return 0 - 1; }
+        var w = result_unwrap(r);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return off;
+}
+
+# Write all `len` bytes over TLS, fragmenting into <=16 KiB records
+# (tls_native_write caps at TLS_RECORD_MAX_PLAINTEXT = 16384 and rejects more).
+fn tls_write_all(ctx, buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var chunk = len - off;
+        if (chunk > 16384) { chunk = 16384; }
+        var w = tls_native_write(ctx, buf + off, chunk);
+        if (w < 0) { return w; }
+        if (w == 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return off;
+}
+
+fn conn_write(conn, buf, len): i64 {
+    if (load64(conn + CONN_KIND) == CONN_TLS) { return tls_write_all(load64(conn + CONN_HANDLE), buf, len); }
+    return _sock_write_all(load64(conn + CONN_HANDLE), buf, len);
+}
+
+# ── Response framing (replicated from sandhi_server_send_response — there is no
+# frame-to-buffer helper to reuse — then conn_write'd so it works over TLS too) ──
+# status is a "CODE Msg" cstr (e.g. "200 OK").
 fn _status_code(status): i64 {
     var i = 0;
     var n = 0;
@@ -56,28 +93,217 @@ fn _status_msg(status): i64 {
     return status + i;
 }
 
-# Frame and send one response via sandhi. status/ctype are cstrs; body is Str.
-fn resp_raw(cfd, status, ctype, body): i64 {
-    return sandhi_server_send_response(cfd, _status_code(status), _status_msg(status),
-        ctype, str_data(body), str_len(body), "Access-Control-Allow-Origin: *\r\n");
+# Frame status line + headers, then the body (ptr,len), to the conn.
+fn resp_bytes(conn, status, ctype, body_ptr, body_len): i64 {
+    var a = default_alloc();
+    var sb = str_builder_new_a(a);
+    str_builder_add_cstr_a(a, sb, "HTTP/1.1 ");
+    str_builder_add_int_a(a, sb, _status_code(status));
+    str_builder_add_cstr_a(a, sb, " ");
+    str_builder_add_cstr_a(a, sb, _status_msg(status));
+    str_builder_add_cstr_a(a, sb, "\r\nContent-Type: ");
+    str_builder_add_cstr_a(a, sb, ctype);
+    str_builder_add_cstr_a(a, sb, "\r\nContent-Length: ");
+    str_builder_add_int_a(a, sb, body_len);
+    str_builder_add_cstr_a(a, sb, "\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+    var head = str_builder_build_a(a, sb);
+    if (conn_write(conn, str_data(head), str_len(head)) < 0) { return 0 - 1; }
+    if (body_len > 0) { return conn_write(conn, body_ptr, body_len); }
+    return 0;
+}
+
+# Send a Str body with the given status + content type.
+fn resp_raw(conn, status, ctype, body): i64 {
+    return resp_bytes(conn, status, ctype, str_data(body), str_len(body));
 }
 
 # Send a built json value (json_v_*) with the given status.
-fn resp_json(cfd, status, jv): i64 {
-    return resp_raw(cfd, status, "application/json", json_v_build(jv));
+fn resp_json(conn, status, jv): i64 {
+    return resp_raw(conn, status, "application/json", json_v_build(jv));
 }
 
-fn resp_json_err(cfd, status, msg): i64 {
+fn resp_json_err(conn, status, msg): i64 {
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("error"), json_v_str_new(str_lit(msg)));
-    return resp_json(cfd, status, o);
+    return resp_json(conn, status, o);
 }
 
 # Read a static file (relative to CWD) and send it, or 404 if absent.
-fn resp_file(cfd, path, ctype): i64 {
+fn resp_file(conn, path, ctype): i64 {
     var buf = alloc(262144);
     var n = file_read_all(path, buf, 262144);
-    if (n <= 0) { return resp_json_err(cfd, "404 Not Found", "file not found"); }
-    return sandhi_server_send_response(cfd, 200, "OK", ctype, buf, n,
-        "Access-Control-Allow-Origin: *\r\n");
+    if (n <= 0) { return resp_json_err(conn, "404 Not Found", "file not found"); }
+    return resp_bytes(conn, "200 OK", ctype, buf, n);
+}
+
+# ── Request body accessors (over sandhi; bytes after "\r\n\r\n") ──
+fn http_body_ptr(buf, blen): i64 {
+    var bo = sandhi_server_body_offset(buf, blen);
+    if (bo < 0) { return 0; }
+    return buf + bo;
+}
+fn http_body_len(buf, blen): i64 {
+    var bo = sandhi_server_body_offset(buf, blen);
+    if (bo < 0) { return 0; }
+    return blen - bo;
+}
+
+# ── Route table (handlers: fn(app_ctx, conn, buf, blen, params): i64) ──
+# A thin table the probe owns again: sandhi's router_handler/dispatch are
+# plaintext-welded (call handlers that sock_send), so they can't carry the Conn
+# seam. sandhi's MATCHER (sandhi_server_route_match) is reused below.
+var RT_COUNT  = 0;
+var RT_ROUTES = 8;
+var RT_CAP    = 16;
+var RT_HDR_SZ = 24;
+var RE_METHOD = 0;
+var RE_PATH   = 8;
+var RE_FP     = 16;
+var RE_SZ     = 24;
+
+fn router_new(cap): i64 {
+    var r = alloc(RT_HDR_SZ);
+    store64(r + RT_COUNT, 0);
+    store64(r + RT_CAP, cap);
+    store64(r + RT_ROUTES, alloc(cap * RE_SZ));
+    return r;
+}
+fn route_add(r, method, path, fp): i64 {
+    var c = load64(r + RT_COUNT);
+    if (c >= load64(r + RT_CAP)) { return 0; }
+    var e = load64(r + RT_ROUTES) + c * RE_SZ;
+    store64(e + RE_METHOD, method);
+    store64(e + RE_PATH, path);
+    store64(e + RE_FP, fp);
+    store64(r + RT_COUNT, c + 1);
+    return 1;
+}
+
+# Transport-agnostic dispatch: match (method, path) over the table using sandhi's
+# matcher, invoke the handler with the Conn. 405 if path matches but method
+# doesn't; 404 otherwise.
+fn srv_dispatch(router, conn, buf, blen): i64 {
+    var method = sandhi_server_get_method(buf, blen);
+    var path   = sandhi_server_path_only(sandhi_server_get_path(buf, blen));
+    var params[264];                      # SANDHI_ROUTE_PARAMS_SIZE
+    var c = load64(router + RT_COUNT);
+    var routes = load64(router + RT_ROUTES);
+    var path_match = 0;
+    var i = 0;
+    while (i < c) {
+        var e = routes + i * RE_SZ;
+        if (sandhi_server_route_match(path, load64(e + RE_PATH), &params) == 1) {
+            path_match = 1;
+            if (_cstr_eq(method, load64(e + RE_METHOD)) == 1) {
+                return fncall5(load64(e + RE_FP), 0, conn, buf, blen, &params);
+            }
+        }
+        i = i + 1;
+    }
+    if (path_match == 1) { return resp_json_err(conn, "405 Method Not Allowed", "method not allowed"); }
+    return resp_json_err(conn, "404 Not Found", "not found");
+}
+
+# Adapter so sandhi_server_run_pooled (plaintext) drives the conn-aware dispatch:
+# wrap the raw cfd in a plaintext Conn. run_pooled still does the recv,
+# smuggling rejects, SO_RCVTIMEO, SIGPIPE guard, and sock_close.
+fn _plain_handler(router, cfd, buf, blen): i64 {
+    return srv_dispatch(router, conn_plain(cfd), buf, blen);
+}
+
+# Ignore SIGPIPE process-wide (rt_sigaction SIGPIPE -> SIG_IGN). run_pooled
+# installs this for its own loop; the hand-rolled TLS accept loop (main) needs it
+# too, since TLS records go out via sys_write and a peer reset mid-write raises
+# SIGPIPE (default disposition kills the process). x86_64: syscall 13.
+var _SYS_RT_SIGACTION = 13;
+var _SIGPIPE          = 13;
+fn httpd_ignore_sigpipe(): i64 {
+    var sa = alloc(32);
+    store64(sa + 0, 1);     # sa_handler = SIG_IGN
+    store64(sa + 8, 0);
+    store64(sa + 16, 0);
+    store64(sa + 24, 0);
+    return syscall(_SYS_RT_SIGACTION, _SIGPIPE, sa, 0, 8);
+}
+
+# ── HTTPS serve loop (hand-rolled — sandhi has no server-side TLS hook) ──
+# This is the consumer-feedback payload of the TLS bite: sandhi's serve loops
+# (run / run_async / run_pooled) take no cert/key/TLS config and write plaintext,
+# so serving HTTPS means bypassing them and driving tls_native directly. We reuse
+# sandhi's request accessors + matcher (via srv_dispatch over a TLS Conn) and the
+# smuggling rejects; only the accept/handshake/read/write/close is ours.
+var TLS_BUFSZ = 65536;
+
+# Build the ALPN ProtocolNameList contents for "http/1.1" (1-byte len prefix +
+# name; tls_native_set_alpn adds the outer be16). Returns total bytes.
+fn _alpn_h1(out): i64 {
+    var p = "http/1.1";
+    var n = strlen(p);
+    store8(out, n);
+    var i = 0;
+    while (i < n) { store8(out + 1 + i, load8(p + i)); i = i + 1; }
+    return n + 1;
+}
+
+# Read a full HTTP request over TLS: loop tls_native_read (one record each) until
+# the "\r\n\r\n" terminator, then until Content-Length body bytes arrive.
+# (sandhi_server_recv_request is plaintext-only — it sock_recv's the raw fd.)
+fn tls_recv_request(ctx, buf, max): i64 {
+    var have = 0;
+    var need = 0 - 1;
+    while (have < max) {
+        var n = tls_native_read(ctx, buf + have, max - have);
+        if (n <= 0) { return have; }      # 0 = close_notify (EOF), <0 = error
+        have = have + n;
+        if (need == 0 - 1) {
+            var bo = sandhi_server_body_offset(buf, have);
+            if (bo >= 0) { need = bo + sandhi_server_content_length(buf, have); }
+        }
+        if (need != 0 - 1 && have >= need) { return have; }
+    }
+    return have;
+}
+
+# HTTPS accept loop. cert is DER (leaf), key is PEM bytes. Single-threaded: one
+# tls_native ctx per connection (the ctx is not reusable across connections).
+fn tls_serve(port, router, cert_der, cert_der_len, key_pem, key_len): i64 {
+    var sr = tcp_socket();
+    if (is_ok(sr) == 0) { println("error: tls tcp_socket failed"); return 1; }
+    var fd = result_unwrap(sr);
+    sock_reuse(fd);
+    if (is_ok(sock_bind(fd, INADDR_ANY(), port)) == 0) { println("error: tls bind failed"); sock_close(fd); return 1; }
+    if (is_ok(sock_listen(fd, 128)) == 0) { println("error: tls listen failed"); sock_close(fd); return 1; }
+
+    var alpn = alloc(16);
+    var alpn_len = _alpn_h1(alpn);
+    var reqbuf = alloc(TLS_BUFSZ);
+
+    while (1) {
+        var ar = sock_accept(fd);
+        if (is_ok(ar) == 0) { continue; }
+        var cfd = result_unwrap(ar);
+
+        # One server ctx per connection (carries per-conn handshake state); cert
+        # DER + key PEM buffers are shared/immutable across connections.
+        var ctx = tls_native_new_server(cert_der, cert_der_len, key_pem, key_len);
+        if (ctx == 0) { sock_close(cfd); continue; }
+        tls_native_set_alpn(ctx, alpn, alpn_len);
+        if (tls_native_server_load_creds(ctx) != 0) { sock_close(cfd); continue; }
+        if (tls_native_accept(ctx, cfd) != 0) { tls_native_close(ctx); sock_close(cfd); continue; }
+
+        var n = tls_recv_request(ctx, reqbuf, TLS_BUFSZ - 1);
+        if (n > 0) {
+            var c = conn_tls(ctx);
+            if (sandhi_server_request_has_cl_te_conflict(reqbuf, n) == 1) {
+                resp_json_err(c, "400 Bad Request", "bad request");
+            } elif (sandhi_server_request_has_dup_smuggling_header(reqbuf, n) == 1) {
+                resp_json_err(c, "400 Bad Request", "bad request");
+            } else {
+                srv_dispatch(router, c, reqbuf, n);
+            }
+        }
+        tls_native_close(ctx);   # close_notify (no ctx free — bump alloc)
+        sock_close(cfd);         # we own the fd
+    }
+    return 0;
 }

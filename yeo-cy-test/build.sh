@@ -12,6 +12,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# The server serves HTTPS (:8443) and needs an Ed25519 cert+key. Mint them if
+# absent so a clean checkout's build→run flow just works (they're gitignored).
+if [ ! -f cert.pem ] || [ ! -f key.pem ]; then
+  echo "▸ Minting TLS cert (cert.pem/key.pem)…"
+  ./gen-certs.sh
+fi
+
 echo "▸ Building frontend (cyrius build --target=js)…"
 shopt -s nullglob
 for f in web/*.tsx; do

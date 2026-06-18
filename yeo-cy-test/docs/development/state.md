@@ -10,10 +10,13 @@ patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1** (2026-06-18). **Every finding this
 probe filed against the ecosystem is now resolved upstream** (sandhi route table
 + `run_pooled` in 1.6.7, SIGPIPE guard + docs in 1.6.6; patra
 `last_insert_id`/`rows_affected` in 1.11.3; cyrius async leak in 6.1.22) and the
-probe **adopted** all of them — it is now a thin sandhi + patra composition
-(`src/httpd.cyr` collapsed 353 → 83 lines). 2 unit invariants + 24 end-to-end
-scenarios pass. Both original 🔴 blockers (TS/TSX→JS emit, patra string safety)
-stay closed. See [`../../FINDINGS.md`](../../FINDINGS.md).
+probe **adopted** all of them. It now serves **both HTTP (:8080) and HTTPS
+(:8443, TLS 1.3 via `tls_native` + an Ed25519 cert)** over one handler set,
+sharing the patra backend. 2 unit invariants + **32 end-to-end scenarios** (24
+HTTP + 8 HTTPS) pass. Both original 🔴 blockers (TS/TSX→JS emit, patra string
+safety) stay closed. Headline open findings: **sandhi has no server-side TLS
+hook** (HTTPS is hand-rolled on `tls_native`) and **`tls_native` server-side ALPN
+is unimplemented**. See [`../../FINDINGS.md`](../../FINDINGS.md).
 
 ## Toolchain
 
@@ -24,34 +27,37 @@ stay closed. See [`../../FINDINGS.md`](../../FINDINGS.md).
 
 ## Source
 
-- `src/httpd.cyr` — now just **response framing + body accessors over sandhi**
-  (83 lines, down from a 353-line hand-rolled server). Keeps `str_lit`, the
-  `http_body_ptr`/`http_body_len` accessors (over `sandhi_server_body_offset`),
-  and the `resp_*` helpers (a "CODE Msg"-string convenience + JSON/file
-  responders over `sandhi_server_send_response`). The hand-rolled route table,
-  `Req` struct, accept loop, worker pool, and `httpd_ignore_sigpipe` shim are all
-  **retired** — sandhi provides all of it as of 1.6.7 (route table) / 1.6.6
-  (SIGPIPE guard, installed by the serve loop itself).
-- `src/main.cyr` — handlers + route registration + patra persistence.
-  `include "src/httpd.cyr"`. Handlers use **sandhi's route-handler signature**
-  `fn(app_ctx, cfd, req_buf, req_len, params)`: body via `http_body_*`, path
-  params via `sandhi_route_param_int`. Routes are registered on **sandhi's
-  router** (`sandhi_router_new` / `sandhi_router_add`) and served by
-  **`sandhi_server_run_pooled`** (`max_conns = 4` fixed worker threads;
-  `SO_RCVTIMEO` slowloris guard; installs the SIGPIPE `SIG_IGN` guard itself).
-  Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET|POST /api/notes`,
-  and `GET|PUT|DELETE /api/notes/:id`. Persistence: note bodies in a `TEXT`
-  column via prepared `?`-bound statements (`patra_bind_text`) — injection-safe,
-  no cap. patra is internally thread-safe (P1, v1.11.0), so no external lock.
-  Ids are **patra `AUTOINCREMENT`** (schema `id INT AUTOINCREMENT`, column-list
-  `INSERT`, echoed via `patra_last_insert_id`) — the app-side `g_next_id` is
-  gone. `PUT`/`DELETE` use `patra_rows_affected` for a real 404 (no pre-`SELECT`).
-  Caveats (FINDINGS): AUTOINCREMENT reuses ids (derive-from-MAX); the
-  `last_insert_id`/`rows_affected` readbacks are shared-handle (latent echo race,
-  unreproduced).
-- `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman
-  dashboard shell with header/nav and a hash router (`#/` Home, `#/notes`
-  Notes) that swaps views into `#app`.
+- `src/httpd.cyr` — the **transport seam + framing + routing + HTTPS serve loop**.
+  A `Conn {kind, handle}` lets one handler set serve both transports:
+  `resp_*(conn, …)` frame a response (replicated from sandhi — no frame-to-buffer
+  helper) and `conn_write` dispatches `sock_send` (plaintext) vs chunked
+  `tls_native_write` (TLS). A tiny route table + `srv_dispatch` reuse sandhi's
+  **matcher** (`sandhi_server_route_match`) but carry the Conn (sandhi's
+  router_handler/run_pooled-send are plaintext-welded). `_plain_handler` adapts
+  `run_pooled` (plaintext) onto the Conn dispatch. `tls_serve`/`tls_recv_request`
+  hand-roll the HTTPS accept loop over `tls_native` (sandhi has no server-TLS
+  hook): per-conn `tls_native_new_server`(+ALPN, currently a no-op server-side —
+  see FINDINGS)→`accept`→read-loop→dispatch→`tls_write_all` (16 KiB chunks)→close.
+  `http_body_*` accessors + `httpd_ignore_sigpipe` (the TLS loop needs it) stay.
+- `src/main.cyr` — handlers + route registration + patra persistence + dual serve.
+  `include "src/httpd.cyr"`. Handlers take a **`Conn`** (`fn(app_ctx, conn,
+  req_buf, req_len, params)`): write via `resp_*(conn,…)`, body via `http_body_*`,
+  path params via `sandhi_route_param_int`. Routes on the probe table
+  (`router_new`/`route_add`). `main` loads the cert (DER leaf via
+  `pem_decode_certs`) + key (PEM), starts **plaintext `run_pooled` in a worker
+  thread (:8080)** and the **HTTPS `tls_serve` loop in main (:8443)**, sharing the
+  read-only router. Endpoints: `GET /`, `GET /app.js`, `GET /api/health`,
+  `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT`
+  bodies via bound `?` params (injection-safe). Ids are patra `AUTOINCREMENT`
+  (column-list `INSERT`, echoed via `last_insert_id`); `PUT`/`DELETE` 404 via
+  `rows_affected`. **`g_wr_lock`** pairs each `[exec; readback]` atomically (the
+  shared-handle readback race — confirmed and fixed; reads stay lock-free).
+  Caveat (FINDINGS): AUTOINCREMENT reuses ids (derive-from-MAX).
+- `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman notes
+  dashboard with a hash router exercising the **full** `/api/notes` resource —
+  `#/` Home (live status + count), `#/notes` (list + add + per-row delete),
+  `#/notes/:id` (detail: GET by id, edit→PUT, delete→DELETE). JSX lowers to the
+  emitter's `h()` runtime (text children → text nodes → XSS-safe).
 - `web/app.js` — **generated** from `web/app.tsx` by `cyrius build --target=js`
   (do not hand-edit); `web/index.html` is a minimal mount + dashboard CSS.
 - `build.sh` — emits `web/app.js` from the TSX (`--target=js` + `node --check`),
@@ -67,10 +73,18 @@ stay closed. See [`../../FINDINGS.md`](../../FINDINGS.md).
   on sandhi's matcher, which the `/api/notes/:id` resource depends on). Passes
   via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — 24-scenario end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — 32-scenario end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
-  rows_affected concurrency). Run against a built `build/yeo-cy-test`.
+  rows_affected concurrency, **+ HTTPS: CRUD over TLS 1.3, real cert verification,
+  HTTP↔HTTPS shared backend**). Run against a built `build/yeo-cy-test` (needs
+  `cert.pem`/`key.pem` — `./gen-certs.sh`, or `build.sh` auto-mints).
+- `tests/ui_check.mjs` — **headless full-stack proof**: loads the real
+  cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
+  drives the rendered UI (list → add → detail → edit → delete), cross-checking
+  the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
+- `tests/run.sh` — one command: build + unit + 32 backend e2e + 10 UI e2e.
+- `gen-certs.sh` — mints the self-signed Ed25519 cert+key for HTTPS (gitignored).
 - `tests/yeo-cy-test.{tcyr,bcyr,fcyr}` — scaffold stubs.
 
 ## Dependencies

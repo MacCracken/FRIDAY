@@ -15,10 +15,14 @@ Covers every probe-tested scenario:
   6. request-smuggling rejects (CL+TE conflict, duplicate CL -> 400; sane -> 200)
   7. SIGPIPE survival (client disconnects mid-exchange; server stays up)
   8. rows_affected concurrency probe (concurrent PUTs to existing + missing ids)
+  9. HTTPS on :8443 (TLS 1.3 via tls_native + Ed25519): CRUD over TLS, real cert
+     verification (untrusted cert rejected), shared patra backend with HTTP
+Requires cert.pem/key.pem (./gen-certs.sh — build.sh mints them if absent).
 """
-import socket, subprocess, sys, time, json, os, threading, urllib.request, urllib.error
+import socket, subprocess, sys, time, json, os, threading, ssl, urllib.request, urllib.error
 
 HOST, PORT = "127.0.0.1", 8080
+HTTPS_HOST, HTTPS_PORT = "localhost", 8443   # cert SAN: DNS:localhost, IP:127.0.0.1
 BIN = "./build/yeo-cy-test"
 DB = "yeo.patra"
 passes, fails = [], []
@@ -77,6 +81,29 @@ def raw(payload, read=True, close_early=False, timeout=5):
 def status_of(raw_resp):
     try: return int(raw_resp.split()[1])
     except Exception: return -1
+
+def _https_ctx():
+    return ssl.create_default_context(cafile="cert.pem")   # trust the probe's self-signed CA
+
+def https_req(method, path, body=None, ctx=None, timeout=5):
+    data = body.encode() if isinstance(body, str) else body
+    r = urllib.request.Request(f"https://{HTTPS_HOST}:{HTTPS_PORT}{path}", data=data, method=method)
+    if data is not None: r.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(r, timeout=timeout, context=ctx or _https_ctx()) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+def wait_https(timeout=10):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            st, _ = https_req("GET", "/api/health", timeout=1)
+            if st == 200: return True
+        except Exception:
+            time.sleep(0.05)
+    return False
 
 # ── cleanup ──
 for f in (DB,):
@@ -236,6 +263,40 @@ false_404 = sum(1 for s in res8["existing"] if s != 200)
 false_200 = sum(1 for s in res8["missing"] if s != 404)
 (ok if false_404 == 0 and false_200 == 0 else bad)(
     f"8. rows_affected concurrency: existing->!200={false_404}, missing->!404={false_200} (race if >0)")
+
+# 9. HTTPS (TLS 1.3 via tls_native + Ed25519 cert) on :8443, alongside HTTP.
+if not wait_https():
+    bad("9. HTTPS listener not ready on :8443")
+else:
+    st, b = https_req("GET", "/api/health")
+    (ok if st == 200 and json.loads(b).get("status") == "ok" else bad)("9a. HTTPS GET /api/health -> 200 (TLS 1.3, cert verified)")
+
+    # full CRUD over TLS (body + path params + patra, all over the encrypted conn)
+    st, b = https_req("POST", "/api/notes", json.dumps({"body": "tls O'Brien'; DROP-- ☃"}))
+    nid = json.loads(b).get("id") if st == 201 else None
+    (ok if st == 201 and nid else bad)(f"9b. HTTPS POST create -> 201 id={nid}")
+    st, b = https_req("GET", f"/api/notes/{nid}")
+    (ok if st == 200 and json.loads(b).get("body") == "tls O'Brien'; DROP-- ☃" else bad)("9c. HTTPS GET by id -> verbatim (injection/unicode safe over TLS)")
+    st, _ = https_req("PUT", f"/api/notes/{nid}", json.dumps({"body": "tls upd"}))
+    (ok if st == 200 else bad)(f"9d. HTTPS PUT -> 200 (got {st})")
+    st, _ = https_req("DELETE", f"/api/notes/{nid}")
+    (ok if st == 200 else bad)(f"9e. HTTPS DELETE -> 200 (got {st})")
+    st, _ = https_req("GET", f"/api/notes/{nid}")
+    (ok if st == 404 else bad)(f"9f. HTTPS GET after delete -> 404 (got {st})")
+
+    # cert verification is REAL: a default context (no probe CA) must reject the
+    # self-signed cert, not silently trust it.
+    try:
+        https_req("GET", "/api/health", ctx=ssl.create_default_context(), timeout=3)
+        bad("9g. HTTPS rejects untrusted cert (default CA store)")
+    except (ssl.SSLError, urllib.error.URLError):
+        ok("9g. HTTPS rejects untrusted cert (default CA store) — verification is real")
+
+    # shared backend: a note created over HTTP is visible over HTTPS (same patra).
+    st, b = req("POST", "/api/notes", json.dumps({"body": "via-http"}))
+    hid = json.loads(b).get("id")
+    st, b = https_req("GET", f"/api/notes/{hid}")
+    (ok if st == 200 and json.loads(b).get("body") == "via-http" else bad)("9h. HTTP-created note readable over HTTPS (shared patra backend)")
 
 stop_server(srv)
 

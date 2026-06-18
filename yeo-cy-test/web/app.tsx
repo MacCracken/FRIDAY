@@ -1,4 +1,4 @@
-// SecureYeoman dashboard shell — the single source of truth for the frontend.
+// SecureYeoman dashboard — the single source of truth for the frontend.
 //
 // web/app.js is GENERATED from this file by `cyrius build --target=js`
 // (cyrius 6.1.11+ TS/TSX → browser-JS + JSX emitter); do not hand-edit app.js.
@@ -6,9 +6,11 @@
 // appends string children as text nodes (never innerHTML) — user-supplied note
 // bodies are XSS-safe by construction.
 //
-// A tiny hash router swaps views into #app without server round-trips:
-//   #/        → Home  (service status + note count)
-//   #/notes   → Notes (list + add form)
+// A hash router swaps views into #app without server round-trips, exercising the
+// full /api/notes CRUD against the Cyrius (sandhi + patra) backend:
+//   #/            → Home   (live service status + note count)
+//   #/notes       → Notes  (list + add; per-row open / delete)
+//   #/notes/:id   → Note   (detail: view + edit (PUT) + delete (DELETE))
 interface Note {
   id: number;
   body: string;
@@ -29,16 +31,31 @@ const api: Fetcher = async <T,>(url: string, init?: RequestInit): Promise<T> => 
   return (await res.json()) as T;
 };
 
+const jsonInit = (method: string, body: string): RequestInit => ({
+  method,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ body }),
+});
+
 async function listNotes(): Promise<Note[]> {
   return api<Note[]>("/api/notes");
 }
 
+async function getNote(id: number): Promise<Note> {
+  return api<Note>(`/api/notes/${id}`);
+}
+
 async function addNote(body: string): Promise<Note> {
-  return api<Note>("/api/notes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body }),
-  });
+  return api<Note>("/api/notes", jsonInit("POST", body));
+}
+
+async function updateNote(id: number, body: string): Promise<Note> {
+  return api<Note>(`/api/notes/${id}`, jsonInit("PUT", body));
+}
+
+async function deleteNote(id: number): Promise<void> {
+  const res = await fetch(`/api/notes/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
 function Header(active: string): JSX.Element {
@@ -59,12 +76,30 @@ function mount(active: string, view: JSX.Element): void {
   app.replaceChildren(Header(active), view);
 }
 
+function showErr(active: string, msg: string): void {
+  mount(active, <section className="view"><p className="err">{`error: ${msg}`}</p></section>);
+}
+
+function fmtTime(created: number): string {
+  return new Date(created * 1000).toLocaleString();
+}
+
 function NoteRow({ note }: { note: Note }): JSX.Element {
-  const when = new Date(note.created * 1000).toLocaleString();
+  const onDelete = async (): Promise<void> => {
+    try {
+      await deleteNote(note.id);
+      await showNotes();
+    } catch (e) {
+      showErr("notes", e.message);
+    }
+  };
   return (
     <li className="note" data-id={note.id}>
-      <span className="body">{note.body}</span>
-      <time>{when}</time>
+      <a className="body" href={`#/notes/${note.id}`}>{note.body}</a>
+      <span className="meta">
+        <time>{fmtTime(note.created)}</time>
+        <button className="del" onclick={onDelete}>delete</button>
+      </span>
     </li>
   );
 }
@@ -90,7 +125,7 @@ async function showHome(): Promise<void> {
       </section>,
     );
   } catch (e) {
-    mount("home", <section className="view"><p className="err">{`error: ${e.message}`}</p></section>);
+    showErr("home", e.message);
   }
 }
 
@@ -99,7 +134,7 @@ async function showNotes(): Promise<void> {
   try {
     notes = await listNotes();
   } catch (e) {
-    mount("notes", <section className="view"><p className="err">{`error: ${e.message}`}</p></section>);
+    showErr("notes", e.message);
     return;
   }
 
@@ -112,9 +147,7 @@ async function showNotes(): Promise<void> {
       await addNote(body);
       await showNotes();
     } catch (err) {
-      document.getElementById("app").append(
-        (<p className="err">{`error: ${err.message}`}</p>) as Node,
-      );
+      showErr("notes", err.message);
     }
   };
 
@@ -132,8 +165,60 @@ async function showNotes(): Promise<void> {
   );
 }
 
+async function showNote(id: number): Promise<void> {
+  let note: Note;
+  try {
+    note = await getNote(id);
+  } catch (e) {
+    showErr("notes", `note ${id}: ${e.message}`);
+    return;
+  }
+
+  const onSave = async (ev: Event): Promise<void> => {
+    ev.preventDefault();
+    const input = document.getElementById("edit") as HTMLInputElement;
+    const body = input.value.trim();
+    if (!body) return;
+    try {
+      await updateNote(id, body);
+      location.hash = "#/notes";
+    } catch (err) {
+      showErr("notes", err.message);
+    }
+  };
+
+  const onDelete = async (): Promise<void> => {
+    try {
+      await deleteNote(id);
+      location.hash = "#/notes";
+    } catch (err) {
+      showErr("notes", err.message);
+    }
+  };
+
+  mount(
+    "notes",
+    <section className="view">
+      <h1>{`Note #${id}`}</h1>
+      <form className="editform" onsubmit={onSave}>
+        <input id="edit" value={note.body} autocomplete="off" />
+        <button>Save</button>
+      </form>
+      <p className="when">{`created ${fmtTime(note.created)}`}</p>
+      <p className="actions">
+        <a className="back" href="#/notes">← all notes</a>
+        <button className="del" onclick={onDelete}>delete</button>
+      </p>
+    </section>,
+  );
+}
+
 function route(): void {
-  if (location.hash === "#/notes") {
+  const h = location.hash;
+  if (h.indexOf("#/notes/") === 0) {
+    const id = parseInt(h.slice(8), 10);
+    if (Number.isNaN(id)) { showNotes(); } else { showNote(id); }
+  } else if (h === "#/notes") {
     showNotes();
   } else {
     showHome();

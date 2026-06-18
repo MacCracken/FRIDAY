@@ -5,7 +5,7 @@
 # (sandhi_router_*) and served by sandhi_server_run_pooled (a fixed worker-thread
 # pool); src/httpd.cyr is just response-framing + body-accessor glue over sandhi.
 # Handlers use sandhi's route-handler signature
-#   fn(app_ctx, cfd, req_buf, req_len, params): i64
+#   fn(app_ctx, conn, req_buf, req_len, params): i64
 # reading the body via http_body_* and path params via sandhi_route_param_int.
 #
 # Persistence (patra 1.11.4): note bodies are a TEXT column written through a
@@ -24,14 +24,26 @@
 
 include "src/httpd.cyr"
 
-var PORT = 8080;
+var PORT     = 8080;
+var TLS_PORT = 8443;
 var g_db = 0;
+# Narrow write-readback lock. patra's last_insert_id / rows_affected read
+# SHARED-handle fields (DB_LAST_ID / DB_ROWS_AFFECTED), so a write and its
+# readback are two non-atomic ops: under the lock-free pool a concurrent write
+# can land between them, giving a wrong echoed id or a spurious 404 (CONFIRMED —
+# scenario 8 produced a spurious 404 before this lock). This mutex pairs each
+# [exec_prepared; readback] atomically across writers. Reads (SELECT) don't touch
+# those fields, so list/get stay lock-free. The lock is the workaround the filed
+# patra request removes (an atomic insert-returning-id / per-statement result) —
+# see FINDINGS.
+var g_wr_lock = 0;
 
 # ── database ──
 
 fn db_init(): i64 {
     fl_init();
     patra_init();
+    g_wr_lock = mutex_new();
     g_db = patra_open("yeo.patra");
     if (g_db == 0) { return 0; }
     # id is AUTOINCREMENT (patra 1.10.1): patra assigns the next id on an INSERT
@@ -42,26 +54,27 @@ fn db_init(): i64 {
     return 1;
 }
 
-# ── route handlers (sandhi router signature: fn(app_ctx, cfd, req_buf, req_len,
-# params): i64 — body via http_body_*, path params via sandhi_route_param_int) ──
+# ── route handlers (signature: fn(app_ctx, conn, req_buf, req_len, params): i64 —
+# write via resp_*(conn,...) [the transport seam: works over HTTP + HTTPS], body
+# via http_body_*, path params via sandhi_route_param_int) ──
 
-fn handle_index(ctx, cfd, buf, blen, params): i64 {
-    return resp_file(cfd, "web/index.html", "text/html; charset=utf-8");
+fn handle_index(ctx, conn, buf, blen, params): i64 {
+    return resp_file(conn, "web/index.html", "text/html; charset=utf-8");
 }
 
-fn handle_appjs(ctx, cfd, buf, blen, params): i64 {
-    return resp_file(cfd, "web/app.js", "text/javascript; charset=utf-8");
+fn handle_appjs(ctx, conn, buf, blen, params): i64 {
+    return resp_file(conn, "web/app.js", "text/javascript; charset=utf-8");
 }
 
-fn handle_health(ctx, cfd, buf, blen, params): i64 {
+fn handle_health(ctx, conn, buf, blen, params): i64 {
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("status"),  json_v_str_new(str_lit("ok")));
     json_v_obj_set(o, str_lit("service"), json_v_str_new(str_lit("yeo-cy-test")));
     json_v_obj_set(o, str_lit("version"), json_v_str_new(str_lit("0.1.0")));
-    return resp_json(cfd, "200 OK", o);
+    return resp_json(conn, "200 OK", o);
 }
 
-fn handle_list_notes(ctx, cfd, buf, blen, params): i64 {
+fn handle_list_notes(ctx, conn, buf, blen, params): i64 {
     # patra_query is internally serialized and returns a caller-owned result
     # set, so no external lock is needed across the read + JSON build.
     var rs = patra_query(g_db, "SELECT id, body, created FROM notes ORDER BY id");
@@ -75,19 +88,19 @@ fn handle_list_notes(ctx, cfd, buf, blen, params): i64 {
         }
         patra_result_free(rs);
     }
-    return resp_json(cfd, "200 OK", arr);
+    return resp_json(conn, "200 OK", arr);
 }
 
-fn handle_create_note(ctx, cfd, buf, blen, params): i64 {
+fn handle_create_note(ctx, conn, buf, blen, params): i64 {
     var bptr = http_body_ptr(buf, blen);
     var bln = http_body_len(buf, blen);
-    if (bptr == 0 || bln <= 0) { return resp_json_err(cfd, "400 Bad Request", "missing request body"); }
+    if (bptr == 0 || bln <= 0) { return resp_json_err(conn, "400 Bad Request", "missing request body"); }
 
     var v = json_v_parse_str(bptr, bln);
-    if (v == 0) { return resp_json_err(cfd, "400 Bad Request", "invalid JSON"); }
+    if (v == 0) { return resp_json_err(conn, "400 Bad Request", "invalid JSON"); }
 
     var bstr = json_v_str(json_v_obj_get(v, "body"));
-    if (bstr == 0) { return resp_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
+    if (bstr == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'body'"); }
 
     var ts = clock_epoch_secs();
 
@@ -96,21 +109,20 @@ fn handle_create_note(ctx, cfd, buf, blen, params): i64 {
     # SQL → metacharacters are safe). patra serializes the INSERT internally
     # (v1.11.0+), so the write itself needs no external lock.
     var stmt = patra_prepare(g_db, "INSERT INTO notes (body, created) VALUES (?, ?)");
-    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
     patra_bind_text(stmt, 0, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 1, ts);
+    # Pair the INSERT with its last_insert_id readback under g_wr_lock so a
+    # concurrent INSERT can't overwrite DB_LAST_ID between them (shared-handle
+    # race — see the g_wr_lock note). patra serializes the exec internally; this
+    # just extends the critical section to include the readback.
+    mutex_lock(g_wr_lock);
     var rc = patra_exec_prepared(g_db, stmt);
-    # patra_last_insert_id (1.11.3) reads back the auto-assigned id for the 201
-    # echo, read as tight as possible after the INSERT. CAVEAT: DB_LAST_ID is a
-    # shared-handle field and the INSERT + readback are two separate ops with no
-    # app lock between them, so a concurrent INSERT on g_db can overwrite it
-    # before this read — the echoed id may then be another worker's. The stored
-    # rows are still uniquely id'd (patra assigns under its mutex); only the echo
-    # races. See FINDINGS scenario "last_insert_id concurrency".
     var id = patra_last_insert_id(g_db);
+    mutex_unlock(g_wr_lock);
     patra_finalize(stmt);
     if (rc != PATRA_OK) {
-        return resp_json_err(cfd, "500 Internal Server Error", "insert failed");
+        return resp_json_err(conn, "500 Internal Server Error", "insert failed");
     }
 
     # Echo the created note back (with the original body).
@@ -118,7 +130,7 @@ fn handle_create_note(ctx, cfd, buf, blen, params): i64 {
     json_v_obj_set(o, str_lit("id"),      json_v_int_new(id));
     json_v_obj_set(o, str_lit("body"),    json_v_str_new(bstr));
     json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
-    return resp_json(cfd, "201 Created", o);
+    return resp_json(conn, "201 Created", o);
 }
 
 # Build a note JSON object from result-set row `row` of `rs` (cols: id, body,
@@ -138,58 +150,60 @@ fn note_row_json(rs, row): i64 {
 
 # GET /api/notes/:id — fetch one note by id. Bound WHERE param (the id is an INT
 # column, so the patra "WHERE on TEXT never matches" constraint doesn't apply).
-fn handle_get_note(ctx, cfd, buf, blen, params): i64 {
+fn handle_get_note(ctx, conn, buf, blen, params): i64 {
     var id = sandhi_route_param_int(params, 0);
-    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
     var stmt = patra_prepare(g_db, "SELECT id, body, created FROM notes WHERE id = ?");
-    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
     patra_bind_int(stmt, 0, id);
     var rs = patra_query_prepared(g_db, stmt);
     patra_finalize(stmt);
-    if (rs == 0) { return resp_json_err(cfd, "500 Internal Server Error", "query failed"); }
+    if (rs == 0) { return resp_json_err(conn, "500 Internal Server Error", "query failed"); }
     if (patra_result_count(rs) <= 0) {
         patra_result_free(rs);
-        return resp_json_err(cfd, "404 Not Found", "note not found");
+        return resp_json_err(conn, "404 Not Found", "note not found");
     }
     var o = note_row_json(rs, 0);
     patra_result_free(rs);
-    return resp_json(cfd, "200 OK", o);
+    return resp_json(conn, "200 OK", o);
 }
 
 # PUT /api/notes/:id — replace a note's body. {"body": "..."} in the request
 # body; the new body is a bound text param, the id a bound WHERE param.
-fn handle_update_note(ctx, cfd, buf, blen, params): i64 {
+fn handle_update_note(ctx, conn, buf, blen, params): i64 {
     var id = sandhi_route_param_int(params, 0);
-    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
     var bptr = http_body_ptr(buf, blen);
     var bln = http_body_len(buf, blen);
-    if (bptr == 0 || bln <= 0) { return resp_json_err(cfd, "400 Bad Request", "missing request body"); }
+    if (bptr == 0 || bln <= 0) { return resp_json_err(conn, "400 Bad Request", "missing request body"); }
     var v = json_v_parse_str(bptr, bln);
-    if (v == 0) { return resp_json_err(cfd, "400 Bad Request", "invalid JSON"); }
+    if (v == 0) { return resp_json_err(conn, "400 Bad Request", "invalid JSON"); }
     var bstr = json_v_str(json_v_obj_get(v, "body"));
-    if (bstr == 0) { return resp_json_err(cfd, "400 Bad Request", "missing string field 'body'"); }
+    if (bstr == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'body'"); }
 
     # `?` placeholders bind in occurrence order: SET body=? is slot 0, WHERE id=?
     # is slot 1.
     var stmt = patra_prepare(g_db, "UPDATE notes SET body = ? WHERE id = ?");
-    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
     patra_bind_text(stmt, 0, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 1, id);
+    # Pair UPDATE + rows_affected under g_wr_lock so a concurrent write can't
+    # overwrite DB_ROWS_AFFECTED between them (shared-handle race — see note).
+    mutex_lock(g_wr_lock);
     var rc = patra_exec_prepared(g_db, stmt);
+    var affected = patra_rows_affected(g_db);
+    mutex_unlock(g_wr_lock);
     patra_finalize(stmt);
-    if (rc != PATRA_OK) { return resp_json_err(cfd, "500 Internal Server Error", "update failed"); }
+    if (rc != PATRA_OK) { return resp_json_err(conn, "500 Internal Server Error", "update failed"); }
 
     # patra_rows_affected (1.11.3, the filed readback gap): the WHERE matched 0
-    # rows → the id doesn't exist → 404. This replaces the old pre-SELECT
-    # existence round-trip (one statement instead of two). Caveat: rows_affected
-    # reads a shared-handle field (DB_ROWS_AFFECTED), so the UPDATE + read are
-    # only atomic if no other write interleaves on g_db — see FINDINGS.
-    if (patra_rows_affected(g_db) <= 0) { return resp_json_err(cfd, "404 Not Found", "note not found"); }
+    # rows → the id doesn't exist → 404. Replaces the old pre-SELECT round-trip.
+    if (affected <= 0) { return resp_json_err(conn, "404 Not Found", "note not found"); }
 
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("id"),   json_v_int_new(id));
     json_v_obj_set(o, str_lit("body"), json_v_str_new(bstr));
-    return resp_json(cfd, "200 OK", o);
+    return resp_json(conn, "200 OK", o);
 }
 
 # DELETE /api/notes/:id — remove a note. With patra_rows_affected (1.11.3) we can
@@ -197,53 +211,84 @@ fn handle_update_note(ctx, cfd, buf, blen, params): i64 {
 # missing id, instead of the old forced idempotent-200 (which was a workaround
 # for patra having no rows-affected count, not a REST preference). Idempotent-200
 # is also valid REST; switched to 404-on-missing here to exercise the new API.
-fn handle_delete_note(ctx, cfd, buf, blen, params): i64 {
+fn handle_delete_note(ctx, conn, buf, blen, params): i64 {
     var id = sandhi_route_param_int(params, 0);
-    if (id < 0) { return resp_json_err(cfd, "400 Bad Request", "invalid id"); }
+    if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
     var stmt = patra_prepare(g_db, "DELETE FROM notes WHERE id = ?");
-    if (stmt == 0) { return resp_json_err(cfd, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) { return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
     patra_bind_int(stmt, 0, id);
+    # Pair DELETE + rows_affected under g_wr_lock (shared-handle race — see note).
+    mutex_lock(g_wr_lock);
     var rc = patra_exec_prepared(g_db, stmt);
+    var affected = patra_rows_affected(g_db);
+    mutex_unlock(g_wr_lock);
     patra_finalize(stmt);
-    if (rc != PATRA_OK) { return resp_json_err(cfd, "500 Internal Server Error", "delete failed"); }
-    # 0 rows matched → nothing to delete → 404 (shared-handle readback caveat as
-    # in PUT — see FINDINGS).
-    if (patra_rows_affected(g_db) <= 0) { return resp_json_err(cfd, "404 Not Found", "note not found"); }
+    if (rc != PATRA_OK) { return resp_json_err(conn, "500 Internal Server Error", "delete failed"); }
+    # 0 rows matched → nothing to delete → 404.
+    if (affected <= 0) { return resp_json_err(conn, "404 Not Found", "note not found"); }
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("deleted"), json_v_int_new(id));
-    return resp_json(cfd, "200 OK", o);
+    return resp_json(conn, "200 OK", o);
 }
 
 # ── entry ──
 
+# Plaintext HTTP listener — runs in a worker thread so main can own the HTTPS
+# accept loop. Kept on sandhi_server_run_pooled (fixed 4-worker pool, SO_RCVTIMEO
+# slowloris guard, smuggling rejects, SIGPIPE guard); _plain_handler wraps each
+# raw cfd in a plaintext Conn and runs the conn-aware dispatch.
+fn _run_plain(router): i64 {
+    var opts = sandhi_server_options_new();
+    sandhi_server_options_max_conns(opts, 4);
+    println("yeo-cy-test listening on :8080 (HTTP, run_pooled, 4 workers)");
+    return sandhi_server_run_pooled(INADDR_ANY(), PORT, &_plain_handler, router, opts);
+}
+
 fn main() {
     alloc_init();
+    # The hand-rolled TLS loop writes records via sys_write, so a peer reset
+    # mid-write would raise SIGPIPE (run_pooled installs this guard only for its
+    # own loop). Install it process-wide up front.
+    httpd_ignore_sigpipe();
 
     if (db_init() == 0) { println("error: patra_open failed"); return 1; }
 
-    # sandhi 1.6.7 router (app_ctx=0; handlers read g_db as a global). Routes are
-    # matched first-match-wins with :name capture + method dispatch; sandhi emits
-    # 404 (no path) / 405 (path but wrong method) itself.
-    var router = sandhi_router_new(0);
-    sandhi_router_add(router, "GET",    "/",              &handle_index);
-    sandhi_router_add(router, "GET",    "/app.js",        &handle_appjs);
-    sandhi_router_add(router, "GET",    "/api/health",    &handle_health);
-    sandhi_router_add(router, "GET",    "/api/notes",     &handle_list_notes);
-    sandhi_router_add(router, "POST",   "/api/notes",     &handle_create_note);
-    sandhi_router_add(router, "GET",    "/api/notes/:id", &handle_get_note);
-    sandhi_router_add(router, "PUT",    "/api/notes/:id", &handle_update_note);
-    sandhi_router_add(router, "DELETE", "/api/notes/:id", &handle_delete_note);
+    # Route table (probe-owned): handlers take a Conn (the transport seam), so
+    # the same table serves both HTTP and HTTPS. Routing uses sandhi's MATCHER
+    # (sandhi_server_route_match) inside srv_dispatch; sandhi's own router/
+    # handler are plaintext-welded (they sock_send) and can't carry the seam.
+    var router = router_new(16);
+    route_add(router, "GET",    "/",              &handle_index);
+    route_add(router, "GET",    "/app.js",        &handle_appjs);
+    route_add(router, "GET",    "/api/health",    &handle_health);
+    route_add(router, "GET",    "/api/notes",     &handle_list_notes);
+    route_add(router, "POST",   "/api/notes",     &handle_create_note);
+    route_add(router, "GET",    "/api/notes/:id", &handle_get_note);
+    route_add(router, "PUT",    "/api/notes/:id", &handle_update_note);
+    route_add(router, "DELETE", "/api/notes/:id", &handle_delete_note);
 
-    # sandhi 1.6.7 thread-pool serve (the other feature this probe filed and
-    # kept its own pool for). max_conns is the FIXED worker-thread count (4, to
-    # match the old hand-rolled pool); idle_ms left at the 30s default — a
-    # per-connection SO_RCVTIMEO slowloris guard the hand-rolled pool lacked.
-    # run_pooled installs the SIGPIPE SIG_IGN guard itself (Linux), so the
-    # probe's httpd_ignore_sigpipe shim is gone.
-    var opts = sandhi_server_options_new();
-    sandhi_server_options_max_conns(opts, 4);
-    println("yeo-cy-test listening on :8080 (sandhi_server_run_pooled, 4 workers)");
-    return sandhi_server_run_pooled(INADDR_ANY(), PORT, &sandhi_server_router_handler, router, opts);
+    # Load the TLS cert (DER leaf via sigil) + key (PEM, passed as-is to
+    # tls_native — Ed25519; RSA is rejected). Run ./gen-certs.sh to mint them.
+    var cert_pem = alloc(8192);
+    var cpl = file_read_all("cert.pem", cert_pem, 8192);
+    var key_pem = alloc(4096);
+    var kpl = file_read_all("key.pem", key_pem, 4096);
+    if (cpl <= 0 || kpl <= 0) {
+        println("error: cert.pem/key.pem missing — run ./gen-certs.sh"); return 1;
+    }
+    var chain = alloc(16);
+    if (pem_decode_certs(cert_pem, cpl, chain, 1) < 1) {
+        println("error: cert.pem parse failed"); return 1;
+    }
+    var cert_der = load64(chain);
+    var cert_der_len = load64(chain + 8);
+
+    # Serve plaintext HTTP (:8080) in a worker thread and HTTPS (:8443) in main.
+    # Both share the (read-only) route table; patra is thread-safe and the write
+    # readbacks are paired under g_wr_lock, so both transports are safe together.
+    thread_create(&_run_plain, router);
+    println("yeo-cy-test listening on :8443 (HTTPS, tls_native + Ed25519)");
+    return tls_serve(TLS_PORT, router, cert_der, cert_der_len, key_pem, kpl);
 }
 
 var r = main();

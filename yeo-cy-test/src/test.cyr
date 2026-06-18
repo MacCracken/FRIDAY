@@ -51,14 +51,8 @@ fn test_bind_text_verbatim_and_safe(): i64 {
     return 0;
 }
 
-# cstr equality (both NUL-terminated).
-fn _cstr_eq(a, b): i64 {
-    var la = strlen(a);
-    if (la != strlen(b)) { return 0; }
-    return memeq(a, b, la);
-}
-
 # A captured param (sandhi route params) equals the given cstring?
+# (_cstr_eq comes from the included src/httpd.cyr.)
 fn param_eq(params, idx, expect): i64 {
     return _cstr_eq(sandhi_route_param(params, idx), expect);
 }

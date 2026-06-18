@@ -7,6 +7,120 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — full stack demonstrated together (2026-06-18)
+
+Fleshed the frontend from a list+add shell into a **real CRUD dashboard** that
+exercises the *entire* `/api/notes` resource from the browser: a `#/notes/:id`
+detail/edit route (GET by id → PUT), per-row delete (DELETE), and live Home
+status. Added `tests/ui_check.mjs` — a **headless full-stack proof** that loads
+the actual cyrius-emitted `web/app.js` into a minimal DOM+fetch shim against a
+running server and drives the rendered UI end to end (list → add → open detail →
+edit → delete), cross-checking the rendered DOM against the patra backend at each
+step. **42 automated checks now green**: unit (2) + backend e2e (32) + full-stack
+UI e2e (10), via `tests/run.sh`.
+
+- ✅ **The TS/TSX→JS emitter handles a real multi-view CRUD SPA cleanly** (a
+  positive result). The enhanced `app.tsx` — multiple components, a parameterized
+  hash route, nested `async` arrow handlers (`onsubmit`/`onclick`), an arrow
+  returning an object literal (`jsonInit`), template-literal URLs, `as` casts, and
+  passthrough of browser builtins (`parseInt` / `Number.isNaN` / `slice`) —
+  emitted to valid browser JS (`node --check` clean) that **runs and drives the
+  real backend correctly**. No emit rough edges surfaced in this pass (the
+  `async`+nested-arrow bug fixed in 6.1.15 stays fixed across the bigger surface).
+- ✅ **The whole stack composes**: `web/app.tsx` → `cyrius build --target=js` →
+  browser JS → `fetch` → sandhi router → patra → JSON → JSX render, with the UI
+  and patra cross-checked. This is the end-to-end "it comes together" milestone the
+  probe set out to prove — backend (HTTP+HTTPS), storage, and a cyrius-built
+  frontend, all integrated and verified.
+- 🔵 **Frontend XSS-safety is by construction**: the emitter's `h()` runtime
+  appends user content via `element.append(String(x))` (a text node), never
+  `innerHTML`, so a note body of `<img onerror=…>` renders as text (asserted in
+  the UI check). Pairs with patra's bound-parameter storage safety — the data path
+  is injection-safe end to end.
+
+## Update — HTTPS / TLS serving (2026-06-18)
+
+Added an **HTTPS listener on :8443 over `tls_native` + `sigil`** (the pure-Cyrius
+TLS stack), serving the same routes as the plaintext HTTP :8080 listener — both
+run together, sharing one handler set. SecureYeoman is a "secure, local-first"
+product whose entire auth stack (OIDC/PKCE, WebAuthn, bearer tokens, secrets) is
+meaningless over plaintext, so TLS termination on the server is the load-bearing
+layer for the port. **Verified end to end: 32 scenarios (24 HTTP + 8 HTTPS) pass**
+— TLS 1.3 handshake (`TLS_AES_256_GCM_SHA384`, `Verify return code: 0`), full
+CRUD over TLS, injection/unicode-safe bodies over TLS, **real cert verification**
+(a default-CA client is rejected, not silently trusted), HTTP↔HTTPS sharing one
+patra backend, and HTTP coexisting with HTTPS.
+
+**Verdict: `tls_native` is a viable pure-Cyrius server TLS stack** (TLS 1.3,
+Ed25519 cert/key, interops with an OpenSSL client, chain+hostname verify). The
+gaps are all in *integration*, not crypto:
+
+- 🔴 **sandhi has NO server-side TLS — the headline.** `sandhi_server_run` /
+  `_run_async` / `_run_pooled` take only `{idle_ms, max_conns}` and every send
+  path (`send_response`/`send_status`/`router_handler`) writes plaintext via
+  `sock_send`; there is no cert/key/TLS hook and no frame-to-buffer helper. So
+  serving HTTPS meant **bypassing sandhi's serve loops entirely** and hand-rolling
+  the accept→`tls_native_accept`→read→dispatch→write→close loop (`tls_serve` in
+  `src/httpd.cyr`). sandhi already composes `tls_native` for its *client* side —
+  the ask is the symmetric server side: a TLS option on the server (cert/key/ALPN)
+  or a transport seam so the existing serve loops + router work over TLS. *(Filed
+  to sandhi's roadmap.)*
+- **The `Conn` transport seam (architecture consequence).** Because sandhi's send
+  path is plaintext-welded, the probe introduced a `Conn {kind, handle}` so one
+  handler set serves both transports: handlers write via `resp_*(conn,…)` and
+  `conn_write` dispatches `sock_send` (plaintext) vs chunked `tls_native_write`
+  (TLS). sandhi's request **matcher** (`sandhi_server_route_match`) and accessors
+  are transport-agnostic and reused; its **dispatch/handler** are not, so the
+  probe re-grew a tiny route table + a conn-aware `srv_dispatch`. Net evolution of
+  the earlier sandhi-router adoption: **sandhi's matcher is the durable win; its
+  router_handler / run_pooled send path are plaintext-only.** Plaintext still runs
+  on `run_pooled` via a `_plain_handler` adapter (wraps the raw fd in a Conn).
+- 🟡 **`tls_native` server-side ALPN is not implemented.** `tls_native_set_alpn`
+  wires only the *client* offer (ClientHello ALPN, `tls_native_hs13.cyr:38-91`);
+  there is no server path that reads the client's ALPN and emits a selection in
+  EncryptedExtensions. Confirmed: `openssl s_client -alpn http/1.1` →
+  **"No ALPN negotiated."** HTTP/1.1 works (the default), but **h2-over-TLS is
+  unreachable with a `tls_native` server.** *(Filed cyrius-side — `tls_native`.)*
+- 🔵 **RSA server keys unsupported** (`tls_native` accepts Ed25519 / ECDSA P-256 /
+  P-384 only; `_tn_load_privkey` returns `TLS_ERR_KEY_UNSUPPORTED` for RSA). Used
+  Ed25519 (`gen-certs.sh`). Worth flagging: most ACME/Let's-Encrypt + existing SY
+  certs default to RSA/ECDSA, so the port needs ECDSA/Ed25519 issuance.
+- 🔵 **No cert/keygen / PKI tooling.** Had to shell out to `openssl` to mint the
+  cert; there's no first-party self-signed-cert generator, keygen helper, or ACME
+  client, and no tie-in to SecureYeoman's secret manager for the private key.
+- **`tls_native` usage contract** (for the port, no server example existed in
+  sandhi — mirrored `cyrius/tests/tcyr/tls_native_ed25519.tcyr`): the ctx is
+  **per-connection** (`new_server` each accept; not reusable; bump-alloc'd, no
+  free → reset an arena per conn in production); `tls_native_write` **caps at
+  16 KiB** (must chunk — `tls_write_all`); `tls_native_read` returns **one record**
+  (must loop to assemble a request — `tls_recv_request`, since
+  `sandhi_server_recv_request` is plaintext-only); `tls_native_close` sends
+  close_notify but does **not** free the ctx or close the fd (caller `sock_close`s).
+- **SIGPIPE shim reintroduced.** `run_pooled` installs the SIGPIPE guard only for
+  its own loop; the hand-rolled TLS accept loop writes records via `sys_write`, so
+  the probe reinstalls `httpd_ignore_sigpipe()` process-wide at startup.
+
+### ⚠️ Confirmed (and fixed): the patra shared-handle readback race
+
+While refactoring onto the Conn seam, the **scenario-8 concurrency probe caught
+the shared-handle `rows_affected` race for real** — a concurrent existing-id PUT
+returned a **spurious 404** (the `UPDATE` set `DB_ROWS_AFFECTED=1`, a concurrent
+missing-id `UPDATE` overwrote it to `0` before the readback). Reproduced ~1 run in
+5 (tight window). This **upgrades the earlier "latent, did not reproduce" finding
+to confirmed**. Fix: a **narrow `g_wr_lock`** pairs each `[exec_prepared;
+readback]` (create's `last_insert_id`, PUT/DELETE's `rows_affected`) atomically
+across writers; reads (SELECT) don't touch those fields, so list/get stay
+lock-free. Now deterministic (8/8 runs, scenario 8 always 0 misclassifications).
+This **strengthens the filed patra request** (`requests/2026-06-18-…-insert-returning-id`):
+the app lock negates P1's lock-free benefit for exactly the insert-then-echo /
+write-then-check REST patterns — which is why an **atomic insert-returning-id /
+per-statement result** is the real fix.
+
+(Aside: the earlier note that `src/httpd.cyr` fails `cyrius fmt --check` is now
+moot — the TLS rewrite removed the multi-line `send_response` call that triggered
+it; all three sources are fmt-clean. The cyrius `fmt --check` continuation bug
+itself is unchanged.)
+
 ## Update — re-run on Cyrius 6.2.21 + adopting what shipped (2026-06-18)
 
 Bumped the pins to **cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1**

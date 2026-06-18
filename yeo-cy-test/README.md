@@ -11,10 +11,12 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
 
 ## What it is
 
-- **Backend** — a Cyrius HTTP/1.1 server on `:8080` built on
-  [sandhi](https://github.com/MacCracken/sandhi), the Cyrius HTTP services lib:
-  its thread-pool serve loop (`sandhi_server_run_pooled`), route table
-  (`sandhi_router_*`), and request-smuggling defenses. Routes:
+- **Backend** — a Cyrius HTTP/1.1 server on `:8080` (plaintext) **and `:8443`
+  (HTTPS / TLS 1.3)**, both serving the same routes. HTTP is built on
+  [sandhi](https://github.com/MacCracken/sandhi), the Cyrius HTTP services lib
+  (`sandhi_server_run_pooled` thread pool + route matcher + smuggling defenses);
+  HTTPS is hand-rolled on `tls_native` + [sigil](https://github.com/MacCracken/sigil)
+  with an Ed25519 cert (sandhi has no server-side TLS — see FINDINGS). Routes:
   - `GET  /`                → serves the frontend (`web/index.html`)
   - `GET  /app.js`          → serves the frontend bundle
   - `GET  /api/health`      → `{ "status": "ok", … }`
@@ -24,9 +26,12 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
 - **Storage** — [patra](https://github.com/MacCracken/patra), the sovereign
   Cyrius SQL database. Notes persist to `yeo.patra` (ids via patra
   `AUTOINCREMENT`) and survive restarts.
-- **Frontend** — `web/app.tsx` is the typed source of truth. `web/app.js` is
-  **generated** from it by `cyrius build --target=js` (the cyrius 6.1.11+
-  TS/TSX→JS + JSX emitter); do not hand-edit `app.js`.
+- **Frontend** — `web/app.tsx` is the typed source of truth: a notes dashboard
+  (Home status, list+add, and a `#/notes/:id` detail/edit view) that drives the
+  full CRUD API from the browser. `web/app.js` is **generated** from it by
+  `cyrius build --target=js` (the cyrius 6.1.11+ TS/TSX→JS + JSX emitter); do not
+  hand-edit `app.js`. JSX lowers to an `h()` runtime that renders user content as
+  text nodes (XSS-safe).
 
 Note bodies are stored in a patra `TEXT` column via a prepared statement with a
 bound `?` parameter (`patra_bind_text`, patra 1.10.3), so arbitrary text —
@@ -37,10 +42,13 @@ FINDINGS.md.)
 ## Build & run
 
 ```sh
-./build.sh                 # emit web/app.js from app.tsx, build backend
-./build/yeo-cy-test        # start the server
-# open http://localhost:8080/
+./build.sh                 # mint TLS cert (if absent), emit web/app.js, build backend
+./build/yeo-cy-test        # start the server (HTTP :8080 + HTTPS :8443)
+# open http://localhost:8080/   (or  https://localhost:8443/  — self-signed cert)
 ```
+
+The HTTPS listener needs an Ed25519 cert+key (`cert.pem`/`key.pem`); `build.sh`
+mints them via `./gen-certs.sh` if missing (both are gitignored).
 
 Or step by step:
 
@@ -57,13 +65,25 @@ curl -s -X POST localhost:8080/api/notes -d '{"body":"hello cyrius"}'
 curl -s localhost:8080/api/notes
 ```
 
+## Test
+
+```sh
+tests/run.sh        # build + unit invariants + 32 backend e2e + 10 full-stack UI e2e
+```
+
+`tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
+emitted frontend against the backend) each start/stop their own server.
+
 ## Layout
 
 ```
-src/main.cyr     — handlers, route registration, patra CRUD (on sandhi's router)
-src/httpd.cyr    — response framing + body accessors over sandhi (thin glue)
+src/main.cyr     — handlers, route registration, patra CRUD, dual HTTP+HTTPS serve
+src/httpd.cyr    — Conn transport seam, response framing, routing, HTTPS serve loop
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match)
-tests/verify.py  — 24-scenario end-to-end harness (run vs a built binary)
+tests/verify.py  — 32-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/ui_check.mjs — headless full-stack UI e2e (drives the emitted app.js vs the backend)
+tests/run.sh     — one command: build + unit + 32 backend + 10 UI
+gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
 web/index.html   — page shell
