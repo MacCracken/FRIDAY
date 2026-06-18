@@ -11,15 +11,19 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
 
 ## What it is
 
-- **Backend** — a Cyrius HTTP/1.1 server on `:8080` built directly over the
-  `net.cyr` TCP stack (no framework). Routes:
-  - `GET  /`            → serves the frontend (`web/index.html`)
-  - `GET  /app.js`      → serves the frontend bundle
-  - `GET  /api/health`  → `{ "status": "ok", … }`
-  - `GET  /api/notes`   → list notes (JSON array)
-  - `POST /api/notes`   → create a note from `{ "body": "…" }`
+- **Backend** — a Cyrius HTTP/1.1 server on `:8080` built on
+  [sandhi](https://github.com/MacCracken/sandhi), the Cyrius HTTP services lib:
+  its thread-pool serve loop (`sandhi_server_run_pooled`), route table
+  (`sandhi_router_*`), and request-smuggling defenses. Routes:
+  - `GET  /`                → serves the frontend (`web/index.html`)
+  - `GET  /app.js`          → serves the frontend bundle
+  - `GET  /api/health`      → `{ "status": "ok", … }`
+  - `GET  /api/notes`       → list notes (JSON array)
+  - `POST /api/notes`       → create a note from `{ "body": "…" }`
+  - `GET|PUT|DELETE /api/notes/:id` → fetch / replace / delete one note
 - **Storage** — [patra](https://github.com/MacCracken/patra), the sovereign
-  Cyrius SQL database. Notes persist to `yeo.patra` and survive restarts.
+  Cyrius SQL database. Notes persist to `yeo.patra` (ids via patra
+  `AUTOINCREMENT`) and survive restarts.
 - **Frontend** — `web/app.tsx` is the typed source of truth. `web/app.js` is
   **generated** from it by `cyrius build --target=js` (the cyrius 6.1.11+
   TS/TSX→JS + JSX emitter); do not hand-edit `app.js`.
@@ -56,21 +60,26 @@ curl -s localhost:8080/api/notes
 ## Layout
 
 ```
-src/main.cyr     — the whole backend (server loop, routing, JSON, patra CRUD)
+src/main.cyr     — handlers, route registration, patra CRUD (on sandhi's router)
+src/httpd.cyr    — response framing + body accessors over sandhi (thin glue)
+src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match)
+tests/verify.py  — 24-scenario end-to-end harness (run vs a built binary)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
 web/index.html   — page shell
 build.sh         — frontend emit + backend build
-FINDINGS.md      — Cyrius / patra viability findings (the real deliverable)
+FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real deliverable)
 ```
 
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-cyrius 6.1.14 / patra 1.10.3 / sakshi 2.2.6). Both original blockers — TS/TSX→JS
-emit and patra SQL string safety — are now closed; cyrius builds the whole
-slice. Remaining items (incl. an `async`+nested-arrow emit bug) are in
-[FINDINGS.md](FINDINGS.md).
+**cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1**). Both original
+blockers — TS/TSX→JS emit and patra SQL string safety — are closed, and **every
+finding this probe filed against the ecosystem has shipped upstream and been
+adopted** (sandhi route table + thread-pool serve, patra read-back APIs): the
+probe is now a thin sandhi + patra composition. Open items + adoption caveats are
+in [FINDINGS.md](FINDINGS.md).
 
 ## License
 

@@ -42,6 +42,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `web/index.html` is now a minimal `#app` mount + dashboard CSS.
 
 ### Changed
+- **Re-run on cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1** (was
+  6.2.18 / 1.11.2 / 1.6.5 / 2.3.1; sandhi is folded into the cyrius toolchain, so
+  the cyrius bump pulls 1.6.7). All previously-filed findings are now resolved
+  upstream; 2 unit invariants + 24 end-to-end scenarios pass, nothing regressed.
+- **Adopted patra's write-readback (1.11.3).** `PUT /api/notes/:id` drops its
+  pre-`SELECT` existence check — it `UPDATE`s and 404s on
+  `patra_rows_affected == 0` (one statement, not two); `DELETE` now 404s on a
+  missing id (was idempotent-200, a workaround for the missing count).
+- **Adopted patra `AUTOINCREMENT` + `last_insert_id` (1.11.3).** Schema is
+  `id INT AUTOINCREMENT`; create uses a column-list `INSERT` and echoes
+  `patra_last_insert_id`. Removed the app-side `g_next_id` + `MAX(id)` seeding +
+  `atomic_fetch_add`. Caveats filed (FINDINGS): a shared-handle `last_insert_id`
+  echo race (latent — did not reproduce at 24 workers × 2400 inserts) and
+  AUTOINCREMENT id-reuse (derive-from-MAX; observed in the suite).
+- **Adopted sandhi's server route table (1.6.7).** Replaced the hand-rolled
+  `route_match`/router + `Req` struct with `sandhi_router_*` +
+  `sandhi_server_router_handler`; handlers moved to sandhi's
+  `fn(app_ctx, cfd, buf, blen, params)` signature. `src/test.cyr` now validates
+  sandhi's matcher. 404/405 are now sandhi's (status-only, not JSON).
+- **Adopted sandhi `sandhi_server_run_pooled` (1.6.7).** Replaced the
+  hand-rolled accept loop + worker pool (and the `httpd_ignore_sigpipe` shim —
+  run_pooled installs the SIGPIPE `SIG_IGN` guard itself, Linux) with
+  `sandhi_server_run_pooled` (`max_conns = 4`; gains a `SO_RCVTIMEO` slowloris
+  guard). `src/httpd.cyr` collapsed 353 → 83 lines (response/body glue only) —
+  **the probe is now a thin sandhi + patra composition.** Both features
+  (route table + thread pool) were filed by this probe and shipped in sandhi
+  1.6.7.
+- Added `tests/verify.py` — the 24-scenario end-to-end harness (CRUD lifecycle,
+  injection/unicode round-trip + restart, 250-concurrent unique ids, slow-client
+  isolation, smuggling rejects, SIGPIPE survival, rows_affected concurrency).
 - **Ported the HTTP service layer onto `sandhi/server`.** `src/httpd.cyr` is now
   a thin shim that composes sandhi for all wire work — `sandhi_server_recv_request`
   / `get_method` / `get_path` / `path_only` / `find_header` / `body_offset` /
@@ -90,6 +120,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   toolchain snapshot).
 
 ### Findings (filed)
+- ✅ **All probe-filed ecosystem findings shipped upstream** (verified file:line):
+  sandhi route table (1.6.7) + `sandhi_server_run_pooled` (1.6.7) + SIGPIPE guard
+  (1.6.6) + docs (1.6.6); patra `last_insert_id`/`rows_affected` (1.11.3); cyrius
+  async leak (6.1.22). All adopted (see _Changed_). Several credit yeo-cy-test.
+- 🔵 **patra: shared-handle `last_insert_id`/`rows_affected` readback race.** The
+  fields live on the shared handle and the write + readback are two non-atomic
+  ops, so concurrent writers can read each other's value. Did not reproduce
+  (24×2400), but filed: an atomic `INSERT … RETURNING id` / id-from-`exec_prepared`
+  would make it race-free for concurrent inserts. Until then the race-free choice
+  is app-assigned ids.
+- 🔵 **sandhi: `run_pooled` handoff channel is sized to the worker count,** so a
+  thundering-herd burst far exceeding workers sheds via the listen backlog (clean
+  ECONNRESET, no data loss). A backlog depth decoupled from `max_conns` would
+  absorb bursts better. (Filed as a note; size `max_conns` to workload meanwhile.)
+- 🟡 **cyrius: `fmt <file> --check` continuation false-positive persists on
+  6.2.21** — flags the two-line `sandhi_server_send_response` call in
+  `src/httpd.cyr` (exit 1) while apply-mode `cyrius fmt` is byte-identical.
 - ⚠️ **Correction: the HTTP server abstraction exists — it's `sandhi`.** The
   original "no HTTP server abstraction" verdict looked at top-level stdlib
   primitives; the real services lib is `sandhi` (`sandhi/server`, a lift of

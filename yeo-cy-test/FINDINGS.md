@@ -7,6 +7,142 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — re-run on Cyrius 6.2.21 + adopting what shipped (2026-06-18)
+
+Bumped the pins to **cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1**
+(was 6.2.18 / 1.11.2 / 1.6.5 / 2.3.1). sandhi is folded into the cyrius
+toolchain, so the cyrius bump pulls sandhi 1.6.7 via `cyrius lib sync`; patra is
+the only separately-tagged dep bumped (1.11.2 → 1.11.4). Regenerated `lib/` +
+deps, rebuilt (TS/TSX→JS emit clean, backend OK), and re-ran the whole suite:
+**2 Cyrius unit invariants + 24 end-to-end scenarios all pass, nothing
+regressed** across the 6.2.18→6.2.21 / 1.11.2→1.11.4 / 1.6.5→1.6.7 forward.
+
+### The headline: the findings this probe filed shipped upstream
+
+Every blocker/request this probe filed against the ecosystem is now resolved
+(evidence cross-checked against upstream source, file:line):
+
+- ✅ **sandhi server-side route table — SHIPPED (sandhi 1.6.7).**
+  `sandhi_router_new` / `sandhi_router_add` / `sandhi_server_route_match` /
+  `sandhi_route_param_int` / `sandhi_server_router_handler` — `:name` capture +
+  method dispatch + 404/405, the exact shape this probe filed (the probe's old
+  `route_match` was the reference). Adopted (bite 3 below).
+- ✅ **sandhi thread-pool serve mode `sandhi_server_run_pooled` — SHIPPED
+  (sandhi 1.6.7).** A fixed worker-thread pool with a bounded handoff channel —
+  the request this probe filed, naming yeo-cy-test as first asker. Adopted
+  (bite 4 below).
+- ✅ **sandhi SIGPIPE DoS guard — SHIPPED (sandhi 1.6.6),** crediting this
+  probe. sandhi installs `SIG_IGN` for SIGPIPE in its serve loops
+  (`_sandhi_server_ignore_sigpipe`). NB the fix is server-loop-side; `net.cyr`
+  `sock_send` is *still* a bare `sys_write` with no `MSG_NOSIGNAL` (cyrius has no
+  stdlib `signal_ignore` yet — OPEN), so a consumer running its *own* loop over
+  sandhi's per-request fns still needs its own guard. Adopting `run_pooled`
+  (bite 4) gets the guard for free → the probe's shim was removed.
+- ✅ **sandhi docs (companion modules + "bayan not json") + stale `run_async`
+  leak comment — DONE (sandhi 1.6.6).**
+- ✅ **patra `last_insert_id` / `rows_affected` readback — SHIPPED (patra
+  1.11.3),** crediting this probe. Adopted (bites 1–2 below).
+- ✅ **patra undocumented sakshi transitive dep — DOCUMENTED;** patra's earlier
+  arcs (column-list INSERT, AUTOINCREMENT, TEXT, bind params, thread-safety P1)
+  are all shipped per patra's archive.
+- ✅ **cyrius async ~32 B/conn task-struct leak — RESOLVED (cyrius 6.1.22,**
+  before the pin; `async_new_in(arena)` + `reset_via`). The probe doesn't use
+  async (it used a thread pool, now sandhi's), so this is informational.
+
+Still open (not the probe's to fix — tracked upstream): macOS SIGPIPE guard +
+portable stdlib `signal_ignore`/`MSG_NOSIGNAL` (cyrius); patra **P2 concurrent
+readers** (single process-global mutex serializes all DB ops — the probe's own
+open request); sandhi middleware/auth layer; server-only ~400 KB static h2/tls
+`.bss` (closed won't-fix on sandhi, re-filed against cyrius).
+
+### What got adopted, and what each kicked back (4 verified bites)
+
+Each was done as a separate bite and re-verified against the full suite.
+**Net effect: the probe is now a thin sandhi + patra composition** —
+`src/httpd.cyr` collapsed from a 353-line hand-rolled HTTP server to 83 lines
+of response/body glue; everything above the socket is sandhi.
+
+**Bite 1 — patra `rows_affected` (✅ adopted).** `PUT /api/notes/:id` drops its
+pre-`SELECT` existence round-trip: it now `UPDATE`s and returns 404 when
+`patra_rows_affected(g_db) <= 0` (one statement, not two). `DELETE` now returns a
+real **404 on a missing id** (the old idempotent-200 was a *workaround* for the
+missing count, not a REST preference; idempotent-200 is also valid — switched to
+exercise the API). A dedicated concurrency probe (scenario 8: concurrent PUTs to
+existing **and** missing ids) found **0 misclassifications** under 120 concurrent
+mixed PUTs. 🔵 Caveat: `rows_affected` reads a *shared-handle* field
+(`DB_ROWS_AFFECTED`), so the `UPDATE` + readback are only atomic if no other
+write interleaves on `g_db`; the window is a couple of instructions and did not
+manifest, but it is a latent hazard (see the `last_insert_id` finding).
+
+**Bite 2 — patra `last_insert_id` + `AUTOINCREMENT` (✅ adopted, with caveats
+filed).** Schema is now `id INT AUTOINCREMENT`; create uses a column-list
+`INSERT INTO notes (body, created)` (omitting the id) and echoes
+`patra_last_insert_id(g_db)`. The app-side `g_next_id` + `MAX(id)` seeding +
+`atomic_fetch_add` are gone. **It works — 250 concurrent POSTs returned 250
+unique ids that form a bijection (subset) with the stored rows.** Two caveats:
+- 🔵 **Shared-handle `last_insert_id` echo race.** `DB_LAST_ID` is one field on
+  the shared handle; the `INSERT` and the readback are two separate ops with no
+  app lock between them, so a concurrent `INSERT` can overwrite it before the
+  read → the echoed id could be another worker's. **Stress-tested to provoke it:
+  24 workers × 2400 inserts across 6 rounds — the echoed↔stored bijection held
+  every round; the race never reproduced** (the window is too tight). It remains
+  a real correctness hazard by inspection. The race-free production choice is
+  either app-assigned atomic ids (what the probe had — also strictly monotonic)
+  or a patra **atomic insert-returning-id** API. *(New 🔵 filed to patra: an
+  `INSERT … RETURNING id` / id-from-`exec_prepared` so the assigned id is read
+  back atomically under the statement mutex, removing the shared-handle race for
+  concurrent inserts.)*
+- 🔵 **`AUTOINCREMENT` is derive-from-MAX → ids are reused.** Observed
+  concretely in the suite: after a create+delete left the table empty, the next
+  create **reused id=1** (the prior app-assigned atomic ids were never reused).
+  Fine for many apps; if globally-never-reused ids are required, keep
+  app-assigned ids. (Matches patra's own documented behavior; not strict-SQLite
+  AUTOINCREMENT.)
+- Side note (DX, unrelated): a `ConnectionResetError` data point surfaced while
+  stress-testing — see bite 4.
+
+**Bite 3 — sandhi server route table (✅ adopted).** Replaced the probe's
+hand-rolled router (`router_new`/`route_add`/`route_match`/`router_dispatch` +
+the `Req` struct + `req_*` accessors) with `sandhi_router_new` / `_add` and
+`sandhi_server_router_handler`. Handlers moved to sandhi's signature
+`fn(app_ctx, cfd, req_buf, req_len, params)`, reading the body via
+`sandhi_server_body_offset` and path params via `sandhi_route_param_int`. The
+`src/test.cyr` `route_match` unit test now validates **sandhi's** matcher (a
+consumer-side regression guard on the behavior the resource needs). One
+behavior delta: 404/405 are now sandhi's plain status responses, not the probe's
+JSON `{"error":…}` bodies (status codes unchanged; the suite checks codes). Drop-in
+clean — sandhi's matcher is algorithmically identical to the probe's filed shape.
+
+**Bite 4 — sandhi `sandhi_server_run_pooled` (✅ adopted).** Deleted the probe's
+accept loop + worker pool + `httpd_ignore_sigpipe` shim; `main` now calls
+`sandhi_server_run_pooled(INADDR_ANY(), 8080, &sandhi_server_router_handler,
+router, opts)` with `max_conns = 4` (the fixed worker count, matching the old
+pool). Gains: the SIGPIPE `SIG_IGN` guard installed by run_pooled itself
+(verified — scenario 7 survives 10 mid-exchange disconnects **with the probe's
+shim gone**) and a per-connection `SO_RCVTIMEO` slowloris guard the hand-rolled
+pool lacked. Slow-client isolation still holds (~1 ms health while 2/4 workers
+held). 🔵 Load-shedding data point: run_pooled's handoff channel is sized to the
+**worker count** (4), so under a thundering herd it relies on the listen backlog
+(128); it served 250 and **600** simultaneous POSTs with **0 errors** but shed
+~18% at a **1000**-conn burst via clean `ConnectionResetError` (no data loss —
+every accepted request stored, ids unique). Expected bounded-accept-loop
+backpressure, amplified by patra's single write mutex (P2). For production, size
+`max_conns` to expected concurrency; *(possible sandhi 🔵: a handoff-channel /
+backlog depth decoupled from the worker count would absorb bursts better.)*
+
+### Cyrius DX, re-confirmed on 6.2.21
+
+- 🟡 **`cyrius fmt <file> --check` still flags a multi-line call it won't fix.**
+  `src/httpd.cyr` fails `--check` (exit 1) on the two-line
+  `sandhi_server_send_response(…)` continuation in `resp_raw`/`resp_file`, yet
+  apply-mode `cyrius fmt` produces a **byte-identical** file. This is the same
+  continuation false-positive filed earlier — **still present on 6.2.21**, and
+  `--check` still prints no location. (Left the readable multi-line form rather
+  than write 155-char lines to appease it.)
+- 🔵 The `cyrius pin --latest` one-shot convenience is still not shipped (only
+  `cyriusly use <ver>` + detect-only `cyriusly update`); the pin-drift warning
+  UX is shipped. Bumping the pin is still a manual edit.
+
 ## Update — re-run on Cyrius 6.2.18 (2026-06-17)
 
 Re-ran the whole slice on **cyrius 6.2.18 / patra 1.11.2 / sakshi 2.3.1** (was

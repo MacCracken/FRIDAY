@@ -51,55 +51,55 @@ fn test_bind_text_verbatim_and_safe(): i64 {
     return 0;
 }
 
-# Build a minimal Req carrying just a path cstr (route_match reads REQ_PATH).
-fn mk_req(path): i64 {
-    var req = req_new();
-    store64(req + REQ_PATH, path);
-    store64(req + REQ_NPARAMS, 0);
-    return req;
+# cstr equality (both NUL-terminated).
+fn _cstr_eq(a, b): i64 {
+    var la = strlen(a);
+    if (la != strlen(b)) { return 0; }
+    return memeq(a, b, la);
 }
 
-# A captured param equals the given cstring?
-fn param_eq(req, idx, expect): i64 {
-    var s = req_param(req, idx);
-    var elen = strlen(expect);
-    if (str_len(s) != elen) { return 0; }
-    return memeq(str_data(s), expect, elen);
+# A captured param (sandhi route params) equals the given cstring?
+fn param_eq(params, idx, expect): i64 {
+    return _cstr_eq(sandhi_route_param(params, idx), expect);
 }
 
-# Returns 0 on pass, non-zero (case code) on failure.
+# Returns 0 on pass, non-zero (case code) on failure. Validates sandhi 1.6.7's
+# route matcher against the cases the /api/notes/:id resource depends on. (The
+# probe's own route_match — now retired in favor of sandhi's — was the reference
+# shape for this milestone; this keeps a consumer-side regression guard on the
+# behavior the resource relies on.) sandhi_server_route_match resets the param
+# count each call, so one stack buffer is reused across cases.
 fn test_route_match(): i64 {
+    var params[264];
+
     # exact (no params) still matches
-    if (route_match(mk_req("/api/notes"), "/api/notes") != 1) { return 1; }
-    if (route_match(mk_req("/"), "/") != 1) { return 2; }
+    if (sandhi_server_route_match("/api/notes", "/api/notes", &params) != 1) { return 1; }
+    if (sandhi_server_route_match("/", "/", &params) != 1) { return 2; }
 
     # single `:id` capture
-    var r = mk_req("/api/notes/5");
-    if (route_match(r, "/api/notes/:id") != 1) { return 3; }
-    if (req_nparams(r) != 1) { return 4; }
-    if (req_param_int(r, 0) != 5) { return 5; }
+    if (sandhi_server_route_match("/api/notes/5", "/api/notes/:id", &params) != 1) { return 3; }
+    if (sandhi_route_param_count(&params) != 1) { return 4; }
+    if (sandhi_route_param_int(&params, 0) != 5) { return 5; }
 
     # segment-count rules: pattern longer / shorter than path
-    if (route_match(mk_req("/api/notes"), "/api/notes/:id") != 0) { return 6; }
-    if (route_match(mk_req("/api/notes/5"), "/api/notes") != 0) { return 7; }
+    if (sandhi_server_route_match("/api/notes", "/api/notes/:id", &params) != 0) { return 6; }
+    if (sandhi_server_route_match("/api/notes/5", "/api/notes", &params) != 0) { return 7; }
 
     # empty trailing segment must NOT satisfy a `:id`
-    if (route_match(mk_req("/api/notes/"), "/api/notes/:id") != 0) { return 8; }
+    if (sandhi_server_route_match("/api/notes/", "/api/notes/:id", &params) != 0) { return 8; }
 
     # literal-segment mismatch
-    if (route_match(mk_req("/api/x/5"), "/api/notes/:id") != 0) { return 9; }
+    if (sandhi_server_route_match("/api/x/5", "/api/notes/:id", &params) != 0) { return 9; }
 
     # multiple captures, in order
-    var r2 = mk_req("/a/b");
-    if (route_match(r2, "/:x/:y") != 1) { return 10; }
-    if (req_nparams(r2) != 2) { return 11; }
-    if (param_eq(r2, 0, "a") == 0) { return 12; }
-    if (param_eq(r2, 1, "b") == 0) { return 13; }
+    if (sandhi_server_route_match("/a/b", "/:x/:y", &params) != 1) { return 10; }
+    if (sandhi_route_param_count(&params) != 2) { return 11; }
+    if (param_eq(&params, 0, "a") == 0) { return 12; }
+    if (param_eq(&params, 1, "b") == 0) { return 13; }
 
-    # non-numeric param: matches the route but req_param_int rejects it (-> -1)
-    var r3 = mk_req("/api/notes/abc");
-    if (route_match(r3, "/api/notes/:id") != 1) { return 14; }
-    if (req_param_int(r3, 0) != 0 - 1) { return 15; }
+    # non-numeric param: matches the route but param_int rejects it (-> -1)
+    if (sandhi_server_route_match("/api/notes/abc", "/api/notes/:id", &params) != 1) { return 14; }
+    if (sandhi_route_param_int(&params, 0) != 0 - 1) { return 15; }
 
     return 0;
 }
@@ -114,7 +114,7 @@ fn main() {
         println(")");
         return 1;
     }
-    println("ok: httpd route_match path params + segment rules");
+    println("ok: sandhi route_match path params + segment rules");
 
     var r = test_bind_text_verbatim_and_safe();
     if (r != 0) {

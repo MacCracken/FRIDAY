@@ -1,104 +1,40 @@
-# httpd.cyr — a thin routing shim that COMPOSES sandhi's HTTP server.
+# httpd.cyr — response framing + request-body accessors over sandhi.
 #
-# The original probe hand-rolled request parsing, response framing, full-request
-# read, and the accept loop here, under the (wrong) FINDINGS verdict "no HTTP
-# server abstraction." Correction: the services lib `sandhi` already provides
-# all of that — and adds request-smuggling defenses this probe lacked. So this
-# file now sits on `sandhi/server` and keeps only the two things sandhi doesn't
-# provide yet:
+# This file used to hand-roll an entire HTTP/1.1 server (request parse, route
+# table, response framing, accept loop, worker pool, SIGPIPE guard) under the
+# (wrong) FINDINGS verdict "no HTTP server abstraction." That verdict was a
+# layer mistake: the services lib `sandhi` provides all of it. Over bites 3–4
+# the probe moved fully onto sandhi:
 #
-#   • per-request work  → sandhi: sandhi_server_recv_request / get_method /
-#     get_path / path_only / find_header / body_offset / send_response /
-#     send_status, plus the CL-TE and duplicate-header smuggling rejects.
-#   • route table (shim) → sandhi has no server-side router yet (a roadmapped
-#     milestone, filed from this probe). The method+path table + `:name`
-#     path-param matcher (route_match / req_param*) lives here.
-#   • parallel serving (shim) → sandhi_server_run is single-flight and
-#     run_async is cooperative/single-thread; neither gives true multi-core
-#     parallelism (which SecureYeoman's axum backend has). We keep a fixed
-#     worker-thread pool and drive sandhi's per-request fns from each worker.
-#     Those fns take an explicit buffer and use the thread-safe `alloc`, so
-#     calling them from the pool is safe.
+#   • wire I/O + smuggling rejects → sandhi_server_* (recv_request, get_method/
+#     path, body_offset, send_response/status, has_cl_te_conflict / dup-header).
+#   • route table → sandhi 1.6.7 sandhi_router_* + sandhi_server_router_handler
+#     (`:name` capture, method dispatch, 404/405). [filed by this probe]
+#   • parallel serving → sandhi 1.6.7 sandhi_server_run_pooled (fixed worker-
+#     thread pool, SO_RCVTIMEO slowloris guard, SIGPIPE SIG_IGN installed itself).
+#     [filed by this probe] — so the probe's accept loop, worker pool, and
+#     httpd_ignore_sigpipe shim are all retired.
 #
-# ASCII codes used inline:  SP=32  LF=10  CR=13  '?'=63  ':'=58  '/'=47
-
-# ── Req: a per-request handle populated from the sandhi request buffer ──
-# REQ_METHOD / REQ_PATH hold cstrs returned by sandhi (heap, request-lifetime).
-# Param slots point INTO the REQ_PATH cstr. One Req is reused per worker.
-var REQ_BUF        = 0;     # ptr to the (per-worker) request buffer
-var REQ_BLEN       = 8;     # bytes of request in the buffer
-var REQ_METHOD     = 16;    # method cstr (sandhi_server_get_method)
-var REQ_PATH       = 24;    # path-only cstr (sandhi_server_path_only)
-var REQ_NPARAMS    = 32;
-var REQ_PARAMS     = 40;    # REQ_MAX_PARAMS × 16-byte (ptr,len) slots
-var REQ_MAX_PARAMS = 4;
-var REQ_SZ         = 104;   # REQ_PARAMS + REQ_MAX_PARAMS*16
-
-fn req_new(): i64 { return alloc(REQ_SZ); }
+# What remains here is the only consumer-side glue sandhi doesn't dictate: a
+# "CODE Msg"-string response convenience over sandhi_server_send_response, JSON
+# response helpers (json_v_* → wire), a static-file responder, and body-pointer
+# accessors. Route handlers use sandhi's signature
+#   fn handler(app_ctx, cfd, req_buf, req_len, params) -> i64
+# reading the body via http_body_* and path params via sandhi_route_param_int.
 
 # cstring literal -> borrowed Str (json_v_* / str_builder_add want Str).
 fn str_lit(c): Str { return str_new(c, strlen(c)); }
 
-# ── Req accessors ──
-fn req_method(req): i64 { return load64(req + REQ_METHOD); }   # cstr
-fn req_path(req): i64   { return load64(req + REQ_PATH); }     # cstr (path-only)
-
-# Body = bytes after the "\r\n\r\n" terminator (sandhi computes the offset).
-fn req_body_ptr(req): i64 {
-    var buf = load64(req + REQ_BUF);
-    var bo = sandhi_server_body_offset(buf, load64(req + REQ_BLEN));
+# ── Request body (bytes after the "\r\n\r\n" terminator; sandhi finds offset) ──
+fn http_body_ptr(buf, blen): i64 {
+    var bo = sandhi_server_body_offset(buf, blen);
     if (bo < 0) { return 0; }
     return buf + bo;
 }
-fn req_body_len(req): i64 {
-    var bo = sandhi_server_body_offset(load64(req + REQ_BUF), load64(req + REQ_BLEN));
+fn http_body_len(buf, blen): i64 {
+    var bo = sandhi_server_body_offset(buf, blen);
     if (bo < 0) { return 0; }
-    return load64(req + REQ_BLEN) - bo;
-}
-
-# Header value cstr (case-insensitive) or 0.
-fn req_header(req, name): i64 {
-    return sandhi_server_find_header(load64(req + REQ_BUF), load64(req + REQ_BLEN), name);
-}
-
-# cstring equality.
-fn _cstr_eq(a, b): i64 {
-    var i = 0;
-    while (load8(a + i) != 0 && load8(b + i) != 0) {
-        if (load8(a + i) != load8(b + i)) { return 0; }
-        i = i + 1;
-    }
-    return load8(a + i) == load8(b + i);   # match only if both hit NUL together
-}
-fn req_method_is(req, cstr): i64 { return _cstr_eq(load64(req + REQ_METHOD), cstr); }
-
-# ── Path params (captured by route_match from `:name` pattern segments) ──
-fn req_nparams(req): i64 { return load64(req + REQ_NPARAMS); }
-
-# Captured param `idx` as a borrowed Str, or an empty Str if out of range.
-fn req_param(req, idx): Str {
-    if (idx < 0 || idx >= load64(req + REQ_NPARAMS)) { return str_new(0, 0); }
-    var slot = req + REQ_PARAMS + idx * 16;
-    return str_new(load64(slot), load64(slot + 8));
-}
-
-# Captured param `idx` parsed as a non-negative decimal i64, or -1 if absent /
-# empty / non-numeric. (Used for `/resource/:id`-style integer keys.)
-fn req_param_int(req, idx): i64 {
-    if (idx < 0 || idx >= load64(req + REQ_NPARAMS)) { return 0 - 1; }
-    var slot = req + REQ_PARAMS + idx * 16;
-    var p = load64(slot);
-    var len = load64(slot + 8);
-    if (len <= 0) { return 0 - 1; }
-    var val = 0;
-    var i = 0;
-    while (i < len) {
-        var c = load8(p + i);
-        if (c < 48 || c > 57) { return 0 - 1; }
-        val = val * 10 + (c - 48);
-        i = i + 1;
-    }
-    return val;
+    return blen - bo;
 }
 
 # ── Responses (framed by sandhi_server_send_*) ──
@@ -144,209 +80,4 @@ fn resp_file(cfd, path, ctype): i64 {
     if (n <= 0) { return resp_json_err(cfd, "404 Not Found", "file not found"); }
     return sandhi_server_send_response(cfd, 200, "OK", ctype, buf, n,
         "Access-Control-Allow-Origin: *\r\n");
-}
-
-fn resp_404(cfd): i64 { return resp_json_err(cfd, "404 Not Found", "not found"); }
-fn resp_405(cfd): i64 { return resp_json_err(cfd, "405 Method Not Allowed", "method not allowed"); }
-
-# ── Router (function-pointer route table) ──
-# Handlers have the signature  fn handler(cfd, req): i64  and are stored by
-# address (&handler), dispatched via fncall2.
-var RT_COUNT  = 0;
-var RT_ROUTES = 8;
-var RT_CAP    = 16;
-var RT_HDR_SZ = 24;
-var RE_METHOD = 0;     # route entry: cstring method
-var RE_PATH   = 8;     #              cstring path pattern (may contain :name)
-var RE_FP     = 16;    #              handler fn address
-var RE_SZ     = 24;
-
-fn router_new(cap): i64 {
-    var r = alloc(RT_HDR_SZ);
-    store64(r + RT_COUNT, 0);
-    store64(r + RT_CAP, cap);
-    store64(r + RT_ROUTES, alloc(cap * RE_SZ));
-    return r;
-}
-
-fn route_add(r, method, path, fp): i64 {
-    var c = load64(r + RT_COUNT);
-    if (c >= load64(r + RT_CAP)) { return 0; }
-    var e = load64(r + RT_ROUTES) + c * RE_SZ;
-    store64(e + RE_METHOD, method);
-    store64(e + RE_PATH, path);
-    store64(e + RE_FP, fp);
-    store64(r + RT_COUNT, c + 1);
-    return 1;
-}
-
-# Match the request path (a cstr, REQ_PATH) against a route pattern cstr,
-# capturing `:name` segments into req's param slots. Pattern and path are
-# compared segment-by-segment (split on '/'); a literal segment must match
-# exactly, a `:name` segment matches any one non-empty segment and is captured.
-# Segment counts must be equal, so "/api/notes" does NOT match "/api/notes/:id"
-# and vice-versa. Returns 1 on match (params filled), 0 otherwise. Resets req's
-# param count.
-fn route_match(req, pattern): i64 {
-    store64(req + REQ_NPARAMS, 0);
-    var pp = pattern;                  # cstring cursor (pattern)
-    var b  = load64(req + REQ_PATH);   # cstring cursor (path-only)
-    # both must be absolute (begin with '/')
-    if (load8(pp) != 47) { return 0; }
-    if (load8(b) != 47) { return 0; }
-    pp = pp + 1;
-    b = b + 1;
-    while (1) {
-        # current pattern segment [ps, pp)
-        var ps = pp;
-        while (load8(pp) != 0 && load8(pp) != 47) { pp = pp + 1; }
-        var pseg = pp - ps;
-        # current path segment [bs, b)
-        var bs = b;
-        while (load8(b) != 0 && load8(b) != 47) { b = b + 1; }
-        var bseg = b - bs;
-
-        if (pseg > 0 && load8(ps) == 58) {     # ':' → capture, matches any non-empty
-            if (bseg == 0) { return 0; }
-            var np = load64(req + REQ_NPARAMS);
-            if (np < REQ_MAX_PARAMS) {
-                var slot = req + REQ_PARAMS + np * 16;
-                store64(slot, bs);
-                store64(slot + 8, bseg);
-                store64(req + REQ_NPARAMS, np + 1);
-            }
-        } else {                               # literal segment: exact match
-            if (pseg != bseg) { return 0; }
-            if (pseg > 0 && memeq(ps, bs, pseg) == 0) { return 0; }
-        }
-
-        var pmore = 0;
-        if (load8(pp) == 47) { pmore = 1; }
-        var bmore = 0;
-        if (load8(b) == 47) { bmore = 1; }
-        if (pmore != bmore) { return 0; }      # differing segment counts
-        if (pmore == 0) { return 1; }          # both exhausted → full match
-        pp = pp + 1;
-        b = b + 1;
-    }
-    return 0;
-}
-
-# Find a route matching (method, path) and invoke it. If the path matches but no
-# method does, reply 405; if nothing matches, 404. Always handles (returns 1).
-fn router_dispatch(r, cfd, req): i64 {
-    var c = load64(r + RT_COUNT);
-    var routes = load64(r + RT_ROUTES);
-    var path_match = 0;
-    var i = 0;
-    while (i < c) {
-        var e = routes + i * RE_SZ;
-        if (route_match(req, load64(e + RE_PATH)) == 1) {
-            path_match = 1;
-            if (req_method_is(req, load64(e + RE_METHOD)) == 1) {
-                fncall2(load64(e + RE_FP), cfd, req);
-                return 1;
-            }
-        }
-        i = i + 1;
-    }
-    if (path_match == 1) { return resp_405(cfd); }
-    return resp_404(cfd);
-}
-
-# ── Server loop: fixed worker pool driving sandhi's per-request fns ──
-# The accept loop hands each accepted connection to a bounded channel; a fixed
-# pool of worker threads pulls from it and serves one connection at a time. This
-# bounds resources (thread stacks are reclaimed only on join, so a fixed pool —
-# not thread-per-connection) and means a slow client ties up only its own
-# worker. alloc() is thread-safe (process-wide CAS spinlock), so sandhi's
-# per-request fns (which allocate via the global bump) are safe from the pool.
-var HTTPD_WORKERS = 4;
-var HTTPD_BACKLOG = 64;
-var HTTPD_BUFSZ   = 65536;
-
-var WCTX_CHAN   = 0;
-var WCTX_ROUTER = 8;
-
-# One worker: pull a connection off the channel, read the full request via
-# sandhi, reject smuggling, dispatch through the route table, close. The receive
-# buffer and Req are allocated once and reused per request.
-fn _httpd_worker(ctx): i64 {
-    var ch = load64(ctx + WCTX_CHAN);
-    var router = load64(ctx + WCTX_ROUTER);
-    var reqbuf = alloc(HTTPD_BUFSZ);
-    var req = req_new();
-    while (1) {
-        var cfd = chan_recv(ch);
-        if (cfd == 0) { return 0; }   # channel closed (an accepted fd is never 0)
-        var n = sandhi_server_recv_request(cfd, reqbuf, HTTPD_BUFSZ - 1);
-        if (n > 0) {
-            # sandhi's request-smuggling rejects (CL+TE coexistence; duplicate
-            # Host/CL/TE) — RFC 7230 §3.3.3 / §3.3.2. The hand-rolled server had
-            # none of this.
-            if (sandhi_server_request_has_cl_te_conflict(reqbuf, n) == 1) {
-                sandhi_server_send_status(cfd, 400, "Bad Request");
-            } elif (sandhi_server_request_has_dup_smuggling_header(reqbuf, n) == 1) {
-                sandhi_server_send_status(cfd, 400, "Bad Request");
-            } else {
-                store64(req + REQ_BUF, reqbuf);
-                store64(req + REQ_BLEN, n);
-                store64(req + REQ_METHOD, sandhi_server_get_method(reqbuf, n));
-                store64(req + REQ_PATH, sandhi_server_path_only(sandhi_server_get_path(reqbuf, n)));
-                store64(req + REQ_NPARAMS, 0);
-                router_dispatch(router, cfd, req);
-            }
-        }
-        sock_close(cfd);
-    }
-    return 0;
-}
-
-# Ignore SIGPIPE so that writing a response to a peer who closed mid-exchange
-# returns EPIPE instead of killing the process (default SIGPIPE disposition is
-# terminate — a trivial DoS: a client that sends a request line then disconnects
-# makes sock_send raise SIGPIPE). Neither net.cyr's sock_send nor sandhi's
-# server set MSG_NOSIGNAL, so the process must mask it. x86_64 Linux: rt_sigaction
-# is syscall 13, SIGPIPE = 13, SIG_IGN = 1; struct sigaction is
-# {sa_handler, sa_flags, sa_restorer, sa_mask} (8 bytes each).
-var _SYS_RT_SIGACTION = 13;
-var _SIGPIPE          = 13;
-fn httpd_ignore_sigpipe(): i64 {
-    var sa = alloc(32);
-    store64(sa + 0, 1);     # sa_handler = SIG_IGN
-    store64(sa + 8, 0);     # sa_flags
-    store64(sa + 16, 0);    # sa_restorer
-    store64(sa + 24, 0);    # sa_mask
-    return syscall(_SYS_RT_SIGACTION, _SIGPIPE, sa, 0, 8);
-}
-
-fn httpd_serve(port, router): i64 {
-    httpd_ignore_sigpipe();
-    var sr = tcp_socket();
-    if (is_ok(sr) == 0) { println("error: tcp_socket failed"); return 1; }
-    var fd = result_unwrap(sr);
-    sock_reuse(fd);
-
-    var br = sock_bind(fd, INADDR_ANY(), port);
-    if (is_ok(br) == 0) { println("error: bind failed"); sock_close(fd); return 1; }
-
-    var lr = sock_listen(fd, 128);
-    if (is_ok(lr) == 0) { println("error: listen failed"); sock_close(fd); return 1; }
-
-    var ch = chan_new(HTTPD_BACKLOG);
-    var ctx = alloc(16);
-    store64(ctx + WCTX_CHAN, ch);
-    store64(ctx + WCTX_ROUTER, router);
-    var w = 0;
-    while (w < HTTPD_WORKERS) {
-        thread_create(&_httpd_worker, ctx);
-        w = w + 1;
-    }
-
-    while (1) {
-        var ar = sock_accept(fd);
-        if (is_ok(ar) == 0) { continue; }
-        chan_send(ch, result_unwrap(ar));
-    }
-    return 0;
 }
