@@ -12,11 +12,14 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
 ## What it is
 
 - **Backend** — a Cyrius HTTP/1.1 server on `:8080` (plaintext) **and `:8443`
-  (HTTPS / TLS 1.3)**, both serving the same routes. HTTP is built on
-  [sandhi](https://github.com/MacCracken/sandhi), the Cyrius HTTP services lib
-  (`sandhi_server_run_pooled` thread pool + route matcher + smuggling defenses);
-  HTTPS is hand-rolled on `tls_native` + [sigil](https://github.com/MacCracken/sigil)
-  with an Ed25519 cert (sandhi has no server-side TLS — see FINDINGS). Routes:
+  (HTTPS / TLS 1.3)**, both serving the same routes off one
+  [sandhi](https://github.com/MacCracken/sandhi) router. sandhi (the Cyrius HTTP
+  services lib) now provides server-side TLS too: HTTP runs on
+  `sandhi_server_run_pooled` and HTTPS on `sandhi_server_run_pooled_tls` (TLS 1.3
+  via `tls_native` + [sigil](https://github.com/MacCracken/sigil), Ed25519 cert,
+  ALPN `http/1.1`) — the probe's hand-rolled HTTPS stack is retired. The TLS pool
+  is pinned to 1 worker because sigil's crypto scratch crashes on concurrent
+  handshakes (see FINDINGS). Routes:
   - `GET  /`                → serves the frontend (`web/index.html`)
   - `GET  /app.js`          → serves the frontend bundle
   - `GET  /api/health`      → `{ "status": "ok", … }`
@@ -68,7 +71,7 @@ curl -s localhost:8080/api/notes
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 32 backend e2e + 10 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 34 backend e2e + 10 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -78,11 +81,11 @@ emitted frontend against the backend) each start/stop their own server.
 
 ```
 src/main.cyr     — handlers, route registration, patra CRUD, dual HTTP+HTTPS serve
-src/httpd.cyr    — Conn transport seam, response framing, routing, HTTPS serve loop
+src/httpd.cyr    — JSON/file response helpers + body accessors over sandhi's server
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match)
-tests/verify.py  — 32-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/verify.py  — 34-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
 tests/ui_check.mjs — headless full-stack UI e2e (drives the emitted app.js vs the backend)
-tests/run.sh     — one command: build + unit + 32 backend + 10 UI
+tests/run.sh     — one command: build + unit + 34 backend + 10 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -94,12 +97,15 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-**cyrius 6.2.21 / patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1**). Both original
+**cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 / sakshi 2.4.0**). Both original
 blockers — TS/TSX→JS emit and patra SQL string safety — are closed, and **every
 finding this probe filed against the ecosystem has shipped upstream and been
-adopted** (sandhi route table + thread-pool serve, patra read-back APIs): the
-probe is now a thin sandhi + patra composition. Open items + adoption caveats are
-in [FINDINGS.md](FINDINGS.md).
+adopted** — including, this bite, **sandhi server-side TLS + ALPN** (so the
+hand-rolled HTTPS stack is retired): the probe is now a thin sandhi + patra
+composition. The bite also surfaced a **new 🔴**: sigil's crypto scratch is
+process-global, so concurrent TLS handshakes crash the server (the TLS pool is
+pinned to 1 worker until it's thread-safe). Open items + adoption caveats are in
+[FINDINGS.md](FINDINGS.md).
 
 ## License
 

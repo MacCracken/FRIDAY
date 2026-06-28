@@ -51,8 +51,19 @@ fn test_bind_text_verbatim_and_safe(): i64 {
     return 0;
 }
 
+# cstring equality (both NUL-terminated; case-sensitive). Lived in httpd.cyr for
+# the probe's old method-match dispatch; that dispatch is now sandhi's, so this
+# test is the only remaining consumer and owns the helper.
+fn _cstr_eq(a, b): i64 {
+    var i = 0;
+    while (load8(a + i) != 0 && load8(b + i) != 0) {
+        if (load8(a + i) != load8(b + i)) { return 0; }
+        i = i + 1;
+    }
+    return load8(a + i) == load8(b + i);
+}
+
 # A captured param (sandhi route params) equals the given cstring?
-# (_cstr_eq comes from the included src/httpd.cyr.)
 fn param_eq(params, idx, expect): i64 {
     return _cstr_eq(sandhi_route_param(params, idx), expect);
 }

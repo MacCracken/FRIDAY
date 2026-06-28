@@ -4,7 +4,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Toolchain bump to cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 (folded) /
+  sakshi 2.4.0** (was 6.2.21 / 1.11.4 / 1.6.7 / 2.3.1). Baseline re-verified
+  green on the new pins before any code change (44 checks unchanged).
+- **Adopted sandhi's server-side TLS + Conn-aware router — retired the
+  hand-rolled HTTPS stack.** Both of the probe's headline TLS findings shipped
+  upstream and are now adopted: **sandhi server-side TLS** (`sandhi_server_run_pooled_tls`
+  + the `_c`/`_cp` conn-aware router family, sandhi 1.6.10) and **`tls_native`
+  server-side ALPN** (cyrius 6.2.22). So `src/httpd.cyr` dropped its `Conn`
+  transport seam, `tls_serve` / `tls_recv_request` accept loop, `_alpn_h1` wire,
+  process-wide SIGPIPE guard, and probe-owned route table (~225 → ~95 lines) — it
+  is now just JSON/file response helpers over `sandhi_server_send_response_c`.
+  `src/main.cyr` registers routes on `sandhi_router_new` / `_add` and serves both
+  transports off **one** handler set: plaintext :8080 via `sandhi_server_run_pooled`
+  + `sandhi_server_router_handler_cp`, HTTPS :8443 via `sandhi_server_run_pooled_tls`
+  + `sandhi_server_router_handler_c` (cert/key through `sandhi_server_options_tls`,
+  same DER-leaf + PEM-key shapes). **ALPN now negotiates `http/1.1`** (was "No
+  ALPN negotiated"). `_cstr_eq` moved to `src/test.cyr` (its only remaining user).
+
 ### Added
+- `tests/verify.py` grew to **34 scenarios**: **9i** asserts server-side ALPN now
+  selects `http/1.1` (the resolved finding), **10** drives 60 concurrent HTTPS
+  POSTs (all succeed, server stays up) — a tripwire for the sigil concurrency bug
+  below.
+
+### Fixed / worked around
+- **🔴 sigil crypto scratch is process-global → concurrent TLS handshakes crash
+  the server.** Driving `sandhi_server_run_pooled_tls` with >1 worker, 2+
+  simultaneous client handshakes race sigil's ~60 module-global scratch buffers
+  (SHA-NI/AES-NI state, bignum modexp/Montgomery accumulators) → corrupted
+  handshake (ECONNRESET) or memory corruption (**SIGSEGV**, server down). sandhi's
+  own TLS gate never caught it (sequential bursts; its "isolation" pins a worker
+  with a *plaintext* silent socket — never 2 concurrent handshakes). **Workaround:
+  the probe's TLS pool is pinned to 1 worker** (serialized handshakes — crash-safe,
+  as the old single-threaded `tls_serve` was); plaintext HTTP stays at 4 workers
+  (no crypto). Filed upstream; restore the multi-worker TLS pool once sigil is
+  thread-safe. See FINDINGS.
+- **🟡 sandhi h2-promote IPv6 path calls `_sandhi_conn_open_v6_fully_timed_a` with
+  8 args (needs 9).** Surfaced as a build warning against folded sandhi 1.6.13
+  (`src/http/h2/dispatch.cyr:145` missed the trailing `ctx` from the 1.6.9 reqctx
+  change that `client.cyr` got). Client-side / IPv6-h2 only — the probe doesn't hit
+  it, but it's a latent wrong-arg on that path. Filed cyrius/sandhi-side.
+
+### Added (full-stack milestone)
 - **Full notes-dashboard frontend + headless full-stack proof.** `web/app.tsx`
   grew from a list+add shell into a real CRUD UI: a `#/notes/:id` detail/edit
   route (GET by id + PUT), per-row delete (DELETE), and live Home status — so the

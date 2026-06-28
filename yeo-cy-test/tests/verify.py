@@ -15,8 +15,11 @@ Covers every probe-tested scenario:
   6. request-smuggling rejects (CL+TE conflict, duplicate CL -> 400; sane -> 200)
   7. SIGPIPE survival (client disconnects mid-exchange; server stays up)
   8. rows_affected concurrency probe (concurrent PUTs to existing + missing ids)
-  9. HTTPS on :8443 (TLS 1.3 via tls_native + Ed25519): CRUD over TLS, real cert
-     verification (untrusted cert rejected), shared patra backend with HTTP
+  9. HTTPS on :8443 (TLS 1.3 via sandhi run_pooled_tls + Ed25519): CRUD over TLS,
+     real cert verification (untrusted cert rejected), shared patra backend with
+     HTTP, ALPN negotiation (http/1.1 — server-side ALPN now implemented)
+ 10. concurrent HTTPS POSTs -> all succeed, server stays up (TLS pool pinned to 1
+     worker — sigil's global crypto scratch crashes on concurrent handshakes)
 Requires cert.pem/key.pem (./gen-certs.sh — build.sh mints them if absent).
 """
 import socket, subprocess, sys, time, json, os, threading, ssl, urllib.request, urllib.error
@@ -94,6 +97,16 @@ def https_req(method, path, body=None, ctx=None, timeout=5):
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
+
+def alpn_selected(protos=("http/1.1",), timeout=5):
+    """TLS-handshake with ALPN offered; return the server-selected protocol (or
+    None if the server negotiated none). Pre-sandhi-1.6.10 / cyrius 6.2.22 this
+    was always None — server-side ALPN was unimplemented."""
+    ctx = _https_ctx()
+    ctx.set_alpn_protocols(list(protos))
+    with socket.create_connection((HTTPS_HOST, HTTPS_PORT), timeout=timeout) as rs:
+        with ctx.wrap_socket(rs, server_hostname=HTTPS_HOST) as ss:
+            return ss.selected_alpn_protocol()
 
 def wait_https(timeout=10):
     t0 = time.time()
@@ -297,6 +310,48 @@ else:
     hid = json.loads(b).get("id")
     st, b = https_req("GET", f"/api/notes/{hid}")
     (ok if st == 200 and json.loads(b).get("body") == "via-http" else bad)("9h. HTTP-created note readable over HTTPS (shared patra backend)")
+
+    # 9i. ALPN: the server now SELECTS http/1.1 (sandhi 1.6.10 server-TLS rides
+    #     the shared ALPN hook; cyrius 6.2.22 implemented tls_native server-side
+    #     ALPN). This was "No ALPN negotiated" before — a probe-filed finding,
+    #     now shipped + adopted. Regression guard on the negotiation.
+    try:
+        sel = alpn_selected(("http/1.1",))
+        (ok if sel == "http/1.1" else bad)(f"9i. ALPN negotiates http/1.1 (got {sel!r})")
+    except Exception as e:
+        bad("9i. ALPN negotiates http/1.1", str(e))
+
+    # 10. Concurrent HTTPS: N simultaneous HTTPS POSTs must ALL succeed with
+    #     unique ids and the server must stay up. The TLS pool is pinned to 1
+    #     worker (serialized handshakes) because sigil's crypto scratch is
+    #     process-global → 2+ concurrent handshakes crash the server (a confirmed
+    #     finding — see FINDINGS / main.cyr). This is the tripwire: if the TLS
+    #     pool is ever bumped back to >1 worker before sigil is thread-safe, the
+    #     server crashes here (ECONNRESET/SIGSEGV) and this scenario fails loudly.
+    M = 60
+    hids, herrs, hlock = [], [], threading.Lock()
+    def https_worker(i):
+        try:
+            st, b = https_req("POST", "/api/notes", json.dumps({"body": f"tlsc{i}"}))
+            if st == 201:
+                with hlock: hids.append(json.loads(b)["id"])
+            else:
+                with hlock: herrs.append(st)
+        except Exception as e:
+            with hlock: herrs.append(str(e))
+    hts = [threading.Thread(target=https_worker, args=(i,)) for i in range(M)]
+    for t in hts: t.start()
+    for t in hts: t.join()
+    huniq = len(set(hids))
+    (ok if huniq == M and len(hids) == M and not herrs else bad)(
+        f"10. {M} concurrent HTTPS POSTs -> {len(hids)} ok, {huniq} unique, {len(herrs)} errs")
+
+# NOTE: a concurrent-read correctness scenario lived here. It exposed a deeper,
+# UPSTREAM bug — cyrius/sandhi corrupt ~3% of HTTP responses under high concurrent
+# load (cross-field byte interleaving), independent of patra (reproduced with the
+# static /api/health handler — see tests/concurrency_repro.sh + FINDINGS). It is a
+# cyrius-core / sandhi finding, not a probe bug and not fixable here, so it is not
+# a pass/fail gate; the standalone repro documents it.
 
 stop_server(srv)
 

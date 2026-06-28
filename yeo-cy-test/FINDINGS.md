@@ -7,6 +7,103 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — re-run on cyrius 6.3.0; adopted sandhi server-TLS; found a 🔴 TLS-concurrency crash (2026-06-28)
+
+Bumped the pins to **cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 (folded into the
+toolchain) / sakshi 2.4.0** (was 6.2.21 / 1.11.4 / 1.6.7 / 2.3.1). Baseline
+re-verified green on the new pins *before* any code change, then adopted what
+shipped. **The two headline TLS findings from the 2026-06-18 bite both shipped
+upstream and are now adopted**, and adopting the multi-worker TLS serve loop
+immediately surfaced a **new 🔴 server crash**.
+
+### ✅ Resolved upstream + adopted — the hand-rolled HTTPS stack is retired
+
+- **sandhi now has server-side TLS** (`sandhi_server_run_pooled_tls` + the Conn-
+  aware router family `sandhi_server_router_handler_c` / `_cp` /
+  `sandhi_server_send_response_c` / `sandhi_server_options_tls`, sandhi **1.6.10**) —
+  the headline 🔴 "sandhi has NO server-side TLS" from 2026-06-18. sandhi adopted
+  the probe's exact `Conn {kind, handle}` seam shape.
+- **`tls_native` server-side ALPN** (cyrius **6.2.22**) — the 🟡 "No ALPN
+  negotiated" finding. **Now confirmed**: `openssl s_client -alpn http/1.1` →
+  `ALPN protocol: http/1.1` (TLS 1.3, `TLS_AES_256_GCM_SHA384`), and a new
+  `verify.py` scenario 9i asserts it. sandhi rides the same backend-agnostic ALPN
+  hook on both client and server sides now.
+
+So the probe **retired its entire hand-rolled HTTPS stack**: the `Conn` transport
+seam, `tls_serve` / `tls_recv_request` accept loop, `_alpn_h1` wire, process-wide
+`httpd_ignore_sigpipe`, and probe-owned route table — `src/httpd.cyr` collapsed
+~225 → ~95 lines (now just JSON/file response helpers over
+`sandhi_server_send_response_c`). One handler set serves both transports:
+plaintext :8080 on `sandhi_server_run_pooled` + `_router_handler_cp`, HTTPS :8443
+on `sandhi_server_run_pooled_tls` + `_router_handler_c`. Verified: 2 unit + **34**
+backend (24 HTTP + 8 HTTPS + ALPN + concurrent-HTTPS) + 10 UI = 46 checks green,
+deterministic across repeated runs.
+
+### 🔴 NEW — sigil's crypto scratch is process-global → concurrent TLS handshakes crash the server
+
+The old probe served HTTPS on a **single-threaded** hand-rolled `tls_serve`, so
+it serialized handshakes and never exposed this. `sandhi_server_run_pooled_tls`
+runs **N worker threads, each doing a full TLS handshake** (that is the whole
+point of the pool — TLS handshakes are CPU-heavy and should parallelize). The
+moment 2 handshakes run concurrently, the server breaks:
+
+```
+concurrency=1 : ok=1
+concurrency=2 : 0 ok — server SIGSEGV (exit 139); subsequent connects refused
+concurrency≥2 : ECONNRESET / "EOF in violation of protocol" or SIGSEGV
+```
+
+**Root cause: `sigil` (the crypto lib) uses ~60 module-GLOBAL scratch buffers** —
+e.g. `_sha_ni_st_ctx[144]`, `_aes_ni_st_key/_rk/_pt/_ct`, `_bn_modrem` /
+`_bn_modn1` / `_bn_exp_*` / `_bn_mont_*` / `_bn_inv_*` (bignum modexp + Montgomery
+accumulators). Every TLS handshake drives SHA (transcript), AEAD, bignum, and the
+Ed25519 CertificateVerify signature through these shared globals. With per-worker
+arenas the *allocations* are isolated, but the **crypto scratch is not** — two
+concurrent handshakes interleave on the same global buffers → corrupted handshake
+output (ECONNRESET) or out-of-bounds/overwrite (SIGSEGV). Confirmed it is *not*
+the obvious suspects: `alloc()` is CAS-locked (thread-safe), and `tls_native`'s
+transport/entropy hooks (`_tn_tx_read/_write/_now/_rand`) are documented "set once
+at init" (default entropy = `sys_getrandom` syscall).
+
+**Why sandhi's own gate (`programs/_server_tls_probe.cyr`) missed it**: its
+"burst of 8" runs through a single-threaded parent `while` loop — each
+`_https_get` completes before the next starts, so handshakes are **serialized**.
+Its "[3] isolation" pins a worker by holding a **plaintext** silent TCP socket
+(`sandhi_conn_open(...,0,"")`) in the accept-read, then does 8 *more sequential*
+GETs — proving the pool isn't single-flight, but **never running 2 concurrent TLS
+handshakes**. So the multi-worker TLS pool's core promise (parallel handshakes
+across cores) was never actually exercised.
+
+**Probe workaround**: pin the TLS pool to **1 worker** (`max_conns=1`) —
+handshakes serialize, the server is crash-safe (exactly as the old
+single-threaded `tls_serve` was), and 60 concurrent HTTPS clients all succeed
+(scenario 10, a tripwire that fails loudly if the pool is bumped back to >1 before
+sigil is fixed). Plaintext HTTP stays at 4 workers (no crypto → no sigil scratch).
+**This is the real find of the bite**: the security product's TLS termination
+can't yet use more than one core. *Filed upstream (sigil / cyrius crypto):
+make the crypto primitives thread-safe (per-call or thread-local scratch) so
+`run_pooled_tls` can serve handshakes in parallel.*
+
+### 🟡 NEW — sandhi h2-promote IPv6 path passes 8 args to a 9-arg fn
+
+Building against folded sandhi 1.6.13 emits
+`warning: '_sandhi_conn_open_v6_fully_timed_a' expects 9 arguments, got 8`. In
+`src/http/h2/dispatch.cyr:145` the IPv6 h2-promote branch calls
+`_sandhi_conn_open_v6_fully_timed_a(a, addr6, port, 1, host, connect_ms, read_ms,
+write_ms)` — missing the trailing `ctx` the function gained in the **1.6.9**
+per-call reqctx change (the sibling IPv4 branch and `client.cyr`'s calls were
+updated; this one was missed). So an IPv6 h2 promotion reads a garbage 9th arg as
+the per-request ctx. Client-side + IPv6 + h2 only — the probe (server-side) never
+hits it, but it's a latent wrong-arg. *Filed cyrius/sandhi-side.*
+
+### Still open (not the probe's to fix)
+
+- sigil crypto thread-safety (the 🔴 above) — blocks a multi-core TLS pool.
+- patra **P2 concurrent readers** — a single process-global mutex still serializes
+  all DB ops (the probe's own earlier request).
+- macOS SIGPIPE on `net.cyr` `sock_send` (no `MSG_NOSIGNAL`); sandhi
+  middleware/auth; ~400 KB static `.bss` (cyrius DCE keeps unreachable-fn `.bss`).
+
 ## Update — full stack demonstrated together (2026-06-18)
 
 Fleshed the frontend from a list+add shell into a **real CRUD dashboard** that

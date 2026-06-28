@@ -5,54 +5,57 @@
 
 ## Version
 
-**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.2.21 /
-patra 1.11.4 / sandhi 1.6.7 / sakshi 2.3.1** (2026-06-18). **Every finding this
-probe filed against the ecosystem is now resolved upstream** (sandhi route table
-+ `run_pooled` in 1.6.7, SIGPIPE guard + docs in 1.6.6; patra
-`last_insert_id`/`rows_affected` in 1.11.3; cyrius async leak in 6.1.22) and the
-probe **adopted** all of them. It now serves **both HTTP (:8080) and HTTPS
-(:8443, TLS 1.3 via `tls_native` + an Ed25519 cert)** over one handler set,
-sharing the patra backend. 2 unit invariants + **32 end-to-end scenarios** (24
-HTTP + 8 HTTPS) pass. Both original 🔴 blockers (TS/TSX→JS emit, patra string
-safety) stay closed. Headline open findings: **sandhi has no server-side TLS
-hook** (HTTPS is hand-rolled on `tls_native`) and **`tls_native` server-side ALPN
-is unimplemented**. See [`../../FINDINGS.md`](../../FINDINGS.md).
+**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.3.0 /
+patra 1.12.6 / sandhi 1.6.13 (folded) / sakshi 2.4.0** (2026-06-28). The two
+headline TLS findings from the prior bite **both shipped upstream and are now
+adopted**: **sandhi server-side TLS** (`sandhi_server_run_pooled_tls` + the
+Conn-aware router family, sandhi 1.6.10) and **`tls_native` server-side ALPN**
+(cyrius 6.2.22, now negotiating `http/1.1`). So the probe **retired its entire
+hand-rolled HTTPS stack** (Conn seam / `tls_serve` accept loop / ALPN wire /
+SIGPIPE guard / route table) — it now serves **both HTTP (:8080) and HTTPS
+(:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set, sharing the
+patra backend. 2 unit invariants + **34 end-to-end scenarios** (24 HTTP + 8 HTTPS
++ ALPN + concurrent-HTTPS) + 10 UI pass (46 total). Both original 🔴 blockers
+(TS/TSX→JS emit, patra string safety) stay closed. **New headline open finding
+(🔴): sigil's crypto scratch is process-global, so 2+ concurrent TLS handshakes
+crash the server** (ECONNRESET/SIGSEGV) — the TLS pool is pinned to **1 worker**
+as a crash-safe workaround until sigil is thread-safe. See
+[`../../FINDINGS.md`](../../FINDINGS.md).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.2.21` (in `cyrius.cyml [package].cyrius`); folds sandhi
-  1.6.7.
+- **Cyrius pin**: `6.3.0` (in `cyrius.cyml [package].cyrius`); folds sandhi
+  1.6.13.
 - `lib/` is untracked + gitignored; regenerate with `cyrius lib sync` +
   `cyrius deps`.
 
 ## Source
 
-- `src/httpd.cyr` — the **transport seam + framing + routing + HTTPS serve loop**.
-  A `Conn {kind, handle}` lets one handler set serve both transports:
-  `resp_*(conn, …)` frame a response (replicated from sandhi — no frame-to-buffer
-  helper) and `conn_write` dispatches `sock_send` (plaintext) vs chunked
-  `tls_native_write` (TLS). A tiny route table + `srv_dispatch` reuse sandhi's
-  **matcher** (`sandhi_server_route_match`) but carry the Conn (sandhi's
-  router_handler/run_pooled-send are plaintext-welded). `_plain_handler` adapts
-  `run_pooled` (plaintext) onto the Conn dispatch. `tls_serve`/`tls_recv_request`
-  hand-roll the HTTPS accept loop over `tls_native` (sandhi has no server-TLS
-  hook): per-conn `tls_native_new_server`(+ALPN, currently a no-op server-side —
-  see FINDINGS)→`accept`→read-loop→dispatch→`tls_write_all` (16 KiB chunks)→close.
-  `http_body_*` accessors + `httpd_ignore_sigpipe` (the TLS loop needs it) stay.
+- `src/httpd.cyr` — **thin response helpers + body accessors over sandhi**
+  (~95 lines; the hand-rolled Conn seam / TLS accept loop / route table are
+  retired now that sandhi ships server-side TLS). `resp_*(conn, …)` build a JSON/
+  file response and delegate framing + transport to `sandhi_server_send_response_c`
+  (sandhi's Conn seam handles plaintext `sock_send` vs chunked `tls_write`); the
+  CORS header rides `extra_headers`. `_status_code`/`_status_msg` split the probe's
+  "CODE Msg" status cstr for sandhi's separate code+msg params. `http_body_*`
+  accessors read the body via `sandhi_server_body_offset`.
 - `src/main.cyr` — handlers + route registration + patra persistence + dual serve.
-  `include "src/httpd.cyr"`. Handlers take a **`Conn`** (`fn(app_ctx, conn,
+  `include "src/httpd.cyr"`. Handlers take a **SandhiConn** (`fn(app_ctx, conn,
   req_buf, req_len, params)`): write via `resp_*(conn,…)`, body via `http_body_*`,
-  path params via `sandhi_route_param_int`. Routes on the probe table
-  (`router_new`/`route_add`). `main` loads the cert (DER leaf via
-  `pem_decode_certs`) + key (PEM), starts **plaintext `run_pooled` in a worker
-  thread (:8080)** and the **HTTPS `tls_serve` loop in main (:8443)**, sharing the
-  read-only router. Endpoints: `GET /`, `GET /app.js`, `GET /api/health`,
-  `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT`
-  bodies via bound `?` params (injection-safe). Ids are patra `AUTOINCREMENT`
-  (column-list `INSERT`, echoed via `last_insert_id`); `PUT`/`DELETE` 404 via
-  `rows_affected`. **`g_wr_lock`** pairs each `[exec; readback]` atomically (the
-  shared-handle readback race — confirmed and fixed; reads stay lock-free).
-  Caveat (FINDINGS): AUTOINCREMENT reuses ids (derive-from-MAX).
+  path params via `sandhi_route_param_int`. Routes on **sandhi's router**
+  (`sandhi_router_new`/`sandhi_router_add`). `main` loads the cert (DER leaf via
+  `pem_decode_certs`) + key (PEM) into `sandhi_server_options_tls`, starts
+  **plaintext `run_pooled` (4 workers, :8080) in a worker thread** via
+  `sandhi_server_router_handler_cp` and the **HTTPS `run_pooled_tls` (:8443) in
+  main** via `sandhi_server_router_handler_c`, sharing the read-only router.
+  **The TLS pool is pinned to 1 worker** (`max_conns=1`) — sigil's global crypto
+  scratch crashes on 2+ concurrent handshakes (see FINDINGS); plaintext stays at 4.
+  Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET|POST /api/notes`,
+  `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
+  (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
+  `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. **`g_wr_lock`** pairs
+  each `[exec; readback]` atomically (the shared-handle readback race — confirmed
+  and fixed; reads stay lock-free). Caveat (FINDINGS): AUTOINCREMENT reuses ids.
 - `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman notes
   dashboard with a hash router exercising the **full** `/api/notes` resource —
   `#/` Home (live status + count), `#/notes` (list + add + per-row delete),
@@ -73,12 +76,14 @@ is unimplemented**. See [`../../FINDINGS.md`](../../FINDINGS.md).
   on sandhi's matcher, which the `/api/notes/:id` resource depends on). Passes
   via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — 32-scenario end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **34-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
-  rows_affected concurrency, **+ HTTPS: CRUD over TLS 1.3, real cert verification,
-  HTTP↔HTTPS shared backend**). Run against a built `build/yeo-cy-test` (needs
-  `cert.pem`/`key.pem` — `./gen-certs.sh`, or `build.sh` auto-mints).
+  rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
+  HTTP↔HTTPS shared backend, ALPN negotiates `http/1.1` (9i), 60-concurrent-HTTPS
+  served without crashing (10 — the sigil-concurrency tripwire)**). Run against a
+  built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
+  `build.sh` auto-mints).
 - `tests/ui_check.mjs` — **headless full-stack proof**: loads the real
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
@@ -96,10 +101,10 @@ Direct (declared in `cyrius.cyml`):
   dynlib, **sandhi** (the HTTP services lib; `json` dropped — sandhi bundles its
   successor `bayan`. `tls`/`async`/`random`/`fdlopen`/`dynlib` are sandhi's
   transitive modules, added by hand since `+sandhi` doesn't auto-pull them.
-  `thread`/`atomic` are now needed by sandhi's `run_pooled` rather than the
-  probe's own pool.)
-- **patra** `1.11.4` — SQL persistence (`[deps.patra]`)
-- **sakshi** `2.3.1` — required transitively by patra (`[deps.sakshi]`)
+  `thread`/`atomic` are now needed by sandhi's `run_pooled` / `run_pooled_tls`
+  rather than the probe's own pool.)
+- **patra** `1.12.6` — SQL persistence (`[deps.patra]`)
+- **sakshi** `2.4.0` — required transitively by patra (`[deps.sakshi]`)
 
 ## Consumers
 
