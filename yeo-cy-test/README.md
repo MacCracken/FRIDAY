@@ -98,14 +98,21 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
 **cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 / sakshi 2.4.0**). Both original
-blockers — TS/TSX→JS emit and patra SQL string safety — are closed, and **every
-finding this probe filed against the ecosystem has shipped upstream and been
-adopted** — including, this bite, **sandhi server-side TLS + ALPN** (so the
-hand-rolled HTTPS stack is retired): the probe is now a thin sandhi + patra
-composition. The bite also surfaced a **new 🔴**: sigil's crypto scratch is
-process-global, so concurrent TLS handshakes crash the server (the TLS pool is
-pinned to 1 worker until it's thread-safe). Open items + adoption caveats are in
-[FINDINGS.md](FINDINGS.md).
+blockers — TS/TSX→JS emit and patra SQL string safety — are closed, the prior
+bite's findings shipped + were adopted (**sandhi server-side TLS + ALPN**, so the
+hand-rolled HTTPS stack is retired), and the probe is now a thin sandhi + patra
+composition.
+
+**But a 2026-06-28 deep-dive found that Cyrius is not yet safe for concurrent
+serving.** The headline (🔴) is a **cyrius-core `str_builder` thread-safety bug**:
+concurrent HTTP responses corrupt ~3% under load (every concurrent string build is
+affected), which makes the probe's concurrency scenarios flaky. Plus 🔴 **sigil**
+(concurrent TLS handshakes crash — TLS pool pinned to 1 worker) and 🔴 **patra**
+(1.12.0 parallel reads race a process-global table cache — every patra op
+serialized under a lock). All filed upstream for repair (see each repo's
+`docs/development/issues/`). The functional path (single-threaded CRUD, TLS, ALPN,
+UI) works; the concurrency story is gated on those fixes. Details + the bisection
+are in [FINDINGS.md](FINDINGS.md).
 
 ## License
 

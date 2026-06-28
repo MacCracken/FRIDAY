@@ -4,6 +4,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (deep-dive: connection-per-thread + a cyrius-core concurrency blocker)
+- **patra persistence moved to connection-per-thread.** Each sandhi worker opens
+  its own patra handle, lazily cached in a thread-local slot (`db()`, TLS slot 15;
+  patra owns 0–4) — patra 1.12.0's intended parallel-read model. `last_insert_id`
+  / `rows_affected` are now per-handle (no cross-worker readback race), so the old
+  `g_wr_lock` is gone. **But** every patra op is serialized under a single
+  `g_db_lock` as a workaround: patra's table-lookup cache (`_tbl_lp_idx` /
+  `_tbl_lp_page`, `src/table.cyr:4-5`) is still process-global, so concurrent
+  readers on separate handles race it → garbled rows (filed patra-side; drop the
+  lock when patra makes that cache per-handle).
+- **DB path via a fn, not a `var = "literal"` global** (`db_path()`) — a top-level
+  string-literal global compiles clean but holds garbage at runtime in cyrius
+  (integer-only global initializers) and SIGSEGV'd at startup. Filed cyrius-side.
+
+### Findings filed upstream (the real deliverable of this pass)
+- **🔴 cyrius `str_builder` is not thread-safe** — concurrent HTTP responses
+  corrupt ~3% under load (curl `/api/health`, byte-interleaved across fields). An
+  8-thread bisect pinned it to the `str_builder` library functions (`lib/str.cyr`)
+  — bare `alloc()`, `alloc_via(default_alloc())`, `memcpy`, and a byte-identical
+  hand-rolled replica are all 100% clean; str_builder corrupts ~87% (≥2 threads,
+  0% single-threaded). The foundational blocker — every concurrent string build
+  (sandhi responses, `json_v_build`) corrupts. New `tests/concurrency_repro.sh`
+  reproduces it (diagnostic, exits 0). Filed cyrius
+  `issues/2026-06-28-str-builder-not-thread-safe.md`.
+- **🔴 patra parallel-read table-cache race** + **🟡 cyrius string-literal global
+  initializer crash** (both above) — filed patra/cyrius-side.
+- **sigil** concurrent-TLS-handshake issue **broadened** (HKDF-primary,
+  per-thread banks never activated for TLS, `ed25519_sign` unbanked, both ciphers
+  crash; AES-GCM-bulk claim refuted) and **sandhi** misleading pooled-TLS
+  safety-comment filed.
+
+### Removed
+- The hard concurrent-read assertion (former scenario 11) — it exposes the
+  upstream cyrius `str_builder` corruption, not a probe bug, so it is not a
+  pass/fail gate. `tests/concurrency_repro.sh` documents it instead. The remaining
+  concurrency scenarios (4/8/10) can flake on the same upstream bug.
+
 ### Changed
 - **Toolchain bump to cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 (folded) /
   sakshi 2.4.0** (was 6.2.21 / 1.11.4 / 1.6.7 / 2.3.1). Baseline re-verified

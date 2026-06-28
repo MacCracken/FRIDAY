@@ -7,6 +7,78 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — deep-dive: a cyrius-CORE concurrency blocker (`str_builder`) + the connection-per-thread bite (2026-06-28)
+
+Investigating "which repos actually need repair," a fix for the probe's patra
+read race kept uncovering deeper bugs — ending at a **foundational cyrius-core
+blocker**. All filed upstream (see each repo's `docs/development/issues/`).
+
+### 🔴 cyrius `str_builder` is not thread-safe — the headline
+
+Concurrent HTTP responses corrupt **~3% under load**. Reproduced with `curl`
+hammering the **static** `/api/health` handler (no DB, no route params, no app
+lock — just `json_v` → `resp_json` → `str_builder` → sandhi send): ~3% come back
+byte-interleaved across fields, e.g.
+`{"status":"ok","service":"yeo-cy-test","version":"0.1.0"}` →
+`{"ctatye":"-t","servire":"yeo.c1.0est",...}` ("yeo-cy-test" spliced with "0.1.0").
+
+A minimal N-thread bisect (8 threads × 40 000 iters) pinned it precisely:
+**bare `alloc()`, `alloc_via(default_alloc())`, `memcpy`, and a byte-identical
+hand-rolled str_builder replica are ALL 100% clean** (millions of ops, 0
+failures); the **`str_builder` library functions** (`str_builder_new_a` /
+`add_cstr_a` / `build_a`, `lib/str.cyr`) corrupt **~87% at 8 threads, ~50% at 2,
+0% single-threaded**, growth not required. The byte-identical-replica-is-clean
+result implicates a **compiler miscompilation of those specific functions under
+the concurrent call pattern** (or a hidden shared state the source doesn't show)
+— not the allocator, not memcpy, not general codegen. This is THE root of the
+response corruption and sits **upstream of** the sigil/patra/sandhi findings:
+`str_builder` underlies every concurrent string build (sandhi response framing,
+`json_v_build`, logging), so **no cyrius concurrent server is correct under load
+until it's fixed.** Filed: cyrius `issues/2026-06-28-str-builder-not-thread-safe.md`
+(self-contained repro). Probe impact: the concurrency scenarios (verify.py 4/8/10)
+are now **flaky** — they intermittently fail on this bug, not a probe defect.
+`tests/concurrency_repro.sh` documents it (curl `/api/health` hammer; exits 0 —
+diagnostic, not a gate).
+
+### 🔴 patra 1.12.0 connection-per-thread reads are not correctness-safe
+
+P2 (1.12.0) moved patra's parse scratch + page slab to thread-local storage for
+parallel reads, but the **table-lookup cache `_tbl_lp_idx` / `_tbl_lp_page`
+(`src/table.cyr:4-5`) is still process-global**, written on every query's table
+resolution. So two readers — even on **separate per-thread handles** — race it
+and one reads the other's cached page → garbled rows. Caught by a concurrent-read
+stress that stayed corrupt even with every patra call serialized — which pointed
+*outside* the per-handle scope. (NB the 1.11.4→1.12.6 bump also dropped the read
+mutex, so a SHARED handle's concurrent reads now race the fd offset too — a shared
+handle is only safe *without* read parallelism.) Filed: patra
+`issues/2026-06-28-concurrent-read-table-lookup-cache-race.md`.
+
+### 🟡 cyrius string-literal global initializer → SIGSEGV
+
+`var DB_PATH = "yeo.patra";` at top level compiles clean but holds **garbage** at
+runtime (cyrius global initializers are integer-only) → `patra_open(DB_PATH)`
+crashed at startup. Silent miscompile — no error or warning. Workaround:
+`fn db_path(): i64 { return "yeo.patra"; }`. Filed: cyrius
+`issues/2026-06-28-string-literal-global-initializer-garbage.md`.
+
+### The connection-per-thread bite (what the probe now does)
+
+Adopted patra's intended **connection-per-thread** model: each sandhi worker
+opens its own patra handle, lazily cached in a thread-local slot (`db()`, TLS slot
+15 — patra owns 0–4). This makes `last_insert_id` / `rows_affected` per-handle (no
+cross-worker readback race) and removes the old `g_wr_lock`. But because patra's
+table cache is still global (above), every patra op is serialized under a single
+**`g_db_lock`** as the workaround — drop it once patra makes that cache per-handle,
+and the per-thread handles already in place give correct parallel reads. The
+sigil/sandhi/cyrius findings above also got filed/sharpened in this pass:
+**sigil** (the concurrent-handshake crash — broadened: HKDF-primary, per-thread
+banks exist but TLS never calls `crypto_bank_set`, `ed25519_sign` unbanked, both
+ciphers crash; the AES-GCM-bulk claim was **refuted**); **sandhi** (a shipped
+pooled-TLS doc-comment falsely claiming concurrent-handshake safety + the h2 IPv6
+arity bug). Net: **repos needing a code repair = cyrius (str_builder 🔴 +
+string-global 🟡), sigil (🔴), patra (🔴 for parallel reads), sandhi (🟡), and the
+probe itself** (the read-race + string-global, fixed locally).
+
 ## Update — re-run on cyrius 6.3.0; adopted sandhi server-TLS; found a 🔴 TLS-concurrency crash (2026-06-28)
 
 Bumped the pins to **cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 (folded into the

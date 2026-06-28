@@ -14,13 +14,23 @@ Conn-aware router family, sandhi 1.6.10) and **`tls_native` server-side ALPN**
 hand-rolled HTTPS stack** (Conn seam / `tls_serve` accept loop / ALPN wire /
 SIGPIPE guard / route table) — it now serves **both HTTP (:8080) and HTTPS
 (:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set, sharing the
-patra backend. 2 unit invariants + **34 end-to-end scenarios** (24 HTTP + 8 HTTPS
-+ ALPN + concurrent-HTTPS) + 10 UI pass (46 total). Both original 🔴 blockers
-(TS/TSX→JS emit, patra string safety) stay closed. **New headline open finding
-(🔴): sigil's crypto scratch is process-global, so 2+ concurrent TLS handshakes
-crash the server** (ECONNRESET/SIGSEGV) — the TLS pool is pinned to **1 worker**
-as a crash-safe workaround until sigil is thread-safe. See
-[`../../FINDINGS.md`](../../FINDINGS.md).
+patra backend. Both original 🔴 blockers (TS/TSX→JS emit, patra string safety)
+stay closed.
+
+**Headline open finding (🔴, deep-dive 2026-06-28): cyrius `str_builder` is not
+thread-safe** — concurrent HTTP responses corrupt ~3% under load (an 8-thread
+bisect pins it to the `str_builder` library functions; a byte-identical hand-rolled
+replica is clean). It underlies every concurrent string build, so it gates *any*
+cyrius concurrent server, and it makes the probe's concurrency scenarios (verify.py
+4/8/10) **flaky** (functional scenarios are stable). Other open 🔴: **sigil**
+concurrent-TLS-handshake crash (TLS pool pinned to **1 worker**) and **patra**
+1.12.0 parallel-read table-cache race (every patra op serialized under `g_db_lock`).
+All filed upstream — see [`../../FINDINGS.md`](../../FINDINGS.md) and each repo's
+`docs/development/issues/`.
+
+2 unit invariants + **34 backend scenarios** + 10 UI pass when the upstream
+`str_builder` race doesn't fire on a concurrency scenario; `tests/concurrency_repro.sh`
+is a standalone diagnostic for that race (not a gate).
 
 ## Toolchain
 
@@ -53,9 +63,16 @@ as a crash-safe workaround until sigil is thread-safe. See
   Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET|POST /api/notes`,
   `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
   (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
-  `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. **`g_wr_lock`** pairs
-  each `[exec; readback]` atomically (the shared-handle readback race — confirmed
-  and fixed; reads stay lock-free). Caveat (FINDINGS): AUTOINCREMENT reuses ids.
+  `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. Caveat (FINDINGS):
+  AUTOINCREMENT reuses ids.
+  - **Persistence model: connection-per-thread.** `db()` opens one patra handle per
+    worker, cached in a thread-local slot (TLS slot 15), so reads/writes are on a
+    per-thread fd — patra 1.12.0's parallel-read model. `db_path()` returns the DB
+    path as a fn, not a `var = "literal"` global (those crash — see FINDINGS).
+    Because patra's table-lookup cache is still process-global (filed patra-side),
+    every patra op is serialized under **`g_db_lock`** as the workaround (drop it
+    when patra fixes the cache → the per-thread handles give correct parallel reads).
+    Per-handle `last_insert_id`/`rows_affected` make `g_wr_lock` unnecessary (removed).
 - `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman notes
   dashboard with a hash router exercising the **full** `/api/notes` resource —
   `#/` Home (live status + count), `#/notes` (list + add + per-row delete),
@@ -81,14 +98,19 @@ as a crash-safe workaround until sigil is thread-safe. See
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
   HTTP↔HTTPS shared backend, ALPN negotiates `http/1.1` (9i), 60-concurrent-HTTPS
-  served without crashing (10 — the sigil-concurrency tripwire)**). Run against a
+  served without crashing (10 — the sigil-concurrency tripwire)**). The functional
+  scenarios are stable; the concurrency ones (4/8/10) can flake on the upstream
+  cyrius `str_builder` race (FINDINGS). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
 - `tests/ui_check.mjs` — **headless full-stack proof**: loads the real
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
   the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 32 backend e2e + 10 UI e2e.
+- `tests/run.sh` — one command: build + unit + 34 backend e2e + 10 UI e2e.
+- `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
+  `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
+  corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).
 - `gen-certs.sh` — mints the self-signed Ed25519 cert+key for HTTPS (gitignored).
 - `tests/yeo-cy-test.{tcyr,bcyr,fcyr}` — scaffold stubs.
 
