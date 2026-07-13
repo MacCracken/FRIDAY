@@ -18,11 +18,13 @@ Covers every probe-tested scenario:
   9. HTTPS on :8443 (TLS 1.3 via sandhi run_pooled_tls + Ed25519): CRUD over TLS,
      real cert verification (untrusted cert rejected), shared patra backend with
      HTTP, ALPN negotiation (http/1.1 — server-side ALPN now implemented)
- 10. concurrent HTTPS POSTs -> all succeed, server stays up (TLS pool pinned to 1
-     worker — sigil's global crypto scratch crashes on concurrent handshakes)
+ 10. concurrent HTTPS POSTs -> all succeed, server stays up (TLS pool at 4 workers;
+     sigil 3.11.1 banking + the slot-0 fix made concurrent handshakes safe)
+ 11. concurrent read-during-write correctness (lock-free TEXT readback: patra 1.12.8
+     materializes payloads under the query flock, so reads never tear vs a writer)
 Requires cert.pem/key.pem (./gen-certs.sh — build.sh mints them if absent).
 """
-import socket, subprocess, sys, time, json, os, threading, ssl, urllib.request, urllib.error
+import socket, subprocess, sys, time, json, os, threading, ssl, random, urllib.request, urllib.error
 
 HOST, PORT = "127.0.0.1", 8080
 HTTPS_HOST, HTTPS_PORT = "localhost", 8443   # cert SAN: DNS:localhost, IP:127.0.0.1
@@ -252,11 +254,11 @@ alive = wait_ready(timeout=3)
 st, _ = (req("GET", "/api/health") if alive else (-1, ""))
 (ok if alive and st == 200 else bad)("7. server survives 10 mid-exchange client disconnects (no SIGPIPE death)")
 
-# 8. rows_affected concurrency probe (bite 1): concurrent PUTs to EXISTING and
-#    MISSING ids. patra_rows_affected reads a shared-handle field, so if a write
-#    interleaves between the UPDATE and the readback, an existing id can be
-#    misread as 0 (false 404) or a missing id as >0 (false 200). Mix them under
-#    load and count misclassifications — >0 means the shared-handle race fired.
+# 8. rows_affected concurrency probe: concurrent PUTs to EXISTING and MISSING ids.
+#    Under connection-per-thread each worker reads patra_rows_affected on its OWN
+#    handle, so the UPDATE + readback can't be split by another worker's write.
+#    Mix existing/missing under load and count misclassifications — an existing id
+#    misread as 404, or a missing id as 200, would mean the per-handle model broke.
 K = 60
 ex_ids = []
 for i in range(K):
@@ -321,13 +323,12 @@ else:
     except Exception as e:
         bad("9i. ALPN negotiates http/1.1", str(e))
 
-    # 10. Concurrent HTTPS: N simultaneous HTTPS POSTs must ALL succeed with
-    #     unique ids and the server must stay up. The TLS pool is pinned to 1
-    #     worker (serialized handshakes) because sigil's crypto scratch is
-    #     process-global → 2+ concurrent handshakes crash the server (a confirmed
-    #     finding — see FINDINGS / main.cyr). This is the tripwire: if the TLS
-    #     pool is ever bumped back to >1 worker before sigil is thread-safe, the
-    #     server crashes here (ECONNRESET/SIGSEGV) and this scenario fails loudly.
+    # 10. Concurrent HTTPS: N simultaneous HTTPS POSTs must ALL succeed with unique
+    #     ids and the server must stay up. The TLS pool runs 4 workers (max_conns=4):
+    #     sigil 3.11.1's per-thread crypto banking + the sigil/patra thread-local
+    #     slot-0 fix (cyrius 6.3.25, sigil 3.9.9) made concurrent TLS handshakes
+    #     safe. This scenario is the regression tripwire — if the crypto thread
+    #     safety ever regresses, concurrent handshakes crash here and it fails loudly.
     M = 60
     hids, herrs, hlock = [], [], threading.Lock()
     def https_worker(i):
@@ -346,12 +347,48 @@ else:
     (ok if huniq == M and len(hids) == M and not herrs else bad)(
         f"10. {M} concurrent HTTPS POSTs -> {len(hids)} ok, {huniq} unique, {len(herrs)} errs")
 
-# NOTE: a concurrent-read correctness scenario lived here. It exposed a deeper,
-# UPSTREAM bug — cyrius/sandhi corrupt ~3% of HTTP responses under high concurrent
-# load (cross-field byte interleaving), independent of patra (reproduced with the
-# static /api/health handler — see tests/concurrency_repro.sh + FINDINGS). It is a
-# cyrius-core / sandhi finding, not a probe bug and not fixable here, so it is not
-# a pass/fail gate; the standalone repro documents it.
+# 11. Concurrent read-during-write correctness — the regression guard for the
+#     DROPPED g_db_lock. patra 1.12.8's _rs_materialize snapshots every TEXT/BYTES
+#     payload into an owned heap buffer WHILE the query's shared flock is held, so
+#     patra_result_read_text is a pure memcpy safe against a concurrent writer
+#     freeing/overwriting those pages. Before 1.12.8 (and now with no lock) a torn
+#     or stale body would come back. Hammer GET on a set of multi-page unicode
+#     TEXT rows while writers PUT other valid bodies to the SAME ids; every 200
+#     body MUST be a COMPLETE, accepted value (never a torn splice / bad UTF-8 /
+#     JSON parse failure). This scenario used to be disabled because the cyrius
+#     str_builder array-local race corrupted ~3% of responses under load; that was
+#     fixed in cyrius 6.3.15 (array locals per-thread), so it is a gate again.
+r11_bodies = ["rw-" + str(i) + "-" + (chr(0x4e00 + i) * 1200) for i in range(6)]  # ~3.6KB, multi-page
+r11_ids = []
+for _b in r11_bodies:
+    _st, _r = req("POST", "/api/notes", json.dumps({"body": _b}))
+    r11_ids.append(json.loads(_r)["id"])
+r11_valid = set(r11_bodies)
+r11_viol, r11_reads, r11_lock, r11_stop = [], [0], threading.Lock(), {"s": False}
+def r11_reader():
+    while not r11_stop["s"]:
+        idv = random.choice(r11_ids)
+        try:
+            st, b = req("GET", f"/api/notes/{idv}")
+            if st == 200:
+                body = json.loads(b).get("body")
+                with r11_lock:
+                    r11_reads[0] += 1
+                    if body not in r11_valid: r11_viol.append(("torn", repr(body)[:48]))
+        except Exception as e:
+            with r11_lock: r11_viol.append(("exc", str(e)[:48]))
+def r11_writer():
+    for _ in range(50):
+        try: req("PUT", f"/api/notes/{random.choice(r11_ids)}", json.dumps({"body": random.choice(r11_bodies)}))
+        except Exception: pass
+r11_rt = [threading.Thread(target=r11_reader) for _ in range(6)]
+r11_wt = [threading.Thread(target=r11_writer) for _ in range(4)]
+for t in r11_rt + r11_wt: t.start()
+for t in r11_wt: t.join()
+r11_stop["s"] = True
+for t in r11_rt: t.join()
+(ok if not r11_viol else bad)(
+    f"11. read-during-write: {r11_reads[0]} reads, {len(r11_viol)} torn/garbled (lock-free TEXT readback)")
 
 stop_server(srv)
 

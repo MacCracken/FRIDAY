@@ -5,39 +5,61 @@
 
 ## Version
 
-**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.3.0 /
-patra 1.12.6 / sandhi 1.6.13 (folded) / sakshi 2.4.0** (2026-06-28). The two
-headline TLS findings from the prior bite **both shipped upstream and are now
-adopted**: **sandhi server-side TLS** (`sandhi_server_run_pooled_tls` + the
-Conn-aware router family, sandhi 1.6.10) and **`tls_native` server-side ALPN**
-(cyrius 6.2.22, now negotiating `http/1.1`). So the probe **retired its entire
-hand-rolled HTTPS stack** (Conn seam / `tls_serve` accept loop / ALPN wire /
-SIGPIPE guard / route table) — it now serves **both HTTP (:8080) and HTTPS
-(:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set, sharing the
-patra backend. Both original 🔴 blockers (TS/TSX→JS emit, patra string safety)
-stay closed.
+**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.3.42 /
+patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.9 (folded) / sakshi 2.4.3** (2026-07-03;
+regenerate `lib/` with `cyrius lib sync --full`, not bare — see Toolchain note).
+Serves **HTTP (:8080) and HTTPS (:8443, TLS 1.3 + Ed25519)** off one sandhi router
++ handler set over the patra backend. Both original 🔴 blockers (TS/TSX→JS emit,
+patra string safety) stay closed.
 
-**Headline open finding (🔴, deep-dive 2026-06-28): cyrius `str_builder` is not
-thread-safe** — concurrent HTTP responses corrupt ~3% under load (an 8-thread
-bisect pins it to the `str_builder` library functions; a byte-identical hand-rolled
-replica is clean). It underlies every concurrent string build, so it gates *any*
-cyrius concurrent server, and it makes the probe's concurrency scenarios (verify.py
-4/8/10) **flaky** (functional scenarios are stable). Other open 🔴: **sigil**
-concurrent-TLS-handshake crash (TLS pool pinned to **1 worker**) and **patra**
-1.12.0 parallel-read table-cache race (every patra op serialized under `g_db_lock`).
-All filed upstream — see [`../../FINDINGS.md`](../../FINDINGS.md) and each repo's
-`docs/development/issues/`.
+**Both residuals shipped — and both were consumer MISDIAGNOSES (the value of
+filing).** The probe went from two workarounds to zero:
 
-2 unit invariants + **34 backend scenarios** + 10 UI pass when the upstream
-`str_builder` race doesn't fire on a concurrency scenario; `tests/concurrency_repro.sh`
-is a standalone diagnostic for that race (not a gate).
+- ✅ **"string-literal global at scale" was a SYMBOL COLLISION** (fixed cyrius
+  6.3.24). The old `var DB_PATH = "yeo.patra"` collided by name with patra's
+  `enum DbOff { DB_PATH = 16 }`; cyrius took the last registration, so
+  `patra_open`'s `store64(db + DB_PATH, …)` used a string pointer as an ABI offset
+  → wild store → SIGSEGV. cyrius now makes a non-int-literal var shadowing an enum
+  a **hard error**. Fix adopted: the `db_path()` fn is gone; the path is a plain
+  global renamed to dodge the collision — `var g_dbpath = "yeo.patra"`.
+- ✅ **"multi-worker-TLS `RECORD_LAYER_FAILURE`" was a THREAD-LOCAL SLOT COLLISION**
+  (fixed cyrius 6.3.25 / sigil 3.9.9). sigil's crypto-bank lane and patra's parse
+  scratch both hardcoded thread-local slot 0; a patra query clobbered sigil's bank
+  index → wrong crypto lane → corrupted handshake. Deterministic (every 4th
+  handshake), not the "mixed pattern" filed. Fixed by moving sigil to slot 8 + a
+  slot-namespace registry. Fix adopted: **TLS pool `max_conns` 1 → 4** (verify.py
+  5/5 clean; amplified stress 0 errors at 4 and 8). Plaintext also 4.
+- (Prior bumps resolved: str_builder array-local codegen (6.3.15), patra
+  table-cache (1.12.7), both sandhi findings, sigil concurrent-handshake crash.)
+
+**One lock stays — correctly attributed now:** 🔴 **patra TEXT/BLOB readback
+escapes the query's flock window.** `patra_query` releases its shared flock before
+returning; `patra_result_read_text` reads the payload pages **unlocked** later, so
+a concurrent writer can tear the body. `g_db_lock` is **kept** to hold each SELECT
++ its readback atomic — **correcting** the earlier note that claimed the lock was
+removed (it was removed for the table-cache race, but is required for *this* one).
+Filed to patra. 🔵 The `sync.cyr`/`thread.cyr` `mutex_*` duplicate-definition
+warning is now filed to cyrius (benign). See [`../../FINDINGS.md`](../../FINDINGS.md)
+and each repo's `docs/development/issues/`.
+
+2 unit invariants + **34 backend scenarios** + 10 UI pass — **green + stable** at
+`max_conns=4` (verify.py 5/5). `tests/concurrency_repro.sh` is a 0/300 regression
+guard.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.3.0` (in `cyrius.cyml [package].cyrius`); folds sandhi
-  1.6.13.
-- `lib/` is untracked + gitignored; regenerate with `cyrius lib sync` +
-  `cyrius deps`.
+- **Cyrius pin**: `6.3.42` (in `cyrius.cyml [package].cyrius`); folds sandhi
+  1.7.0 + sigil 3.9.9. patra `1.12.7` / sakshi `2.4.3` pinned via `[deps.*]`.
+  (cycc auto-drifts same-day; keep the pin matched to the installed cycc to silence
+  the toolchain-drift warning — 6.3.42 is a probe-irrelevant protobuf-only bump.)
+- `lib/` is untracked + gitignored; regenerate with **`cyrius lib sync --full`** +
+  `cyrius deps`. **Use `--full`, not bare `cyrius lib sync`** — the bare form only
+  refreshes the *declared* `[deps].stdlib` subset, so transitively-pulled deps like
+  **sigil** (via `tls`/sandhi) are NOT updated and can silently stay stale. This
+  bit the probe: a bare sync left `lib/sigil.cyr` at 3.9.4 (the pre-fix opt-in
+  banking) while cyrius 6.3.12 actually bundles sigil 3.9.7 — so the probe built
+  against the old crypto race and the TLS pool appeared to still crash. `--full`
+  pulls the whole snapshot (current sigil 3.9.9). See FINDINGS.
 
 ## Source
 
@@ -58,21 +80,26 @@ is a standalone diagnostic for that race (not a gate).
   **plaintext `run_pooled` (4 workers, :8080) in a worker thread** via
   `sandhi_server_router_handler_cp` and the **HTTPS `run_pooled_tls` (:8443) in
   main** via `sandhi_server_router_handler_c`, sharing the read-only router.
-  **The TLS pool is pinned to 1 worker** (`max_conns=1`) — sigil's global crypto
-  scratch crashes on 2+ concurrent handshakes (see FINDINGS); plaintext stays at 4.
+  **The TLS pool runs 4 workers** (`max_conns=4`, matching plaintext) — the
+  sigil⇄patra thread-local slot-0 collision that caused `RECORD_LAYER_FAILURE` was
+  fixed in sigil 3.9.9 (slot 0→8, cyrius 6.3.25); verify.py is 5/5 clean at 4 and an
+  amplified stress is 0-error at 4 and 8 (see FINDINGS).
   Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET|POST /api/notes`,
   `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
   (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
   `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. Caveat (FINDINGS):
   AUTOINCREMENT reuses ids.
-  - **Persistence model: connection-per-thread.** `db()` opens one patra handle per
-    worker, cached in a thread-local slot (TLS slot 15), so reads/writes are on a
-    per-thread fd — patra 1.12.0's parallel-read model. `db_path()` returns the DB
-    path as a fn, not a `var = "literal"` global (those crash — see FINDINGS).
-    Because patra's table-lookup cache is still process-global (filed patra-side),
-    every patra op is serialized under **`g_db_lock`** as the workaround (drop it
-    when patra fixes the cache → the per-thread handles give correct parallel reads).
-    Per-handle `last_insert_id`/`rows_affected` make `g_wr_lock` unnecessary (removed).
+  - **Persistence model: connection-per-thread + `g_db_lock`.** `db()` opens one
+    patra handle per worker, cached in a thread-local slot (TLS slot 15), so each
+    worker reads/writes on a per-thread fd — patra's parallel-read model. The DB
+    path is a plain global `var g_dbpath = "yeo.patra"` (renamed from the
+    enum-colliding `DB_PATH` — see FINDINGS). patra 1.12.7 moved its table-lookup
+    cache into the handle, closing that race — but **`g_db_lock` STILL wraps every
+    patra op**, because patra's TEXT readback (`patra_result_read_text`) reads pages
+    *after* `patra_query` drops its shared flock, so SELECT + `note_row_json`
+    readback must stay atomic vs a concurrent writer (filed to patra). Writers also
+    serialize via patra's per-fd flock; `last_insert_id`/`rows_affected` are
+    per-handle.
 - `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman notes
   dashboard with a hash router exercising the **full** `/api/notes` resource —
   `#/` Home (live status + count), `#/notes` (list + add + per-row delete),
@@ -98,9 +125,8 @@ is a standalone diagnostic for that race (not a gate).
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
   HTTP↔HTTPS shared backend, ALPN negotiates `http/1.1` (9i), 60-concurrent-HTTPS
-  served without crashing (10 — the sigil-concurrency tripwire)**). The functional
-  scenarios are stable; the concurrency ones (4/8/10) can flake on the upstream
-  cyrius `str_builder` race (FINDINGS). Run against a
+  served without crashing (10)**). **All scenarios are now stable** (the cyrius 6.3.15
+  str_builder fix removed the concurrency flakiness). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
 - `tests/ui_check.mjs` — **headless full-stack proof**: loads the real
@@ -125,8 +151,8 @@ Direct (declared in `cyrius.cyml`):
   transitive modules, added by hand since `+sandhi` doesn't auto-pull them.
   `thread`/`atomic` are now needed by sandhi's `run_pooled` / `run_pooled_tls`
   rather than the probe's own pool.)
-- **patra** `1.12.6` — SQL persistence (`[deps.patra]`)
-- **sakshi** `2.4.0` — required transitively by patra (`[deps.sakshi]`)
+- **patra** `1.12.7` — SQL persistence (`[deps.patra]`)
+- **sakshi** `2.4.3` — required transitively by patra (`[deps.sakshi]`)
 
 ## Consumers
 

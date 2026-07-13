@@ -7,6 +7,173 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — re-run on cyrius 6.3.42: BOTH residuals shipped (and both were consumer MISDIAGNOSES); new patra readback finding (2026-07-03)
+
+Bumped to **cyrius 6.3.42** (asked for 6.3.41; cycc auto-drifted 6.3.41→6.3.42
+same day, so the pin was matched to the installed cycc — 6.3.42 is a
+probe-irrelevant, cycc-byte-identical release that only finishes `lib/protobuf.cyr`,
+which the probe doesn't use; validated on 6.3.41 then re-confirmed green on 6.3.42) /
+**patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.9 (folded, up from 3.9.7) / sakshi 2.4.3**.
+The two cyrius fixes that cleared the residuals landed in **6.3.24** (enum-shadow)
+and **6.3.25 / sigil 3.9.9** (slot collision). The headline: the **two residuals**
+the probe was sitting on both shipped — and the upstream root causes **overturned
+the probe's own diagnoses of both**. Both workarounds are now removed.
+
+- ✅ **Residual #1 "string-literal global garbage at scale" was a MISDIAGNOSIS —
+  it's a symbol collision (fixed cyrius 6.3.24).** The crash was never a
+  string-global codegen bug. `var DB_PATH = "yeo.patra"` collides by **name** with
+  patra's exported `enum DbOff { DB_PATH = 16 }` (`lib/patra.cyr:3703`). cyrius
+  resolved the symbol to the **last** registration, so `patra_open`'s
+  `store64(db + DB_PATH, wpath)` used the string pointer as an ABI **offset** →
+  wild store → SIGSEGV (the string *value* was fine). cyrius 6.3.24 made a
+  non-int-literal `var` that shadows an enum constant a **hard compile error**
+  (`variable 'X' shadows an enum constant`) instead of a silent miscompile.
+  **Adopted:** replaced the `db_path()` fn with a plain global renamed to avoid the
+  collision — `var g_dbpath = "yeo.patra"`. Building `var DB_PATH = …` now errors
+  cleanly (verified); `g_dbpath` builds + the full suite is green.
+- ✅ **Residual #2 "RECORD_LAYER_FAILURE under a mixed pattern" was also mostly
+  mis-framed — it's a thread-local slot collision (fixed cyrius 6.3.25 / sigil
+  3.9.9).** sigil's per-thread crypto-bank lane (`_SIGIL_CBANK_SLOT`) and patra's
+  parse scratch **both hardcoded thread-local slot 0** (cyrius's 16-slot space has
+  no allocator). A patra query clobbered sigil's pinned bank index; the next
+  `cbank()` then indexed the **wrong lane** of sigil's process-global banked crypto
+  buffers → a corrupted in-flight handshake key schedule → the client's
+  `RECORD_LAYER_FAILURE`. It's **deterministic (every 4th handshake)**, not the
+  "accumulated mixed pattern" the probe filed. Fixed by moving sigil to slot 8
+  (**3.9.9**) + a thread-local **slot-namespace registry** (0-4 patra, 8 sigil, 15
+  consumer). **Adopted:** bumped the TLS pool `max_conns` **1 → 4**. Verified on
+  6.3.41/sigil 3.9.9: verify.py **5/5 clean at max_conns=4**, plus an amplified
+  stress (rejected-untrusted handshakes interleaved with valid load) — **0 errors**
+  across ~1,440 reqs at max_conns=4 and ~1,600 at max_conns=8 (no bank exhaustion;
+  well under 64 banks).
+
+**Lesson:** two consecutive residuals the probe root-caused *by observation*
+(string-global-at-scale; per-connection-TLS-state) were both actually **symbol /
+slot name collisions** in cyrius's flat namespace — the value of filing was that
+upstream root-caused what the black-box consumer could not.
+
+New / corrected findings this cycle:
+
+- ✅ **NEW (patra) — FILED AND FIXED THIS CYCLE (patra 1.12.8): TEXT/BLOB result
+  readback escapes the query's flock window.** `patra_query` snapshotted only a
+  byte-**reference** (page + len) and **released its shared flock before
+  returning**; `patra_result_read_text` read the payload pages **lazily and
+  unlocked** (`_bytes_read_chain`). A concurrent writer on another handle could
+  free/overwrite those pages between query and readback → a torn/stale body
+  returned as `PATRA_OK`. So the connection-per-thread "lock-free parallel reads"
+  promise held only for **fixed-width** columns. **This also corrects the 6.3.12
+  note below that claimed the probe removed `g_db_lock`:** the lock was **still
+  required** — not for the (now-per-handle) table-lookup cache, but for this
+  readback atomicity. **Fix (patra 1.12.8, this cycle):** a new `_rs_materialize`
+  snapshots every TEXT/BYTES payload into an owned heap buffer *under the query's
+  flock*, so `read_text`/`read_bytes` are pure memcpys and result sets are true
+  snapshots (no API change; regression `test_text_readback_snapshot` proven to fail
+  pre-fix; patra suite 885/885). The probe **keeps `g_db_lock` for now** — it still
+  pins patra 1.12.7 — and can drop it once cyrius folds patra 1.12.8 in and the
+  probe bumps. Filed + resolved:
+  `patra/docs/development/issues/archive/2026-07-03-text-blob-readback-escapes-query-flock-window.md`.
+- 🔵 **`mutex_*` duplicate-definition — now FILED upstream.** The 🔵 note from the
+  6.3.12 run (below) is a fresh instance of cyrius's known duplicate-fn-across-
+  stdlib-modules class (`thread.cyr` ⇄ `sync.cyr` both export `mutex_new/lock/
+  unlock` for LINUX; byte-identical, last-def-wins → benign but 3 warnings every
+  build). Filed to cyrius (`2026-07-03-duplicate-mutex-fns-thread-vs-sync-stdlib.md`)
+  referencing the archived `arena_*` precedent + its proposed dedup hardening.
+
+Net: the probe went from **two workarounds + a lock it thought it had removed** to
+**zero residual workarounds** (string global inlined, TLS pool at 4) plus **one
+correctly-attributed lock** (`g_db_lock`, for the patra readback race). Suite
+**green + stable**: 2 unit + 34 backend + 10 UI, with max_conns=4 verified 5/5.
+
+## Update — re-run on cyrius 6.3.23: str_builder gate SHIPPED → multi-worker TLS fundamentally works (2026-07-01)
+
+Bumped to **cyrius 6.3.23** (the user asked for 6.3.22; cycc auto-drifted 6.3.22→6.3.23
+same day — pin matched to the installed cycc) / **patra 1.12.7 / sandhi 1.7.0 / sigil
+3.9.7 (folded) / sakshi 2.4.3**. Both cyrius gate slots the probe was waiting on shipped:
+
+- ✅ **`str_builder` concurrency FIXED (cyrius 6.3.15).** Root cause was **array-local
+  codegen**, not str_builder itself — `var X[N]` inside a fn was a function-scope
+  static shared across threads; 6.3.15 made array locals **per-thread by default**.
+  Verified: the minimal repro is **0** (was ~87%), `tests/concurrency_repro.sh` is
+  **0/300** (was ~3%), and the probe's concurrency scenarios (verify.py 4/8/10) are
+  now **stable** (were flaky). This also cleared the multi-worker-TLS `BAD_SIGNATURE`.
+- ✅ **THE PAYOFF — multi-worker TLS fundamentally works.** With str_builder fixed
+  + sigil 3.9.7 auto-banking, `max_conns=4` HTTPS serves **100/100 concurrent POSTs
+  cleanly** (all unique ids, no crash, no BAD_SIGNATURE). The whole "when str_builder
+  lands, multi-worker TLS unblocks" chain is confirmed.
+
+Two findings remain (the probe keeps its workarounds for them):
+
+- 🟡 **cyrius string-literal global fix (6.3.16) is INCOMPLETE at scale.** The gate
+  slot shipped and works in SMALL programs (`var S = "…"; patra_open(S)` → ok), but
+  in the FULL probe (sandhi + sigil's ~14 MB banked `.bss` + many globals) a
+  `var DB_PATH = "yeo.patra"` global still holds **garbage** → `patra_open` SIGSEGVs
+  at startup. So the **`db_path()` fn workaround stays.** (This masqueraded as a
+  toolchain crash during the bump until bisected to the string-global. Filed
+  cyrius-side as a follow-up to the closed 6.3.16 issue.)
+- 🟡 **Residual multi-worker-TLS `SSL: RECORD_LAYER_FAILURE`.** Pure concurrent HTTPS
+  is clean (100/100), and an untrusted-cert-reject → trusted-handshake sequence is
+  clean in isolation (5/5) — but under **verify.py's mixed/accumulated pattern** (34
+  HTTP + 9 sequential HTTPS incl. the untrusted-cert reject), `max_conns=4`
+  **deterministically** fails a later handshake with RECORD_LAYER_FAILURE (3/3 runs).
+  A per-connection TLS-state buildup at >1 worker, not reproducible under pure load.
+  So **TLS pool stays at `max_conns=1`** (suite green + stable) until it's root-caused;
+  bump to 4 once it is. Filed. **Net: str_builder was the big blocker and it's gone;
+  multi-worker TLS is one narrow residual issue away from shippable.**
+
+## Update — re-run on cyrius 6.3.12: most findings RESOLVED upstream; two cyrius-core gate slots remain (2026-06-30)
+
+Bumped to **cyrius 6.3.12 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.7 (folded) /
+sakshi 2.4.2** (pin matched to the installed cycc to avoid lib/compiler skew).
+Verified resolution of each filed finding:
+
+- ✅ **patra table-cache race FIXED (1.12.7)** — `_tbl_lp_idx`/`_page` moved from
+  process-global into the db handle. The probe **removed its `g_db_lock`
+  workaround**: connection-per-thread parallel reads are now correctness-safe
+  (concurrent-read stress: **0/300 corrupt**, was ~90%+ on 6.3.0 even *with*
+  serialization). last_insert_id / rows_affected stay per-handle; writers serialize
+  via flock. This is the clean win of the bump.
+- ✅ **sandhi h2 IPv6 arity FIXED (1.7.0)** — no build warning. ✅ **sandhi
+  misleading pooled-TLS comment FIXED (1.7.0)** — both credited in sandhi's
+  changelog.
+- ✅ **sigil concurrent-TLS crash FIXED (3.9.7) — the crash is gone; no sandhi/sigil
+  change needed.** sigil 3.9.7's `cbank()` **AUTO-assigns** a private lane per thread
+  (`_crypto_next_bank` atomic counter, 64 banks) — fully transparent, zero per-worker
+  opt-in. Verified: max_conns=4 **no longer SIGSEGVs** (server stays alive), and
+  sigil's own `concurrent_tls_handshake` / `banking_concurrent` / `ecdsa_concurrent`
+  tests pass **18/18**. cyrius 6.3.12 already bundles sigil 3.9.7.
+  - 🟡 **DX gotcha that masked this (now the real lesson):** `cyrius lib sync`
+    (bare) only refreshes the *declared* `[deps].stdlib` subset, so the probe's
+    transitively-pulled `lib/sigil.cyr` stayed **stale at 3.9.4** (the pre-fix
+    opt-in banking) while the toolchain bundled 3.9.7 — so the probe built against
+    the OLD crypto race and the TLS pool *appeared* to still crash. **`cyrius lib
+    sync --full`** pulls the whole snapshot (current sigil 3.9.7). My earlier
+    "sandhi must assign per-worker banks" finding was wrong (off the stale lib) and
+    is **withdrawn** (`sandhi/issues/2026-06-30-pooled-tls-workers-need-per-worker-crypto-bank.md`).
+  - ⚠️ **Remaining max_conns>1 HTTPS blocker = the cyrius `str_builder` gate slot,
+    not sigil.** With sigil 3.9.7 (no crash), concurrent HTTPS at max_conns≥2 fails
+    with `SSL: BAD_SIGNATURE`: the str_builder race overlaps two workers' response
+    buffers, so one mutates *while* `tls_native` encrypts + MACs it → the MAC
+    doesn't match the sent bytes. (`tls_native`'s handshake is per-ctx — 0 module
+    globals — so this is str_builder, not a tls_native bug.) So the TLS pool stays
+    at **1 worker** until `str_builder` lands; then bump to 4.
+- 🔴 **cyrius `str_builder` STILL OPEN** — confirmed still reproduces on 6.3.12
+  (minimal repro ~87% at 8 threads; HTTP ~1-3%). It's a held "gate slot" in
+  cyrius's roadmap (root-caused, needs codegen work). The concurrency scenarios
+  stay flaky on it.
+- 🟡 **cyrius string-literal global initializer STILL OPEN** (gate slot) — the
+  probe keeps the `db_path()` fn workaround.
+- 🔵 **NEW: `mutex_*` duplicate-definition warning.** Building on 6.3.12 now warns
+  `lib/sync.cyr:44/52/65: duplicate fn 'mutex_new'/'mutex_lock'/'mutex_unlock'
+  (last definition wins)` — `sync.cyr` and `thread.cyr` both export the lock API
+  with no include guard, and both are now in the probe's closure. Benign on Linux
+  (both are real futex impls), but a real stdlib-hygiene smell (the earlier
+  "refuted as dormant" collision now actually fires in a consumer build).
+
+Net: **3 of the filed findings shipped + adopted (patra, both sandhi); sigil is
+half-done (banks shipped, per-worker wiring missing in sandhi); the two cyrius
+compiler findings remain gate slots.** Probe workarounds removed: `g_db_lock`
+(patra). Kept: `db_path()` (string-global), TLS max_conns=1 (sigil-via-sandhi).
+
 ## Update — deep-dive: a cyrius-CORE concurrency blocker (`str_builder`) + the connection-per-thread bite (2026-06-28)
 
 Investigating "which repos actually need repair," a fix for the probe's patra

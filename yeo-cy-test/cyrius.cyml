@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "yeo-cy-test — Cyrius full-stack viability probe for the SecureYeoman port"
 license = "AGPL-3.0-only"
 language = "cyrius"
-cyrius = "6.3.0"
+cyrius = "6.4.62"
 
 [build]
 entry = "src/main.cyr"
@@ -12,14 +12,33 @@ test = "src/test.cyr"
 output = "yeo-cy-test"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "freelist", "chrono", "thread", "atomic", "tls", "async", "random", "fdlopen", "dynlib", "sandhi"]
+# sandhi is pulled as the THIN `server` profile bundle (dist/sandhi-server.cyr via
+# [deps.sandhi]), NOT the full folded stdlib "sandhi" — the probe is a server-only
+# consumer, so it doesn't want the client/h2/rpc/discovery surface. Because the
+# thin bundle carries only session_cache + conn + server/mod, the previously-
+# transitive deps it (and the probe) rely on are now declared explicitly:
+#   * bayan — json_v_* (the probe's JSON build/parse; NOT "json", which collides
+#     with bayan on json_v_*/_jv_*/_jp_* — bayan is the successor carve-out).
+#   * hashmap — map_* used by sandhi's TLS session_cache.cyr inside the slice.
+# tls still pulls sigil (→ pem_decode_certs, crypto) transitively, independent of
+# sandhi. See FINDINGS "thin sandhi-server profile".
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "freelist", "chrono", "thread", "atomic", "tls", "async", "random", "fdlopen", "dynlib", "hashmap", "bayan"]
+
+# The server-only slice (sandhi 1.8.0 profile bundles; 1.8.1 made run_pooled_tls
+# safe at max_conns>1, which the probe's 4-worker TLS pool needs). ~76% smaller
+# than the full bundle (141KB vs 590KB) — the "bundled-libs → individual-packages
+# split" this probe filed, now dogfooded as sandhi's first profile-bundle consumer.
+[deps.sandhi]
+git = "https://github.com/MacCracken/sandhi.git"
+tag = "1.8.2"
+modules = ["dist/sandhi-server.cyr"]
 
 [deps.sakshi]
 git = "https://github.com/MacCracken/sakshi.git"
-tag = "2.4.0"
+tag = "2.4.6"
 modules = ["dist/sakshi.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.12.6"
+tag = "1.12.9"
 modules = ["dist/patra.cyr"]

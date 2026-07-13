@@ -18,8 +18,10 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   `sandhi_server_run_pooled` and HTTPS on `sandhi_server_run_pooled_tls` (TLS 1.3
   via `tls_native` + [sigil](https://github.com/MacCracken/sigil), Ed25519 cert,
   ALPN `http/1.1`) — the probe's hand-rolled HTTPS stack is retired. The TLS pool
-  is pinned to 1 worker because sigil's crypto scratch crashes on concurrent
-  handshakes (see FINDINGS). Routes:
+  runs **4 workers** (`max_conns=4`, matching plaintext): the last blocker — a
+  sigil⇄patra thread-local slot-0 collision that corrupted handshakes
+  (`RECORD_LAYER_FAILURE`) — was fixed in sigil 3.9.9 (cyrius 6.3.25); see FINDINGS.
+  Routes:
   - `GET  /`                → serves the frontend (`web/index.html`)
   - `GET  /app.js`          → serves the frontend bundle
   - `GET  /api/health`      → `{ "status": "ok", … }`
@@ -97,22 +99,26 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-**cyrius 6.3.0 / patra 1.12.6 / sandhi 1.6.13 / sakshi 2.4.0**). Both original
-blockers — TS/TSX→JS emit and patra SQL string safety — are closed, the prior
-bite's findings shipped + were adopted (**sandhi server-side TLS + ALPN**, so the
-hand-rolled HTTPS stack is retired), and the probe is now a thin sandhi + patra
-composition.
+**cyrius 6.3.42 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.9 / sakshi 2.4.3**;
+regenerate `lib/` with `cyrius lib sync --full`). Both original blockers — TS/TSX→JS
+emit and patra SQL string safety — are closed, and the probe is a thin sandhi +
+patra composition (server-side TLS + ALPN, retired hand-rolled HTTPS stack).
 
-**But a 2026-06-28 deep-dive found that Cyrius is not yet safe for concurrent
-serving.** The headline (🔴) is a **cyrius-core `str_builder` thread-safety bug**:
-concurrent HTTP responses corrupt ~3% under load (every concurrent string build is
-affected), which makes the probe's concurrency scenarios flaky. Plus 🔴 **sigil**
-(concurrent TLS handshakes crash — TLS pool pinned to 1 worker) and 🔴 **patra**
-(1.12.0 parallel reads race a process-global table cache — every patra op
-serialized under a lock). All filed upstream for repair (see each repo's
-`docs/development/issues/`). The functional path (single-threaded CRUD, TLS, ALPN,
-UI) works; the concurrency story is gated on those fixes. Details + the bisection
-are in [FINDINGS.md](FINDINGS.md).
+**Both residuals shipped — and both were consumer MISDIAGNOSES, which is the point
+of the probe.** The "string-literal-global-at-scale" crash was really a **symbol
+collision** (`var DB_PATH` shadowed patra's `enum DbOff { DB_PATH }`) — fixed in
+cyrius 6.3.24 (now a hard error); the fix here is just renaming the global, so the
+`db_path()` fn workaround is gone. The multi-worker-TLS `RECORD_LAYER_FAILURE` was a
+**thread-local slot-0 collision** between sigil's crypto banks and patra's parse
+scratch — fixed in sigil 3.9.9 (slot 0→8, cyrius 6.3.25); the TLS pool is now
+`max_conns=4` (verify.py 5/5, amplified stress 0-error). (Earlier bumps resolved
+`str_builder` array-local codegen, patra's table-cache race, both sandhi findings,
+and sigil's concurrent-handshake crash.) **One lock stays, now correctly
+attributed:** 🔴 patra's TEXT/BLOB readback reads pages *after* the query drops its
+flock, so `g_db_lock` is kept to hold SELECT+readback atomic (filed to patra). The
+suite is **green + stable** (34 backend + 10 UI, max_conns=4). Details in
+[FINDINGS.md](FINDINGS.md); each finding is filed in its repo's
+`docs/development/issues/`.
 
 ## License
 

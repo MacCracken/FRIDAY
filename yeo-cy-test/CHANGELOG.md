@@ -4,6 +4,75 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — toolchain 6.3.42: both residuals shipped (both were consumer misdiagnoses); new patra finding
+- **Bumped to cyrius 6.3.42 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.9 (folded) /
+  sakshi 2.4.3.** (Asked for 6.3.41; cycc auto-drifted 6.3.41→6.3.42 same day — pin
+  matched to the installed cycc. 6.3.42 is a probe-irrelevant, cycc-byte-identical
+  protobuf-only release; the residual fixes landed in 6.3.24 and 6.3.25.)
+- ✅ **Removed the `db_path()` fn workaround.** The "string-literal-global-at-scale"
+  crash was a **misdiagnosis** — `var DB_PATH` collided by name with patra's exported
+  `enum DbOff { DB_PATH = 16 }`; cyrius resolved the symbol to the last registration,
+  so `patra_open`'s `store64(db + DB_PATH, …)` used a string pointer as an ABI offset
+  → SIGSEGV. cyrius 6.3.24 made a non-int-literal var shadowing an enum a **hard
+  error**. Fix: the path is now a plain global renamed to dodge the collision,
+  `var g_dbpath = "yeo.patra"`. Verified: `var DB_PATH = …` now errors cleanly;
+  `g_dbpath` builds and the full suite is green.
+- ✅ **Bumped the TLS pool `max_conns` 1 → 4.** The multi-worker `RECORD_LAYER_FAILURE`
+  was a **thread-local slot-0 collision** between sigil's crypto banks and patra's
+  parse scratch (both hardcoded slot 0) — deterministic (every 4th handshake), not
+  the "mixed pattern" filed. Fixed in sigil 3.9.9 (slot 0→8) + a slot-namespace
+  registry (cyrius 6.3.25). Verified on 6.3.42: verify.py **5/5 clean at max_conns=4**,
+  amplified mixed-pattern stress **0 errors** at 4 and 8 (no bank exhaustion).
+- 🔴 **NEW finding (patra) + `g_db_lock` correction.** patra's TEXT/BLOB readback
+  (`patra_result_read_text`) reads pages **after** `patra_query` drops its shared
+  flock, so a concurrent writer can tear the body. **`g_db_lock` is REQUIRED and is
+  kept** to hold each SELECT + `note_row_json` readback atomic — **correcting the
+  6.3.12 entry below that claimed it was removed** (it was removed for the
+  now-fixed table-cache race, but is required for this readback race). Filed to patra.
+- 🔵 **Filed the `mutex_*` duplicate-definition warning** (`thread.cyr` ⇄ `sync.cyr`,
+  benign, 3 warnings/build) to cyrius, referencing the archived `arena_*` precedent.
+
+### Changed — toolchain 6.3.23: str_builder gate SHIPPED, multi-worker TLS unblocked
+- **Bumped to cyrius 6.3.23 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.7 (folded) /
+  sakshi 2.4.3.** (Asked for 6.3.22; cycc auto-drifted to 6.3.23 same day — pin
+  matched to the installed cycc.)
+- ✅ **str_builder concurrency FIXED (cyrius 6.3.15)** — root cause was array-local
+  codegen (now per-thread by default). Verified: minimal repro 0 (was ~87%),
+  `concurrency_repro.sh` 0/300, and the concurrency scenarios (verify.py 4/8/10) are
+  now **stable** (were flaky). Multi-worker TLS **fundamentally works**: `max_conns=4`
+  serves 100/100 concurrent HTTPS cleanly (no crash, no BAD_SIGNATURE).
+- **Kept the `db_path()` fn workaround** — cyrius's string-literal-global fix (6.3.16)
+  works in small programs but still holds garbage in this large one (sandhi+sigil's
+  ~14 MB `.bss`), SIGSEGV'ing `patra_open` at startup. Filed a cyrius follow-up.
+- **TLS pool stays at `max_conns=1`** — a residual `RECORD_LAYER_FAILURE` at >1 worker
+  under verify.py's mixed pattern (not reproducible under pure concurrent load) blocks
+  the bump to 4. Filed cyrius-side. (Everything else on the multi-worker path is green.)
+
+### Changed — toolchain 6.3.12 + adopted the upstream fixes
+- **Bumped to cyrius 6.3.12 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.7 (folded) /
+  sakshi 2.4.2** (pin matched to the installed cycc to avoid lib/compiler skew).
+- **Removed `g_db_lock`** — patra 1.12.7 moved its table-lookup cache
+  (`_tbl_lp_idx`/`_page`) from a process-global into the db handle, fixing the
+  probe-filed connection-per-thread read race. Concurrent reads are now lock-free
+  and correctness-safe (stress: 0/300 corrupt, was ~90%+). Handlers call `db()`
+  directly; per-handle last_insert_id/rows_affected need no lock.
+
+### Resolution of filed findings (verified on 6.3.12)
+- ✅ patra table-cache race (1.12.7) · ✅ sandhi h2 IPv6 arity (1.7.0) · ✅ sandhi
+  misleading pooled-TLS comment (1.7.0) — all shipped + adopted.
+- ✅ sigil concurrent-TLS **crash FIXED (3.9.7)** — `cbank()` auto-assigns a per-thread
+  lane (64 banks); no sandhi/sigil change needed (cyrius 6.3.12 bundles it). Verified
+  max_conns=4 no longer SIGSEGVs + sigil's own concurrent-TLS tests pass 18/18. My
+  earlier "sandhi per-worker bank" finding was off a **stale `lib/sigil.cyr` (3.9.4)**
+  and is withdrawn — **`cyrius lib sync --full`** is required (bare sync doesn't
+  refresh transitive deps like sigil). TLS pool still pinned to 1 worker, but for the
+  **str_builder** bug now (concurrent response buffers overlap → corrupt mid-TLS-encrypt
+  → `SSL: BAD_SIGNATURE`), not sigil.
+- 🔴 cyrius `str_builder` thread-safety + 🟡 string-literal global initializer —
+  still open (held gate slots); the probe keeps `db_path()`. 🔵: a `sync.cyr`/`thread.cyr`
+  `mutex_*` duplicate-definition build warning (benign); sigil 3.9.7's 64 banks add
+  ~14 MB lazy-zero `.bss`.
+
 ### Changed (deep-dive: connection-per-thread + a cyrius-core concurrency blocker)
 - **patra persistence moved to connection-per-thread.** Each sandhi worker opens
   its own patra handle, lazily cached in a thread-local slot (`db()`, TLS slot 15;

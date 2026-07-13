@@ -12,28 +12,32 @@
 #   fn(app_ctx, conn, req_buf, req_len, params): i64
 # reading the body via http_body_* and path params via sandhi_route_param_int.
 #
-# Persistence (patra 1.12.6): note bodies are a TEXT column written through a
+# Persistence (patra 1.12.7): note bodies are a TEXT column written through a
 # prepared statement with a bound `?` parameter (patra_bind_text) — stored as
 # bytes, never reparsed as SQL (injection-safe), no length cap. Ids are patra
 # AUTOINCREMENT (schema `id INT AUTOINCREMENT`, column-list INSERT, echoed via
 # patra_last_insert_id); PUT/DELETE return a real 404 via patra_rows_affected.
 #
-# Concurrency: patra 1.12.0's intended model is CONNECTION-PER-THREAD — each
-# worker on its OWN handle (own fd + DB_HDR), so reads don't share an fd offset
-# and last_insert_id / rows_affected are per-handle (no cross-worker readback
-# race). The probe follows it: each sandhi worker opens its own handle, lazily
-# cached in a thread-local slot (db()).
+# Concurrency: patra's model is CONNECTION-PER-THREAD — each worker on its OWN
+# handle (own fd + DB_HDR), so reads don't share an fd offset and last_insert_id /
+# rows_affected are per-handle. The probe follows it: each sandhi worker opens its
+# own handle, lazily cached in a thread-local slot (db()). patra 1.12.7 moved the
+# old process-global table-lookup cache (_tbl_lp_idx / _tbl_lp_page) INTO the
+# handle, closing that race.
 #
-# BUT patra 1.12.0's parallel reads are NOT yet correctness-safe: the table-lookup
-# cache `_tbl_lp_idx` / `_tbl_lp_page` (patra src/table.cyr:4-5) is still a
-# process-GLOBAL single-entry cache, written on every query's table resolution
-# and read as a cache-hit — so two concurrent readers (even on separate handles)
-# race it, one reads the other's cached page, and rows come back from the WRONG
-# page (garbled bodies / UTF-8 / JSON corruption — caught by verify.py scenario
-# 11). So every patra op is serialized under g_db_lock until patra makes that
-# cache per-handle/thread-local. When it does, DROP g_db_lock and the per-thread
-# handles already in place give correct parallel reads. (Filed to patra — see
-# FINDINGS.)
+# g_db_lock is GONE as of the patra 1.12.9 bump. It had been kept for one last
+# reason — patra's TEXT/BLOB readback used to escape the query's flock window:
+# patra_query snapshotted only the row's byte-REFERENCE (page + len), released the
+# shared flock, then patra_result_read_text read the payload pages LAZILY and
+# UNLOCKED, so a concurrent writer on another handle could free/overwrite those
+# pages between query and readback → a torn/stale body. The probe filed this;
+# patra 1.12.8's _rs_materialize now snapshots every TEXT/BYTES payload into an
+# owned heap buffer WHILE the shared flock is held, so patra_result_read_text is a
+# pure memcpy, safe against any later writer. With that + per-handle table cache +
+# per-handle last_insert_id/rows_affected + patra's per-fd write flock, every op is
+# safe on this worker's own handle with NO external lock → genuinely lock-free
+# parallel reads (patra's connection-per-thread promise, finally delivered).
+# (See FINDINGS.)
 #
 # Stdlib + deps (patra, sakshi) auto-included via cyrius.cyml; thread-local slots
 # via lib/thread_local.cyr (patra owns slots 0-4; the probe's handle uses slot 15).
@@ -42,32 +46,33 @@ include "src/httpd.cyr"
 
 var PORT     = 8080;
 var TLS_PORT = 8443;
-# DB path: a fn, not a `var = "literal"` global — cyrius global initializers are
-# integer-only (gvar_initval), so a top-level string-literal global holds garbage
-# and crashes patra_open. A fn returns the literal's real address.
-fn db_path(): i64 { return "yeo.patra"; }
+# DB path as a top-level string-literal global. The name matters: an earlier probe
+# named it `DB_PATH`, which SILENTLY collided with patra's exported
+# `enum DbOff { DB_PATH = 16 }` (lib/patra.cyr). cyrius resolved the symbol to the
+# LAST registration, so patra_open's `store64(db + DB_PATH, wpath)` used this
+# string pointer as an ABI offset → wild store → SIGSEGV (misdiagnosed at the time
+# as a "string-literal-global-at-scale" codegen bug — it wasn't). cyrius 6.3.24
+# root-caused it and made a non-int-literal var that shadows an enum constant a
+# HARD ERROR ("variable 'X' shadows an enum constant"). So the fix is just to not
+# collide: `g_dbpath` is unique, builds clean, and the full suite is green.
+var g_dbpath = "yeo.patra";
 # Thread-local slot for THIS worker's patra handle (patra owns TLS slots 0-4 for
 # its parse scratch + page slab; 5-15 are free — see lib/thread_local.cyr's
 # 16-slot namespace). Worker threads spawned via lib/thread.cyr get a fresh TLS
 # block free (CLONE_SETTLS), so the slot reads 0 until db() lazily opens.
 var TLS_DB = 15;
 
-# Serializes every patra op (read + write) across workers — the workaround for
-# patra's process-global table-lookup cache race (see the header note + FINDINGS).
-# Drop this once patra makes _tbl_lp_idx/_tbl_lp_page per-handle/thread-local.
-var g_db_lock = 0;
-
 # ── database ──
 
 # This worker thread's patra handle (connection-per-thread). Opened lazily on
 # first use and cached in TLS_DB, so every sandhi worker reads/writes on its own
-# fd + DB_HDR — patra 1.12.0's parallel-read model. Returns 0 only on open
+# fd + DB_HDR — patra 1.12.7's parallel-read model. Returns 0 only on open
 # failure. patra's per-thread parse scratch self-seeds (sql.cyr _sql_ensure) on
 # the first query, so a worker needs nothing beyond its own open.
 fn db(): i64 {
     var h = thread_local_get(TLS_DB);
     if (h == 0) {
-        h = patra_open(db_path());
+        h = patra_open(g_dbpath);
         thread_local_set(TLS_DB, h);
     }
     return h;
@@ -79,8 +84,7 @@ fn db(): i64 {
 fn db_init(): i64 {
     fl_init();
     patra_init();
-    g_db_lock = mutex_new();
-    var h = patra_open(db_path());
+    var h = patra_open(g_dbpath);
     if (h == 0) { return 0; }
     # id is AUTOINCREMENT (patra 1.10.1): patra assigns the next id on an INSERT
     # that omits it, so the app no longer tracks/seeds g_next_id. NB patra
@@ -111,11 +115,10 @@ fn handle_health(ctx, conn, buf, blen, params): i64 {
 }
 
 fn handle_list_notes(ctx, conn, buf, blen, params): i64 {
-    # On THIS worker's own handle (db()), serialized under g_db_lock (patra's
-    # global table-lookup cache races concurrent readers — see header/FINDINGS).
-    # The result set is caller-owned; build the JSON array inside the lock since
-    # note_row_json re-reads TEXT pages, then frame the response outside it.
-    mutex_lock(g_db_lock);
+    # On THIS worker's own handle (db()) — no external lock. patra 1.12.8
+    # materializes TEXT payloads into the result set under the query's flock, so
+    # note_row_json's patra_result_read_text is a safe memcpy even if another worker
+    # writes concurrently (see header/FINDINGS). Reads run fully in parallel.
     var rs = patra_query(db(), "SELECT id, body, created FROM notes ORDER BY id");
     var arr = json_v_arr_new();
     if (rs != 0) {
@@ -127,9 +130,7 @@ fn handle_list_notes(ctx, conn, buf, blen, params): i64 {
         }
         patra_result_free(rs);
     }
-    var rr = resp_json(conn, "200 OK", arr);
-    mutex_unlock(g_db_lock);
-    return rr;
+    return resp_json(conn, "200 OK", arr);
 }
 
 fn handle_create_note(ctx, conn, buf, blen, params): i64 {
@@ -147,20 +148,19 @@ fn handle_create_note(ctx, conn, buf, blen, params): i64 {
 
     # Column-list INSERT (patra 1.11) omitting the AUTOINCREMENT id, so patra
     # assigns it. The body is bound as text (stored as bytes, never reparsed as
-    # SQL → metacharacters are safe). patra serializes the INSERT internally
-    # (v1.11.0+), so the write itself needs no external lock.
-    # Serialize under g_db_lock (patra's global table cache); the exec + its
-    # last_insert_id readback are paired atomically inside it. id is per-handle.
-    mutex_lock(g_db_lock);
+    # SQL → metacharacters are safe). patra serializes the write internally via a
+    # per-fd exclusive flock (v1.11.0+), and last_insert_id is per-handle, so the
+    # exec + its readback need no external lock on this worker's own handle.
     var d = db();
     var stmt = patra_prepare(d, "INSERT INTO notes (body, created) VALUES (?, ?)");
-    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) {
+        return resp_json_err(conn, "500 Internal Server Error", "prepare failed");
+    }
     patra_bind_text(stmt, 0, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 1, ts);
     var rc = patra_exec_prepared(d, stmt);
     var id = patra_last_insert_id(d);
     patra_finalize(stmt);
-    mutex_unlock(g_db_lock);
     if (rc != PATRA_OK) {
         return resp_json_err(conn, "500 Internal Server Error", "insert failed");
     }
@@ -193,24 +193,22 @@ fn note_row_json(rs, row): i64 {
 fn handle_get_note(ctx, conn, buf, blen, params): i64 {
     var id = sandhi_route_param_int(params, 0);
     if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
-    mutex_lock(g_db_lock);
     var d = db();
     var stmt = patra_prepare(d, "SELECT id, body, created FROM notes WHERE id = ?");
-    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) {
+        return resp_json_err(conn, "500 Internal Server Error", "prepare failed");
+    }
     patra_bind_int(stmt, 0, id);
     var rs = patra_query_prepared(d, stmt);
     patra_finalize(stmt);
-    if (rs == 0) { mutex_unlock(g_db_lock); return resp_json_err(conn, "500 Internal Server Error", "query failed"); }
+    if (rs == 0) { return resp_json_err(conn, "500 Internal Server Error", "query failed"); }
     if (patra_result_count(rs) <= 0) {
         patra_result_free(rs);
-        mutex_unlock(g_db_lock);
         return resp_json_err(conn, "404 Not Found", "note not found");
     }
     var o = note_row_json(rs, 0);
     patra_result_free(rs);
-    var rr = resp_json(conn, "200 OK", o);
-    mutex_unlock(g_db_lock);
-    return rr;
+    return resp_json(conn, "200 OK", o);
 }
 
 # PUT /api/notes/:id — replace a note's body. {"body": "..."} in the request
@@ -227,18 +225,18 @@ fn handle_update_note(ctx, conn, buf, blen, params): i64 {
     if (bstr == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'body'"); }
 
     # `?` placeholders bind in occurrence order: SET body=? is slot 0, WHERE id=?
-    # is slot 1.
-    # Serialize under g_db_lock; pair UPDATE + its rows_affected readback inside it.
-    mutex_lock(g_db_lock);
+    # is slot 1. patra's per-fd write flock serializes the UPDATE and rows_affected
+    # is per-handle, so no external lock is needed on this worker's own handle.
     var d = db();
     var stmt = patra_prepare(d, "UPDATE notes SET body = ? WHERE id = ?");
-    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) {
+        return resp_json_err(conn, "500 Internal Server Error", "prepare failed");
+    }
     patra_bind_text(stmt, 0, str_data(bstr), str_len(bstr));
     patra_bind_int(stmt, 1, id);
     var rc = patra_exec_prepared(d, stmt);
     var affected = patra_rows_affected(d);
     patra_finalize(stmt);
-    mutex_unlock(g_db_lock);
     if (rc != PATRA_OK) { return resp_json_err(conn, "500 Internal Server Error", "update failed"); }
 
     # patra_rows_affected (1.11.3, the filed readback gap): the WHERE matched 0
@@ -259,15 +257,15 @@ fn handle_update_note(ctx, conn, buf, blen, params): i64 {
 fn handle_delete_note(ctx, conn, buf, blen, params): i64 {
     var id = sandhi_route_param_int(params, 0);
     if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
-    mutex_lock(g_db_lock);
     var d = db();
     var stmt = patra_prepare(d, "DELETE FROM notes WHERE id = ?");
-    if (stmt == 0) { mutex_unlock(g_db_lock); return resp_json_err(conn, "500 Internal Server Error", "prepare failed"); }
+    if (stmt == 0) {
+        return resp_json_err(conn, "500 Internal Server Error", "prepare failed");
+    }
     patra_bind_int(stmt, 0, id);
     var rc = patra_exec_prepared(d, stmt);
     var affected = patra_rows_affected(d);
     patra_finalize(stmt);
-    mutex_unlock(g_db_lock);
     if (rc != PATRA_OK) { return resp_json_err(conn, "500 Internal Server Error", "delete failed"); }
     # 0 rows matched → nothing to delete → 404.
     if (affected <= 0) { return resp_json_err(conn, "404 Not Found", "note not found"); }
@@ -330,21 +328,31 @@ fn main() {
     # patra handle (db(), connection-per-thread), so both transports are safe
     # together. run_pooled / run_pooled_tls each install the SIGPIPE guard.
     #
-    # TLS pool pinned to ONE worker (max_conns=1) — a CONFIRMED 🔴 finding this
-    # bite surfaced: sigil's crypto primitives use ~60 process-GLOBAL scratch
-    # buffers (SHA-NI/AES-NI state, bignum modexp/Montgomery accumulators), so two
-    # concurrent TLS handshakes race them → corrupted handshake (ECONNRESET) or
-    # memory corruption (SIGSEGV crashes the server). sandhi's own TLS gate never
-    # caught it (its bursts are sequential; its "isolation" pins a worker with a
-    # PLAINTEXT silent socket — never 2 concurrent handshakes). One TLS worker
-    # serializes handshakes → crash-safe, exactly as the old single-threaded
-    # tls_serve was. Plaintext stays at 4 workers (no crypto → no sigil scratch).
-    # Filed upstream; restore the 4-worker TLS pool once sigil is thread-safe.
+    # TLS pool runs 4 workers (max_conns=4), matching plaintext. This was the last
+    # blocker to clear, resolved by a CHAIN of upstream fixes now all shipped:
+    #   1. sigil 3.9.7 — per-thread crypto BANKING (64 banks, cbank() lane per
+    #      thread) replaced the process-global crypto scratch that used to SIGSEGV
+    #      on 2 concurrent handshakes.
+    #   2. cyrius 6.3.15 — array locals are per-thread by default (was: fn-scope
+    #      `var X[N]` shared across threads), killing the multi-worker BAD_SIGNATURE
+    #      (two workers' str_builder response buffers overlapping mid-encrypt).
+    #   3. sigil 3.9.9 — moved the crypto-bank thread-local slot from 0 to 8, ending
+    #      a COLLISION with patra's slot 0. Both libs hardcoded slot 0 in cyrius's
+    #      16-slot thread-local space, so a patra query clobbered sigil's pinned bank
+    #      index; the next cbank() then pointed sigil at the WRONG lane of its
+    #      process-global banked crypto buffers, corrupting a handshake key schedule
+    #      → client RECORD_LAYER_FAILURE. cyrius 6.3.25 root-caused this (deterministic
+    #      — every 4th handshake, NOT the "mixed pattern" it was first filed as) and
+    #      added a thread-local slot-namespace registry (0-4 patra, 8 sigil, 15 here).
+    # Verified on cyrius 6.3.42 / sigil 3.9.9: max_conns=4 (and 8) serve concurrent
+    # HTTPS cleanly under an amplified stress (rejected-untrusted handshakes
+    # interleaved with thousands of valid requests) — 0 errors, 5/5 clean verify.py.
+    # All three findings closed upstream (see FINDINGS). Plaintext also 4 workers.
     thread_create(&_run_plain, router);
     var topts = sandhi_server_options_new();
-    sandhi_server_options_max_conns(topts, 1);
+    sandhi_server_options_max_conns(topts, 4);
     sandhi_server_options_tls(topts, cert_der, cert_der_len, key_pem, kpl);
-    println("yeo-cy-test listening on :8443 (HTTPS, run_pooled_tls + Ed25519, 1 worker — see FINDINGS)");
+    println("yeo-cy-test listening on :8443 (HTTPS, run_pooled_tls + Ed25519, 4 workers)");
     return sandhi_server_run_pooled_tls(INADDR_ANY(), TLS_PORT, &sandhi_server_router_handler_c, router, topts);
 }
 
