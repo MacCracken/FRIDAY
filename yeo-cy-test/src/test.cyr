@@ -196,7 +196,7 @@ fn test_crypto(): i64 {
 # and enforces exp.
 fn test_auth(): i64 {
     auth_init();
-    var tok = auth_issue("admin", 3600);
+    var tok = auth_issue("admin", "admin", 3600);
     var tl = str_len(tok);
     var c = alloc(tl + 1);
     memcpy(c, str_data(tok), tl);
@@ -205,11 +205,16 @@ fn test_auth(): i64 {
     if (sub == 0) { return 1; }                                # valid token rejected
     if (str_len(sub) != 5) { return 2; }
     if (memeq(str_data(sub), "admin", 5) == 0) { return 3; }   # wrong subject
+    # The role claim round-trips (RBAC).
+    var vc = auth_verify_claims(c);
+    if (vc == 0) { return 6; }
+    var rl = json_v_str(json_v_obj_get(vc, "role"));
+    if (_role_is(rl, "admin") == 0) { return 7; }              # role claim wrong/missing
     # Tamper the last byte (a signature char) → must be rejected.
     store8(c + tl - 1, load8(c + tl - 1) ^ 1);
     if (auth_verify_sub(c) != 0) { return 4; }                 # tampered token accepted
     # Expired (exp in the past) → must be rejected.
-    var et = auth_issue("admin", 0 - 100);
+    var et = auth_issue("admin", "admin", 0 - 100);
     var el = str_len(et);
     var ec = alloc(el + 1);
     memcpy(ec, str_data(et), el);

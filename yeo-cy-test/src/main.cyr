@@ -323,6 +323,7 @@ fn main() {
     sandhi_router_add(router, "GET",    "/api/pubkey",    &handle_pubkey);
     sandhi_router_add(router, "POST",   "/api/login",     &handle_login);
     sandhi_router_add(router, "GET",    "/api/me",        &handle_me);
+    sandhi_router_add(router, "GET",    "/api/admin",     &handle_admin);
     sandhi_router_add(router, "GET",    "/api/notes",     &handle_list_notes);
     sandhi_router_add(router, "POST",   "/api/notes",     &handle_create_note);
     sandhi_router_add(router, "GET",    "/api/notes/:id", &handle_get_note);

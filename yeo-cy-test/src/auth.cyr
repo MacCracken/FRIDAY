@@ -28,7 +28,8 @@
 
 var g_jwt_secret     = 0;          # 32-byte HS256 HMAC secret (ephemeral)
 var g_jwt_secret_len = 32;
-var g_admin_pw       = "changeme"; # demo credential; a real deploy configures this
+var g_admin_pw       = "changeme"; # demo admin credential  → role=admin
+var g_user_pw        = "user1234"; # demo non-admin credential → role=user (for RBAC)
 
 fn auth_init(): i64 {
     g_jwt_secret = alloc(32);
@@ -136,17 +137,18 @@ fn _ct_cstr_eq(a, b): i64 {
 
 # ── issue / verify ──
 
-# Issue an HS256 JWT for `sub` (cstr) valid for `ttl` seconds → token str.
+# Issue an HS256 JWT for `sub`/`role` (cstrs) valid for `ttl` seconds → token str.
 # token = base64url(header) "." base64url(payload) "." base64url(HMAC-SHA256(signing_input)).
-fn auth_issue(sub, ttl): i64 {
+fn auth_issue(sub, role, ttl): i64 {
     var now = clock_epoch_secs();
     var hdr = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     var hb = _b64u(hdr, strlen(hdr));
 
     var pj = json_v_obj_new();
-    json_v_obj_set(pj, str_lit("sub"), json_v_str_new(str_from(sub)));
-    json_v_obj_set(pj, str_lit("iat"), json_v_int_new(now));
-    json_v_obj_set(pj, str_lit("exp"), json_v_int_new(now + ttl));
+    json_v_obj_set(pj, str_lit("sub"),  json_v_str_new(str_from(sub)));
+    json_v_obj_set(pj, str_lit("role"), json_v_str_new(str_from(role)));
+    json_v_obj_set(pj, str_lit("iat"),  json_v_int_new(now));
+    json_v_obj_set(pj, str_lit("exp"),  json_v_int_new(now + ttl));
     var pjs = json_v_build(pj);
     var pb = _b64u(str_data(pjs), str_len(pjs));
 
@@ -169,8 +171,9 @@ fn auth_issue(sub, ttl): i64 {
 }
 
 # Verify a bearer token cstr: recompute the HS256 signature and constant-time compare,
-# then decode the payload and enforce `exp`. Returns the `sub` str on success, else 0.
-fn auth_verify_sub(token): i64 {
+# then decode the payload and enforce `exp`. Returns the parsed payload json_v object
+# (the claims: sub/role/iat/exp) on success, else 0. Callers read claims from it.
+fn auth_verify_claims(token): i64 {
     var d1 = _find_byte(token, 46, 0);        # first '.'
     if (d1 <= 0) { return 0; }
     var d2 = _find_byte(token, 46, d1 + 1);   # second '.'
@@ -188,15 +191,30 @@ fn auth_verify_sub(token): i64 {
     var v = json_v_parse_str(raw, _b64u_declen(plen));
     if (v == 0) { return 0; }
     if (json_v_int(json_v_obj_get(v, "exp")) <= clock_epoch_secs()) { return 0; }
+    return v;
+}
+
+# Convenience: the verified subject str, or 0. (Used by the unit invariant.)
+fn auth_verify_sub(token): i64 {
+    var v = auth_verify_claims(token);
+    if (v == 0) { return 0; }
     return json_v_str(json_v_obj_get(v, "sub"));
 }
 
-# Constant-time-ish admin password check (str vs the configured cstr). NB a real
-# deploy hashes with Argon2id — no Cyrius Argon2 yet (a gap; see FINDINGS).
-fn _auth_pw_ok(pw): i64 {
-    var n = strlen(g_admin_pw);
+# Password check: str `pw` equals the configured cstr `expected`. NB a real deploy
+# hashes with Argon2id — no Cyrius Argon2 yet (a gap; see FINDINGS).
+fn _auth_pw_ok(pw, expected): i64 {
+    var n = strlen(expected);
     if (str_len(pw) != n) { return 0; }
-    return memeq(str_data(pw), g_admin_pw, n);
+    return memeq(str_data(pw), expected, n);
+}
+
+# Role claim (str) equals a cstr?
+fn _role_is(role, want): i64 {
+    if (role == 0) { return 0; }
+    var n = strlen(want);
+    if (str_len(role) != n) { return 0; }
+    return memeq(str_data(role), want, n);
 }
 
 # ── handlers ──
@@ -210,26 +228,63 @@ fn handle_login(ctx, conn, buf, blen, params): i64 {
     if (v == 0) { return resp_json_err(conn, "400 Bad Request", "invalid JSON"); }
     var pw = json_v_str(json_v_obj_get(v, "password"));
     if (pw == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'password'"); }
-    if (_auth_pw_ok(pw) == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid credentials"); }
+
+    # Map the credential to a (subject, role). Two demo credentials exercise RBAC.
+    var sub = 0;
+    var role = 0;
+    if (_auth_pw_ok(pw, g_admin_pw) == 1) {
+        sub = "admin"; role = "admin";
+    } else {
+        if (_auth_pw_ok(pw, g_user_pw) == 1) {
+            sub = "user"; role = "user";
+        } else {
+            return resp_json_err(conn, "401 Unauthorized", "invalid credentials");
+        }
+    }
 
     var ttl = 3600;
     var o = json_v_obj_new();
-    json_v_obj_set(o, str_lit("token"),      json_v_str_new(auth_issue("admin", ttl)));
+    json_v_obj_set(o, str_lit("token"),      json_v_str_new(auth_issue(sub, role, ttl)));
     json_v_obj_set(o, str_lit("token_type"), json_v_str_new(str_lit("Bearer")));
     json_v_obj_set(o, str_lit("expires_in"), json_v_int_new(ttl));
     return resp_json(conn, "200 OK", o);
 }
 
-# GET /api/me — requires `Authorization: Bearer <token>`. Returns {sub, authenticated}
-# on a valid, unexpired token, else 401. The protected-route demonstrator.
-fn handle_me(ctx, conn, buf, blen, params): i64 {
+# Extract the Bearer token cstr from the request, or 0 if absent/malformed.
+fn _bearer_token(buf, blen): i64 {
     var authz = sandhi_server_find_header(buf, blen, "Authorization");
-    if (authz == 0) { return resp_json_err(conn, "401 Unauthorized", "missing Authorization header"); }
-    if (_starts_with(authz, "Bearer ") == 0) { return resp_json_err(conn, "401 Unauthorized", "expected Bearer token"); }
-    var sub = auth_verify_sub(authz + 7);
-    if (sub == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid or expired token"); }
+    if (authz == 0) { return 0; }
+    if (_starts_with(authz, "Bearer ") == 0) { return 0; }
+    return authz + 7;
+}
+
+# GET /api/me — requires `Authorization: Bearer <token>`. Returns {sub, role,
+# authenticated} on a valid, unexpired token, else 401. The authentication demonstrator.
+fn handle_me(ctx, conn, buf, blen, params): i64 {
+    var tok = _bearer_token(buf, blen);
+    if (tok == 0) { return resp_json_err(conn, "401 Unauthorized", "missing or malformed Authorization header"); }
+    var v = auth_verify_claims(tok);
+    if (v == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid or expired token"); }
     var o = json_v_obj_new();
-    json_v_obj_set(o, str_lit("sub"),           json_v_str_new(sub));
+    json_v_obj_set(o, str_lit("sub"),           json_v_str_new(json_v_str(json_v_obj_get(v, "sub"))));
+    json_v_obj_set(o, str_lit("role"),          json_v_str_new(json_v_str(json_v_obj_get(v, "role"))));
     json_v_obj_set(o, str_lit("authenticated"), json_v_bool_new(1));
+    return resp_json(conn, "200 OK", o);
+}
+
+# GET /api/admin — RBAC-gated: requires a valid token whose `role` claim is "admin".
+# 401 (unauthenticated: no/invalid token) vs 403 (authenticated but wrong role) are
+# distinguished — the authentication/authorization split.
+fn handle_admin(ctx, conn, buf, blen, params): i64 {
+    var tok = _bearer_token(buf, blen);
+    if (tok == 0) { return resp_json_err(conn, "401 Unauthorized", "missing or malformed Authorization header"); }
+    var v = auth_verify_claims(tok);
+    if (v == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid or expired token"); }
+    var role = json_v_str(json_v_obj_get(v, "role"));
+    if (_role_is(role, "admin") == 0) { return resp_json_err(conn, "403 Forbidden", "requires admin role"); }
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("authorized"), json_v_bool_new(1));
+    json_v_obj_set(o, str_lit("role"),       json_v_str_new(role));
+    json_v_obj_set(o, str_lit("message"),    json_v_str_new(str_lit("admin access granted")));
     return resp_json(conn, "200 OK", o);
 }

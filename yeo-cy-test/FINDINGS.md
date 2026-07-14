@@ -16,10 +16,13 @@ base64url + JSON via **bayan**. The issued token is a standard RFC 7519 JWT,
 independently decoded/validated in Python (verify.py scenario 15) — interop, not just
 self-consistency.
 
-- ✅ **Positive viability verdict: a standards-compliant JWT auth layer is buildable
-  on the Cyrius primitives.** HMAC-SHA256 (sigil) + base64url/JSON (bayan) compose into
-  a valid HS256 JWT that any conforming library parses; login → Bearer `/api/me` →
-  401-on-missing/tampered/expired all behave. Stateless, thread-safe (read-only secret).
+- ✅ **Positive viability verdict: a standards-compliant JWT auth layer + RBAC is
+  buildable on the Cyrius primitives.** HMAC-SHA256 (sigil) + base64url/JSON (bayan)
+  compose into a valid HS256 JWT (with `sub`/`role` claims) that any conforming library
+  parses; login → Bearer `/api/me` → 401-on-missing/tampered/expired all behave. **RBAC
+  added cleanly:** `GET /api/admin` is role-gated, correctly separating **401**
+  (unauthenticated) from **403** (authenticated, wrong role). Stateless, thread-safe
+  (read-only secret).
 - 🔵 **bote (the mapping's JWT target) is VERIFY-ONLY.** `bote/src/jwt.cyr` exports
   `jwt_verify_hs256` + `jwt_b64u_decode` but **no `jwt_create`/encode** — bote is an
   MCP *resource server* that validates incoming bearer tokens, not an issuer/IdP. And

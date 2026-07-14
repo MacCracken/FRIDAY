@@ -4,7 +4,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added — fourth `sy-core` module ported: `auth` → JWT sessions (login + Bearer-protected route)
+### Added — fourth `sy-core` module ported: `auth` → JWT sessions + RBAC (login, Bearer-protected + role-gated routes)
 - **`src/auth.cyr` — SecureYeoman's `auth` module, first bite (JWT sessions).** The
   token core of sy-core's auth (which is JWT + API keys + RBAC + OIDC/PKCE + WebAuthn).
   **`POST /api/login`** checks the admin credential and **issues a signed HS256 JWT**;
@@ -14,9 +14,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Stateless (read-only secret) → thread-safe, no lock.
 - **Independently verified.** New backend **scenario 15**: login → token → `/api/me`
   200 with `sub`; wrong password / no token / tampered token → 401; and the issued
-  token decodes as a **standard RFC 7519 JWT** (alg/typ + sub/iat/exp) in Python —
+  token decodes as a **standard RFC 7519 JWT** (alg/typ + sub/role/iat/exp) in Python —
   interop, not self-consistency. New unit invariant (6th): an issue→verify round-trip
-  returns the subject, and a tampered + an expired token are both rejected.
+  returns the subject + role, and a tampered + an expired token are both rejected.
+- **RBAC.** JWTs carry a `role` claim (two demo credentials → `admin` / `user`), and
+  **`GET /api/admin`** is **role-gated** (`role=admin`) — cleanly separating **401**
+  (no/invalid token) from **403** (valid token, wrong role): the authentication vs
+  authorization split. `GET /api/me` now returns `{sub, role}`. New backend
+  **scenario 16** (admin→200, user→403, none→401).
 - **Findings filed / flagged:**
   - 🔵 **bote (the mapping's JWT target) is verify-only.** Its `src/jwt.cyr` has
     `jwt_verify_hs256` but **no issue path** (it's an MCP *resource server*, not an
@@ -31,8 +36,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     unconfirmed. Worked around with an in-probe `_b64u_decode`. Flagged for upstream
     confirmation (not filed pending root-cause).
 - **Limitations (future bites):** ephemeral HMAC secret (tokens don't survive a
-  restart), plaintext credential, and RBAC / PKCE / WebAuthn still to come. Suite:
-  **6 unit + 41 backend + 10 UI**, green.
+  restart), plaintext credential, and PKCE / OIDC / WebAuthn (+ enforcing RBAC on the
+  note mutations) still to come. Suite: **6 unit + 42 backend + 10 UI**, green.
 
 ### Added — third `sy-core` module ported: `crypto` → sigil (first server-side sigil use beyond TLS)
 - **`src/crypto.cyr` — SecureYeoman's `crypto` module, ported onto sigil.** sy-core's

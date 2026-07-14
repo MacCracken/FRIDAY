@@ -517,6 +517,35 @@ _c15 = (st_login == 200 and tok and st_bad == 401 and st_ok == 200
     f"15. JWT auth: login {st_login}/bad-pw {st_bad}/me {st_ok} sub={me.get('sub')}/"
     f"no-auth {st_noauth}/tampered {st_tamper}/std-JWT {jwt_ok}")
 
+# 16. auth RBAC — role claims + a role-gated route. Two credentials map to roles
+#     (admin / user). GET /api/admin requires role=admin: an admin token → 200, a user
+#     token → 403 (authenticated but unauthorized), no token → 401. The 401-vs-403
+#     split is the authentication/authorization distinction. /api/me carries the role.
+def _auth_get(path, token):
+    r = urllib.request.Request(f"http://{HOST}:{PORT}{path}", method="GET")
+    if token is not None:
+        r.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+_sa, _ab = req("POST", "/api/login", json.dumps({"password": "changeme"}))
+_su, _ub = req("POST", "/api/login", json.dumps({"password": "user1234"}))
+_ta = json.loads(_ab).get("token", "") if _sa == 200 else ""
+_tu = json.loads(_ub).get("token", "") if _su == 200 else ""
+_adm_a, _aab = _auth_get("/api/admin", _ta)
+_adm_u, _ = _auth_get("/api/admin", _tu)
+_adm_n, _ = _auth_get("/api/admin", None)
+_admj = json.loads(_aab) if _adm_a == 200 else {}
+_meu, _meub = _auth_get("/api/me", _tu)
+_meuj = json.loads(_meub) if _meu == 200 else {}
+_c16 = (_su == 200 and _tu and _adm_a == 200 and _admj.get("role") == "admin"
+        and _adm_u == 403 and _adm_n == 401 and _meuj.get("role") == "user")
+(ok if _c16 else bad)(
+    f"16. RBAC: /api/admin admin {_adm_a}/user {_adm_u}/none {_adm_n}; user-role={_meuj.get('role')}")
+
 stop_server(srv)
 
 # ── summary ──

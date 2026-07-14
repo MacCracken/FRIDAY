@@ -85,23 +85,26 @@ known-answer (RFC 6234) for impl-independent correctness. Limitation: the identi
 is **ephemeral** (regenerated per process start) — a persistent sealed key (à la
 sy-core's tee) is a future bite.
 
-**Fourth module: `auth` → JWT sessions (first bite).** sy-core's `auth` is the
-defining SecureYeoman capability (JWT + API keys + RBAC + OIDC/PKCE + WebAuthn). This
-first bite is the token core: **`POST /api/login`** checks the admin credential and
-**issues a signed HS256 JWT** (HS256 = HMAC-SHA256 via sigil — building on the crypto
-module); **`GET /api/me`** is **Bearer-protected** — it recomputes + constant-time
-compares the signature, decodes the payload, enforces `exp`, and returns the subject,
-else 401. `src/auth.cyr` is stateless (read-only HMAC secret → thread-safe, no lock).
-**Independently cross-checked:** the issued token decodes as a standard RFC 7519 JWT
-(alg/typ + sub/iat/exp) in Python (scenario 15). **Findings:** the mapping's target
-**bote** is JWT **verify-only** (an MCP resource server — no issue path) with no thin
-jwt profile, so issuance is built from primitives (filed); **no Cyrius Argon2** for
-password hashing (plaintext compare here — a gap); and **bayan's `base64url_decode`
-returned null** on a valid no-pad round-trip in-probe (worked around with an in-probe
-decoder — root cause unconfirmed, flagged). Limitations (future bites): ephemeral HMAC
-secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
+**Fourth module: `auth` → JWT sessions + RBAC.** sy-core's `auth` is the defining
+SecureYeoman capability (JWT + API keys + RBAC + OIDC/PKCE + WebAuthn). Landed so far:
+**`POST /api/login`** checks a credential and **issues a signed HS256 JWT** (HS256 =
+HMAC-SHA256 via sigil — building on the crypto module) with `sub`/`role` claims (two
+demo credentials → `admin` / `user`); **`GET /api/me`** is **Bearer-protected** — it
+recomputes + constant-time compares the signature, decodes the payload, enforces
+`exp`, and returns `{sub, role}`; **`GET /api/admin`** is **RBAC-gated** (`role=admin`
+required) — cleanly distinguishing **401** (no/invalid token) from **403** (valid
+token, wrong role): authentication vs authorization. `src/auth.cyr` is stateless
+(read-only HMAC secret → thread-safe, no lock). **Independently cross-checked:** the
+issued token decodes as a standard RFC 7519 JWT (alg/typ + sub/role/iat/exp) in Python
+(scenario 15). **Findings:** the mapping's target **bote** is JWT **verify-only** (an
+MCP resource server — no issue path) with no thin jwt profile, so issuance is built
+from primitives (to file); **no Cyrius Argon2** for password hashing (plaintext
+compare here — a gap); and **bayan's `base64url_decode` returned null** on a valid
+no-pad round-trip in-probe (worked around with an in-probe decoder — root cause
+unconfirmed, flagged). Limitations (future bites): ephemeral HMAC secret, plaintext
+credential, and PKCE/OIDC/WebAuthn (+ enforcing RBAC on the note mutations) still to come.
 
-6 unit invariants + **41 backend scenarios** + 10 UI pass — **green + stable** at
+6 unit invariants + **42 backend scenarios** + 10 UI pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -150,7 +153,7 @@ secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
   amplified stress is 0-error at 4 and 8 (see FINDINGS).
   Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET /api/audit`,
   `GET /api/hwinfo`, `GET /api/pubkey`, `POST /api/login`, `GET /api/me`,
-  `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
+  `GET /api/admin` (RBAC), `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
   (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
   `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. Caveat (FINDINGS):
   AUTOINCREMENT reuses ids.
@@ -189,11 +192,12 @@ secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
   `auth_init()` makes a random HS256 HMAC secret. `auth_issue(sub, ttl)` builds a
   standard JWT — `base64url(header)."."base64url(payload)."."base64url(HMAC-SHA256(...))`
   via sigil `hmac_sha256` + bayan `base64url_encode` + `json_v_build`.
-  `auth_verify_sub(token)` recomputes the HMAC, constant-time compares, decodes the
+  `auth_verify_claims(token)` recomputes the HMAC, constant-time compares, decodes the
   payload (an in-probe `_b64u_decode` — bayan's `base64url_decode` misbehaved),
-  enforces `exp`, returns the subject. `handle_login`/`handle_me` are the endpoints;
-  `handle_me` reads the token via `sandhi_server_find_header(…, "Authorization")`.
-  Stateless → no lock.
+  enforces `exp`, and returns the claims obj (`auth_verify_sub` wraps it). Endpoints:
+  `handle_login` (credential → `sub`/`role`), `handle_me`, and `handle_admin` (RBAC:
+  `_role_is(role, "admin")` → 200 / 403). `_bearer_token` reads the token via
+  `sandhi_server_find_header(…, "Authorization")`. Stateless → no lock.
 - `src/hwprobe.cyr` — **the `sy-core` `hwprobe` module, ported onto ai-hwaccel.**
   `hwprobe_init()` (main-thread) calls `hwlog_init()` then
   `registry_detect_no_exec()` (no subprocess spawning) once, caching
@@ -224,11 +228,11 @@ secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
   path `/api/hwinfo` relies on; hardware-agnostic); (5) **sigil crypto** — a server
   Ed25519 sign→verify round-trip (tamper rejected) + a SHA-256 known-answer (RFC
   6234, impl-independent), the `crypto` module's primitives; (6) **auth JWT** — an
-  HS256 issue→verify round-trip returns the subject, and a tampered token + an
-  expired token are both rejected (the `auth` module). Passes via `cyrius run
-  src/test.cyr` (idempotent).
+  HS256 issue→verify round-trip returns the subject and the `role` claim, and a
+  tampered token + an expired token are both rejected (the `auth` module). Passes via
+  `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **41-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **42-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -243,7 +247,8 @@ secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
   Ed25519 + the audit `head_sig` verifies INDEPENDENTLY via OpenSSL Ed25519
   (Python cryptography), and auth (15): `POST /api/login` → HS256 JWT, `GET /api/me`
   Bearer-protected (valid→200 sub, wrong-pw/no-token/tampered→401), token decodes as
-  a standard RFC 7519 JWT**). **All scenarios are stable** (the cyrius 6.3.15
+  a standard RFC 7519 JWT, and RBAC (16): `/api/admin` role-gated — admin→200, user→403,
+  none→401 (the 401-vs-403 authn/authz split)**). **All scenarios are stable** (the cyrius 6.3.15
   str_builder fix removed the concurrency flakiness). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
@@ -251,7 +256,7 @@ secret, plaintext credential, and RBAC/PKCE/WebAuthn still to come.
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
   the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 41 backend e2e + 10 UI e2e.
+- `tests/run.sh` — one command: build + unit + 42 backend e2e + 10 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).
