@@ -1,0 +1,235 @@
+# src/auth.cyr — SecureYeoman `auth` module (first bite: JWT sessions).
+#
+# The fourth sy-core module grown into the probe, and the defining SecureYeoman
+# capability. sy-core's auth is JWT + API keys + RBAC (+ OIDC/PKCE + WebAuthn). This
+# first bite is the core token mechanism: a login endpoint that ISSUES a signed
+# HS256 JWT, and a bearer-protected route that VERIFIES it.
+#
+# CYRIUS TARGET / FINDING: the mapping named **bote** (it advertises "JWT HS256 +
+# PKCE + bearer"), but bote's JWT surface (src/jwt.cyr) is **verify-only** —
+# `jwt_verify_hs256`, no `jwt_create`/encode — because bote is an MCP *resource
+# server* that validates incoming bearer tokens, not an issuer/IdP. It also has no
+# thin "jwt-only" profile (you'd pull the ~93 KB MCP core for one function). So a
+# consumer that needs to ISSUE tokens (a login) builds it from primitives. That's
+# fine here: HS256 = HMAC-SHA256, which sigil already provides (this builds directly
+# on the crypto module), and base64url + JSON come from bayan. Filed as a bote gap
+# in FINDINGS (recommend a thin `bote-jwt` profile with issue + verify).
+#
+# The issued token is a standard RFC 7519 HS256 JWT, so it verifies under any
+# conforming implementation — cross-checked independently against Python's PyJWT/
+# HMAC in tests/verify.py (scenario 15), not just against our own verifier.
+#
+# Statelessness: the HMAC secret is generated once at init and read-only after, so
+# issuing/verifying use only per-call buffers — thread-safe, no lock.
+#
+# LIMITATIONS (future bites): the HMAC secret is EPHEMERAL (per process, so tokens
+# don't survive a restart); the admin credential is a plaintext compare (sy-core
+# uses Argon2id — no Cyrius Argon2 yet, a gap); RBAC / PKCE / WebAuthn are later.
+
+var g_jwt_secret     = 0;          # 32-byte HS256 HMAC secret (ephemeral)
+var g_jwt_secret_len = 32;
+var g_admin_pw       = "changeme"; # demo credential; a real deploy configures this
+
+fn auth_init(): i64 {
+    g_jwt_secret = alloc(32);
+    random_bytes(g_jwt_secret, 32);
+    return 1;
+}
+
+# ── small helpers ──
+
+# base64url-encode a buffer → Cyrius str (base64url_encode returns a cstr).
+fn _b64u(ptr, len): i64 { return str_from(base64url_encode(ptr, len)); }
+
+# Exact decoded byte length of a base64url (no-padding) string of `n` chars.
+fn _b64u_declen(n): i64 {
+    var full = (n / 4) * 3;
+    var rem = n % 4;
+    if (rem == 2) { return full + 1; }
+    if (rem == 3) { return full + 2; }
+    return full;
+}
+
+# base64url char → 6-bit value, or -1 if not a base64url char.
+fn _b64u_val(c): i64 {
+    if ((c >= 65) && (c <= 90))  { return c - 65; }   # A-Z → 0..25
+    if ((c >= 97) && (c <= 122)) { return c - 71; }   # a-z → 26..51
+    if ((c >= 48) && (c <= 57))  { return c + 4; }    # 0-9 → 52..61
+    if (c == 45) { return 62; }                       # '-'
+    if (c == 95) { return 63; }                       # '_'
+    return 0 - 1;
+}
+
+# Decode `elen` base64url (no-padding) chars from `enc` into an owned buffer of
+# _b64u_declen(elen) bytes (NUL-terminated). Returns 0 on an invalid char.
+# In-probe because bayan's base64url_decode did not round-trip its own encode here
+# (returned null on a valid no-pad string — see FINDINGS); bayan's ENCODE is fine.
+fn _b64u_decode(enc, elen): i64 {
+    var out_len = _b64u_declen(elen);
+    var out = alloc(out_len + 1);
+    var si = 0;
+    var di = 0;
+    while (si + 4 <= elen) {
+        var a = _b64u_val(load8(enc + si));
+        var b = _b64u_val(load8(enc + si + 1));
+        var c = _b64u_val(load8(enc + si + 2));
+        var d = _b64u_val(load8(enc + si + 3));
+        if ((a < 0) || (b < 0) || (c < 0) || (d < 0)) { return 0; }
+        store8(out + di,     ((a << 2) | (b >> 4)) & 255);
+        store8(out + di + 1, (((b & 15) << 4) | (c >> 2)) & 255);
+        store8(out + di + 2, (((c & 3) << 6) | d) & 255);
+        si = si + 4;
+        di = di + 3;
+    }
+    var rem = elen - si;
+    if (rem == 2) {
+        var a2 = _b64u_val(load8(enc + si));
+        var b2 = _b64u_val(load8(enc + si + 1));
+        if ((a2 < 0) || (b2 < 0)) { return 0; }
+        store8(out + di, ((a2 << 2) | (b2 >> 4)) & 255);
+    }
+    if (rem == 3) {
+        var a3 = _b64u_val(load8(enc + si));
+        var b3 = _b64u_val(load8(enc + si + 1));
+        var c3 = _b64u_val(load8(enc + si + 2));
+        if ((a3 < 0) || (b3 < 0) || (c3 < 0)) { return 0; }
+        store8(out + di,     ((a3 << 2) | (b3 >> 4)) & 255);
+        store8(out + di + 1, (((b3 & 15) << 4) | (c3 >> 2)) & 255);
+    }
+    store8(out + out_len, 0);
+    return out;
+}
+
+# Index of byte `ch` in cstr `s` at/after `start`, or -1.
+fn _find_byte(s, ch, start): i64 {
+    var i = start;
+    while (load8(s + i) != 0) {
+        if (load8(s + i) == ch) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# cstr `s` starts with cstr `prefix`?
+fn _starts_with(s, prefix): i64 {
+    var i = 0;
+    while (load8(prefix + i) != 0) {
+        if (load8(s + i) != load8(prefix + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Constant-time equality of two NUL-terminated cstrs (length compared first — the
+# length of a base64url signature is not secret; the bytes are).
+fn _ct_cstr_eq(a, b): i64 {
+    var la = strlen(a);
+    if (la != strlen(b)) { return 0; }
+    var diff = 0;
+    var i = 0;
+    while (i < la) {
+        diff = diff | (load8(a + i) ^ load8(b + i));
+        i = i + 1;
+    }
+    return diff == 0;
+}
+
+# ── issue / verify ──
+
+# Issue an HS256 JWT for `sub` (cstr) valid for `ttl` seconds → token str.
+# token = base64url(header) "." base64url(payload) "." base64url(HMAC-SHA256(signing_input)).
+fn auth_issue(sub, ttl): i64 {
+    var now = clock_epoch_secs();
+    var hdr = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+    var hb = _b64u(hdr, strlen(hdr));
+
+    var pj = json_v_obj_new();
+    json_v_obj_set(pj, str_lit("sub"), json_v_str_new(str_from(sub)));
+    json_v_obj_set(pj, str_lit("iat"), json_v_int_new(now));
+    json_v_obj_set(pj, str_lit("exp"), json_v_int_new(now + ttl));
+    var pjs = json_v_build(pj);
+    var pb = _b64u(str_data(pjs), str_len(pjs));
+
+    # signing input = hb "." pb
+    var sib = str_builder_new();
+    str_builder_add(sib, hb);
+    str_builder_add_cstr(sib, ".");
+    str_builder_add(sib, pb);
+    var si = str_builder_build(sib);
+
+    var sig = alloc(32);
+    hmac_sha256(g_jwt_secret, g_jwt_secret_len, str_data(si), str_len(si), sig);
+    var sgb = _b64u(sig, 32);
+
+    var tb = str_builder_new();
+    str_builder_add(tb, si);
+    str_builder_add_cstr(tb, ".");
+    str_builder_add(tb, sgb);
+    return str_builder_build(tb);
+}
+
+# Verify a bearer token cstr: recompute the HS256 signature and constant-time compare,
+# then decode the payload and enforce `exp`. Returns the `sub` str on success, else 0.
+fn auth_verify_sub(token): i64 {
+    var d1 = _find_byte(token, 46, 0);        # first '.'
+    if (d1 <= 0) { return 0; }
+    var d2 = _find_byte(token, 46, d1 + 1);   # second '.'
+    if (d2 <= d1 + 1) { return 0; }
+
+    # signing input is token[0, d2) = header "." payload; recompute the HMAC.
+    var sig = alloc(32);
+    hmac_sha256(g_jwt_secret, g_jwt_secret_len, token, d2, sig);
+    if (_ct_cstr_eq(base64url_encode(sig, 32), token + d2 + 1) == 0) { return 0; }
+
+    # Signature OK — decode the payload segment and enforce exp.
+    var plen = d2 - d1 - 1;
+    var raw = _b64u_decode(token + d1 + 1, plen);
+    if (raw == 0) { return 0; }
+    var v = json_v_parse_str(raw, _b64u_declen(plen));
+    if (v == 0) { return 0; }
+    if (json_v_int(json_v_obj_get(v, "exp")) <= clock_epoch_secs()) { return 0; }
+    return json_v_str(json_v_obj_get(v, "sub"));
+}
+
+# Constant-time-ish admin password check (str vs the configured cstr). NB a real
+# deploy hashes with Argon2id — no Cyrius Argon2 yet (a gap; see FINDINGS).
+fn _auth_pw_ok(pw): i64 {
+    var n = strlen(g_admin_pw);
+    if (str_len(pw) != n) { return 0; }
+    return memeq(str_data(pw), g_admin_pw, n);
+}
+
+# ── handlers ──
+
+# POST /api/login {"password":"..."} → {token, token_type, expires_in} or 401.
+fn handle_login(ctx, conn, buf, blen, params): i64 {
+    var bptr = http_body_ptr(buf, blen);
+    var bln = http_body_len(buf, blen);
+    if (bptr == 0 || bln <= 0) { return resp_json_err(conn, "400 Bad Request", "missing request body"); }
+    var v = json_v_parse_str(bptr, bln);
+    if (v == 0) { return resp_json_err(conn, "400 Bad Request", "invalid JSON"); }
+    var pw = json_v_str(json_v_obj_get(v, "password"));
+    if (pw == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'password'"); }
+    if (_auth_pw_ok(pw) == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid credentials"); }
+
+    var ttl = 3600;
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("token"),      json_v_str_new(auth_issue("admin", ttl)));
+    json_v_obj_set(o, str_lit("token_type"), json_v_str_new(str_lit("Bearer")));
+    json_v_obj_set(o, str_lit("expires_in"), json_v_int_new(ttl));
+    return resp_json(conn, "200 OK", o);
+}
+
+# GET /api/me — requires `Authorization: Bearer <token>`. Returns {sub, authenticated}
+# on a valid, unexpired token, else 401. The protected-route demonstrator.
+fn handle_me(ctx, conn, buf, blen, params): i64 {
+    var authz = sandhi_server_find_header(buf, blen, "Authorization");
+    if (authz == 0) { return resp_json_err(conn, "401 Unauthorized", "missing Authorization header"); }
+    if (_starts_with(authz, "Bearer ") == 0) { return resp_json_err(conn, "401 Unauthorized", "expected Bearer token"); }
+    var sub = auth_verify_sub(authz + 7);
+    if (sub == 0) { return resp_json_err(conn, "401 Unauthorized", "invalid or expired token"); }
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("sub"),           json_v_str_new(sub));
+    json_v_obj_set(o, str_lit("authenticated"), json_v_bool_new(1));
+    return resp_json(conn, "200 OK", o);
+}

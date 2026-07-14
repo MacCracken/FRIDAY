@@ -472,6 +472,51 @@ except Exception:
     f"14. /api/pubkey Ed25519 + audit head_sig "
     f"{'verifies independently (OpenSSL)' if c14_verified else 'well-formed'} (alg={pub.get('alg')})")
 
+# 15. auth → JWT sessions (sy-core's `auth`, first bite). POST /api/login issues an
+#     HS256 JWT (sigil HMAC); GET /api/me is Bearer-protected. Wrong password → 401;
+#     a valid token → 200 with the subject; no token / a tampered token → 401. The
+#     issued token is independently decoded as a standard RFC 7519 JWT (alg/typ +
+#     sub/iat/exp claims) — interop, not just self-consistency.
+st_login, lb = req("POST", "/api/login", json.dumps({"password": "changeme"}))
+login = json.loads(lb) if st_login == 200 else {}
+tok = login.get("token", "")
+st_bad, _bb = req("POST", "/api/login", json.dumps({"password": "nope"}))
+
+def _me(token):
+    r = urllib.request.Request(f"http://{HOST}:{PORT}/api/me", method="GET")
+    if token is not None:
+        r.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+st_ok, meb = _me(tok)
+me = json.loads(meb) if st_ok == 200 else {}
+st_noauth, _ = _me(None)
+st_tamper, _ = _me(tok + "x")
+
+# Independent standard-JWT structure/claims decode (base64url segments).
+def _b64u_dec(s):
+    import base64
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+jwt_ok = False
+try:
+    _pt = tok.split(".")
+    _h = json.loads(_b64u_dec(_pt[0])); _p = json.loads(_b64u_dec(_pt[1]))
+    jwt_ok = (_h.get("alg") == "HS256" and _h.get("typ") == "JWT"
+              and _p.get("sub") == "admin" and "iat" in _p and _p.get("exp", 0) > _p.get("iat", 0))
+except Exception:
+    jwt_ok = False
+
+_c15 = (st_login == 200 and tok and st_bad == 401 and st_ok == 200
+        and me.get("sub") == "admin" and me.get("authenticated") is True
+        and st_noauth == 401 and st_tamper == 401 and jwt_ok)
+(ok if _c15 else bad)(
+    f"15. JWT auth: login {st_login}/bad-pw {st_bad}/me {st_ok} sub={me.get('sub')}/"
+    f"no-auth {st_noauth}/tampered {st_tamper}/std-JWT {jwt_ok}")
+
 stop_server(srv)
 
 # ── summary ──

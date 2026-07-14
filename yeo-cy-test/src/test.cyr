@@ -16,9 +16,13 @@
 #   5. sigil crypto: an Ed25519 sign→verify round-trip (tamper is rejected) and a
 #      SHA-256 known-answer (RFC 6234 vector, independent of the impl) — the sy-core
 #      `crypto` module (src/crypto.cyr) integration.
+#   6. auth JWT: an HS256 issue→verify round-trip returns the subject; a tampered
+#      token and an expired token are both rejected — the sy-core `auth` module
+#      (src/auth.cyr) integration.
 
 include "src/httpd.cyr"
 include "src/crypto.cyr"
+include "src/auth.cyr"
 
 # Returns 0 on pass, non-zero on failure.
 fn test_bind_text_verbatim_and_safe(): i64 {
@@ -185,6 +189,35 @@ fn test_crypto(): i64 {
     return 0;
 }
 
+# Returns 0 on pass, non-zero (case code) on failure. Consumer-side guard on the
+# `auth` module (src/auth.cyr): an issued HS256 JWT verifies and yields its subject,
+# a tampered token is rejected, and an expired token is rejected. The token is
+# issued with sigil HMAC-SHA256; verification recomputes + constant-time compares
+# and enforces exp.
+fn test_auth(): i64 {
+    auth_init();
+    var tok = auth_issue("admin", 3600);
+    var tl = str_len(tok);
+    var c = alloc(tl + 1);
+    memcpy(c, str_data(tok), tl);
+    store8(c + tl, 0);
+    var sub = auth_verify_sub(c);
+    if (sub == 0) { return 1; }                                # valid token rejected
+    if (str_len(sub) != 5) { return 2; }
+    if (memeq(str_data(sub), "admin", 5) == 0) { return 3; }   # wrong subject
+    # Tamper the last byte (a signature char) → must be rejected.
+    store8(c + tl - 1, load8(c + tl - 1) ^ 1);
+    if (auth_verify_sub(c) != 0) { return 4; }                 # tampered token accepted
+    # Expired (exp in the past) → must be rejected.
+    var et = auth_issue("admin", 0 - 100);
+    var el = str_len(et);
+    var ec = alloc(el + 1);
+    memcpy(ec, str_data(et), el);
+    store8(ec + el, 0);
+    if (auth_verify_sub(ec) != 0) { return 5; }                # expired token accepted
+    return 0;
+}
+
 fn main() {
     alloc_init();
 
@@ -233,6 +266,15 @@ fn main() {
         return 1;
     }
     println("ok: sigil Ed25519 sign/verify + SHA-256 known-answer");
+
+    var au = test_auth();
+    if (au != 0) {
+        print("FAIL: auth JWT (issue/verify/tamper/expiry) (code ", 49);
+        fmt_int(au);
+        println(")");
+        return 1;
+    }
+    println("ok: auth HS256 JWT issue/verify + tamper & expiry rejected");
     return 0;
 }
 

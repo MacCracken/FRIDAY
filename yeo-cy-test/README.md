@@ -30,6 +30,8 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   - `GET  /api/audit`       → audit-chain status `{ entries, verified, head }`
   - `GET  /api/hwinfo`      → hardware-accelerator summary `{ device_count, gpu_count, … }`
   - `GET  /api/pubkey`      → server Ed25519 identity public key `{ alg, pubkey }`
+  - `POST /api/login`       → issue an HS256 JWT for `{ "password": "…" }`
+  - `GET  /api/me`          → Bearer-protected; returns the authenticated `{ sub }`
   - `GET  /api/notes`       → list notes (JSON array)
   - `POST /api/notes`       → create a note from `{ "body": "…" }`
   - `GET|PUT|DELETE /api/notes/:id` → fetch / replace / delete one note
@@ -53,6 +55,12 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   identity keypair published at `GET /api/pubkey`, used to **sign the audit chain
   head** (`head_sig` on `GET /api/audit`) — server authenticity on top of libro's
   tamper-evidence, independently verified against OpenSSL Ed25519.
+- **Auth** — JWT sessions (sy-core's `auth`, first bite). **The fourth module
+  ported.** `POST /api/login` issues a signed **HS256 JWT** (HMAC-SHA256 via sigil,
+  building on crypto); `GET /api/me` is **Bearer-protected** (signature + `exp`
+  enforced). The token is a standard RFC 7519 JWT, independently decoded/validated in
+  the tests. (bote — the mapped JWT lib — is verify-only, so issuance is built from
+  primitives; see FINDINGS.)
 - **Frontend** — `web/app.tsx` is the typed source of truth: a notes dashboard
   (Home status, list+add, and a `#/notes/:id` detail/edit view) that drives the
   full CRUD API from the browser. `web/app.js` is **generated** from it by
@@ -95,7 +103,7 @@ curl -s localhost:8080/api/notes
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 40 backend e2e + 10 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 41 backend e2e + 10 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -104,15 +112,16 @@ emitted frontend against the backend) each start/stop their own server.
 ## Layout
 
 ```
-src/main.cyr     — handlers, route registration, patra CRUD, audit+hwprobe+crypto wiring, dual HTTP+HTTPS serve
+src/main.cyr     — handlers, route registration, patra CRUD, audit+hwprobe+crypto+auth wiring, dual HTTP+HTTPS serve
 src/httpd.cyr    — JSON/file response helpers + body accessors over sandhi's server
 src/audit.cyr    — sy-core `audit` module → libro patrastore (persistent hash-linked audit chain; GET /api/audit)
 src/hwprobe.cyr  — sy-core `hwprobe` module → ai-hwaccel (accelerator detection; GET /api/hwinfo)
 src/crypto.cyr   — sy-core `crypto` module → sigil (Ed25519 keypair/sign; GET /api/pubkey + audit head_sig)
-src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel, sigil crypto)
-tests/verify.py  — 40-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+src/auth.cyr     — sy-core `auth` module → JWT sessions (HS256 login; GET /api/me bearer-protected)
+src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel, sigil crypto, auth JWT)
+tests/verify.py  — 41-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
 tests/ui_check.mjs — headless full-stack UI e2e (drives the emitted app.js vs the backend)
-tests/run.sh     — one command: build + unit + 40 backend + 10 UI
+tests/run.sh     — one command: build + unit + 41 backend + 10 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -143,19 +152,21 @@ collision → `g_dbpath` rename; the multi-worker-TLS slot-0 collision → `max_
 `str_builder`/array-local codegen; patra's table-cache race; both sandhi findings;
 sigil's concurrent-handshake crash.) No new findings this cycle.
 
-**Now growing into the real port. Three `sy-core` modules are ported in:** **`audit` →
+**Now growing into the real port. Four `sy-core` modules are ported in:** **`audit` →
 [libro](https://github.com/MacCracken/libro)** (a **persistent** hash-linked audit
 chain via libro's `patrastore` — survives a restart, holds under full concurrency),
 **`hwprobe` → [ai-hwaccel](https://github.com/MacCracken/ai-hwaccel)** (accelerator
 detection at `GET /api/hwinfo`, no subprocess spawning), and **`crypto` →
 [sigil](https://github.com/MacCracken/sigil)** (server Ed25519 identity at
-`GET /api/pubkey`, signing the audit head — verified against OpenSSL Ed25519). Making
-audit durable meant closing a real corruption the probe hit three times — a single
-quote in a value silently dropped the audit record — **fixed upstream and adopted
-here: patra 1.12.10** (standard `''` escaping + `patra_quote_str`) **and libro 2.8.1**
-(bound INSERT in `patrastore_append`), both driven by this probe. The suite is **green
-+ stable** (5 unit + **40 backend** + 10 UI, max_conns=4). Details in
-[FINDINGS.md](FINDINGS.md); each finding is filed in its repo's `docs/development/issues/`.
+`GET /api/pubkey`, signing the audit head — verified against OpenSSL Ed25519), and
+**`auth`** (JWT sessions — `POST /api/login` issues an HS256 JWT via sigil HMAC,
+`GET /api/me` is Bearer-protected; standard RFC 7519 token). Making audit durable meant
+closing a real corruption the probe hit three times — a single quote in a value
+silently dropped the audit record — **fixed upstream and adopted here: patra 1.12.10**
+(standard `''` escaping + `patra_quote_str`) **and libro 2.8.1** (bound INSERT in
+`patrastore_append`), both driven by this probe. The suite is **green + stable** (6
+unit + **41 backend** + 10 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
+each finding is filed in its repo's `docs/development/issues/`.
 
 ## License
 

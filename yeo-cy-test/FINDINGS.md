@@ -7,6 +7,45 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — `auth` → JWT sessions: works on sigil+bayan; bote is verify-only; a bayan base64url snag (2026-07-13)
+
+Fourth `sy-core` module ported (`src/auth.cyr`, first bite): `POST /api/login` issues
+a signed HS256 JWT and `GET /api/me` is Bearer-protected (signature + `exp` enforced,
+subject returned). HS256 = HMAC-SHA256 via **sigil** (building on the crypto module),
+base64url + JSON via **bayan**. The issued token is a standard RFC 7519 JWT,
+independently decoded/validated in Python (verify.py scenario 15) — interop, not just
+self-consistency.
+
+- ✅ **Positive viability verdict: a standards-compliant JWT auth layer is buildable
+  on the Cyrius primitives.** HMAC-SHA256 (sigil) + base64url/JSON (bayan) compose into
+  a valid HS256 JWT that any conforming library parses; login → Bearer `/api/me` →
+  401-on-missing/tampered/expired all behave. Stateless, thread-safe (read-only secret).
+- 🔵 **bote (the mapping's JWT target) is VERIFY-ONLY.** `bote/src/jwt.cyr` exports
+  `jwt_verify_hs256` + `jwt_b64u_decode` but **no `jwt_create`/encode** — bote is an
+  MCP *resource server* that validates incoming bearer tokens, not an issuer/IdP. And
+  there's no thin `jwt`-only profile: you'd pull the ~93 KB `dist/bote-core.cyr` (MCP,
+  six transports) for one verify fn. So a consumer that must ISSUE tokens (a login)
+  builds it from primitives — which is what this bite does. **Ask (filed to bote): a
+  thin `bote-jwt` profile exposing issue + verify** (mirrors the sandhi server-profile
+  split this probe drove). *(To file — bote; documented here, no bote issue created yet.)*
+- 🔵 **No Cyrius Argon2 (password hashing).** sy-core hashes the admin password with
+  **Argon2id**; the ecosystem has no Argon2 (sigil is Ed25519/SHA/HMAC/HKDF/AES-GCM).
+  The probe does a length-checked plaintext compare as a placeholder — a real login
+  needs a memory-hard password-hash primitive. Gap noted (candidate: a sigil `argon2`
+  or a new `phal`-style lib). *(Gap — sigil/ecosystem.)*
+- 🟡 **bayan `base64url_decode` returned NULL on a valid no-pad round-trip in-probe.**
+  `base64url_decode(base64url_encode("hello", 5), 7)` returned 0 (the encoder's output
+  is standard base64url — Python decodes the probe's tokens fine). The dist impl
+  (`lib/bayan.cyr:131`) *reads* correct (strips padding, maps via `_b64u_enc`), so the
+  root cause isn't pinned (a build-time table/init subtlety, or a consumer-usage
+  requirement I missed). **Worked around** with a ~30-line in-probe `_b64u_decode`.
+  **Flagged for upstream confirmation — NOT filed** pending a root-cause repro. If
+  confirmed, it's a data-format round-trip bug; if it's a usage requirement, bayan
+  should document it. *(Unconfirmed — bayan.)*
+- **Limitations (future bites):** ephemeral HMAC secret (tokens don't survive restart —
+  a persistent sealed secret, à la sy-core's tee); plaintext credential (needs Argon2);
+  RBAC (protect `/api/notes` by role), PKCE/OIDC, and WebAuthn still to come.
+
 ## Update — `crypto` → sigil: server-side Ed25519 works and interops with OpenSSL (2026-07-13)
 
 Third `sy-core` module ported (`src/crypto.cyr`), and the **first server-side use of

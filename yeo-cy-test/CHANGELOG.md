@@ -4,6 +4,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — fourth `sy-core` module ported: `auth` → JWT sessions (login + Bearer-protected route)
+- **`src/auth.cyr` — SecureYeoman's `auth` module, first bite (JWT sessions).** The
+  token core of sy-core's auth (which is JWT + API keys + RBAC + OIDC/PKCE + WebAuthn).
+  **`POST /api/login`** checks the admin credential and **issues a signed HS256 JWT**;
+  **`GET /api/me`** is **Bearer-protected** (recompute + constant-time compare the
+  signature, decode payload, enforce `exp`, return the subject, else 401). HS256 =
+  HMAC-SHA256 via **sigil** (building on the crypto module) + base64url/JSON via bayan.
+  Stateless (read-only secret) → thread-safe, no lock.
+- **Independently verified.** New backend **scenario 15**: login → token → `/api/me`
+  200 with `sub`; wrong password / no token / tampered token → 401; and the issued
+  token decodes as a **standard RFC 7519 JWT** (alg/typ + sub/iat/exp) in Python —
+  interop, not self-consistency. New unit invariant (6th): an issue→verify round-trip
+  returns the subject, and a tampered + an expired token are both rejected.
+- **Findings filed / flagged:**
+  - 🔵 **bote (the mapping's JWT target) is verify-only.** Its `src/jwt.cyr` has
+    `jwt_verify_hs256` but **no issue path** (it's an MCP *resource server*, not an
+    IdP), and no thin `jwt`-only profile (you'd pull the ~93 KB MCP core for one fn).
+    So issuance is built from primitives here. Recommend a `bote-jwt` profile with
+    issue + verify. (Filed to bote.)
+  - 🔵 **No Cyrius Argon2** (sy-core hashes the admin password with Argon2id) — the
+    probe does a length-checked plaintext compare for now; a real deploy needs a
+    password-hash primitive. (Gap noted.)
+  - 🟡 **bayan `base64url_decode` returned null on a valid no-pad round-trip in-probe**
+    (its own `base64url_encode` output). The dist impl reads correct; root cause
+    unconfirmed. Worked around with an in-probe `_b64u_decode`. Flagged for upstream
+    confirmation (not filed pending root-cause).
+- **Limitations (future bites):** ephemeral HMAC secret (tokens don't survive a
+  restart), plaintext credential, and RBAC / PKCE / WebAuthn still to come. Suite:
+  **6 unit + 41 backend + 10 UI**, green.
+
 ### Added — third `sy-core` module ported: `crypto` → sigil (first server-side sigil use beyond TLS)
 - **`src/crypto.cyr` — SecureYeoman's `crypto` module, ported onto sigil.** sy-core's
   crypto is the primitive layer (AES-GCM/X25519/Ed25519/SHA-2/HMAC/HKDF) that
