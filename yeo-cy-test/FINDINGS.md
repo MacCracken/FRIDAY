@@ -7,6 +7,33 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — `crypto` → sigil: server-side Ed25519 works and interops with OpenSSL (2026-07-13)
+
+Third `sy-core` module ported (`src/crypto.cyr`), and the **first server-side use of
+sigil beyond TLS**. The server generates an Ed25519 identity keypair
+(`ed25519_generate_keypair`), publishes it at `GET /api/pubkey`, and signs the audit
+chain's head hash (`head_sig` on `GET /api/audit`) — server authenticity layered on
+libro's tamper-evidence.
+
+- ✅ **Positive viability verdict: sigil is a viable pure-Cyrius server-side crypto
+  stack.** Ed25519 keygen / sign / verify and SHA-256 all work off the handshake path,
+  and the server signature **interoperates with a standard implementation**: Python's
+  `cryptography` (OpenSSL Ed25519) verifies `head_sig` against `/api/pubkey`
+  (verify.py scenario 14), and `sha256_hex("abc")` matches the RFC 6234 known-answer
+  (unit invariant). Not just self-consistent — cross-checked against OpenSSL.
+- 🔵 **DX papercut (fixed in-probe, no upstream bug): sigil's `hex_encode` /
+  `sha256_hex` return a NUL-terminated CSTR, not a Cyrius `str`.** Passing the result
+  straight to `json_v_str_new` (which expects a `str` struct) misreads the pointer and
+  crashes the response handler — reproduced (empty response on `/api/pubkey`,
+  worker-only, so it first looked like a threading bug; isolated single-threaded to
+  the type). Fix: wrap in `str_from(hex_encode(...))`. Worth a note for consumers who
+  expect the `*_hex` helpers to return a `str` like most string-producing APIs; a
+  doc-comment on the return type (or `*_hex_str` variants) would remove the trap.
+- **Concurrency:** keys are generated once at init and read-only after, so signing is
+  thread-safe (per-call signature buffer); the audit-head signing rides the existing
+  `g_audit_lock`. **Limitation:** the identity key is ephemeral (regenerated per
+  process) — a persistent sealed key (à la sy-core's `tee`) is a future bite.
+
 ## Update — the single-quote corruption: filed, FIXED at both layers, adopted → audit chain now durable (2026-07-13)
 
 The headline of this session, and the probe working exactly as intended: a real

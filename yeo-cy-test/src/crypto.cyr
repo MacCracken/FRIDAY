@@ -1,0 +1,68 @@
+# src/crypto.cyr — SecureYeoman `crypto` module, ported onto sigil.
+#
+# The third sy-core module grown into the probe, and the first SERVER-SIDE use of
+# sigil beyond TLS. sy-core's crypto module (crates/sy-core/src/crypto/mod.rs) is
+# the primitive layer — AES-GCM, X25519, Ed25519, SHA-2, HMAC, HKDF — that
+# audit/auth/tee all lean on. Its Cyrius target is **sigil** (already Cyrius, and
+# already linked here for TLS). This bite exposes the Ed25519 + SHA-256 primitives
+# and puts them to work: the server holds an Ed25519 identity keypair, publishes its
+# public key at GET /api/pubkey, and SIGNS the audit chain's head hash so a client
+# can cryptographically verify the audit log came from this server (authenticity on
+# top of libro's tamper-evidence).
+#
+# Keys are generated once at startup and are READ-ONLY thereafter, so signing is
+# thread-safe (per-call signature buffer; no shared mutable state) — sigil's crypto
+# is per-thread-banked (3.9.7+), the same path TLS exercises concurrently. The audit
+# head is signed inside audit_json under g_audit_lock, so that path is serialized too.
+#
+# LIMITATION (future bite): the identity key is EPHEMERAL — regenerated each process
+# start, so the published pubkey changes on restart. A persistent key (seed sealed at
+# rest, à la sy-core's tee) is the natural follow-on.
+#
+# sigil API used (grounded against lib/sigil.cyr): ed25519_init();
+#   ed25519_generate_keypair(sk_out[64], pk_out[32]); ed25519_sign(sk, msg, len, sig_out[64]);
+#   ed25519_verify(pk, msg, len, sig) -> 1 ok / 0 fail; sha256_hex(data, len) -> hex str;
+#   hex_encode(bytes, len) -> hex str.
+
+var g_crypto_sk = 0;   # 64-byte Ed25519 secret key (heap, read-only after init)
+var g_crypto_pk = 0;   # 32-byte Ed25519 public key (heap, read-only after init)
+
+# One-time init on the main thread, before any worker spawns. Generates the server's
+# Ed25519 identity keypair. (ed25519_init is idempotent — audit_init also calls it.)
+fn crypto_init(): i64 {
+    ed25519_init();
+    g_crypto_sk = alloc(64);
+    g_crypto_pk = alloc(32);
+    ed25519_generate_keypair(g_crypto_sk, g_crypto_pk);
+    return 1;
+}
+
+# The server's Ed25519 public key as a 64-hex-char `str` (32 raw bytes). NB
+# sigil's hex_encode returns a NUL-terminated cstr, so wrap it in a Cyrius `str`
+# (str_from) for json_v_str_new / resp_*.
+fn crypto_pubkey_hex(): i64 {
+    return str_from(hex_encode(g_crypto_pk, 32));
+}
+
+# Sign msg (ptr, len) with the server key → a 128-hex-char `str` (64-byte signature).
+# The signature buffer is per-call (no shared state), so this is thread-safe.
+fn crypto_sign_hex(msg_ptr, msg_len): i64 {
+    var sig = alloc(64);
+    ed25519_sign(g_crypto_sk, msg_ptr, msg_len, sig);
+    return str_from(hex_encode(sig, 64));
+}
+
+# Verify a 64-byte signature (sig_ptr) over msg (ptr, len) against the server pubkey.
+# Returns 1 on a valid signature, 0 otherwise.
+fn crypto_verify(msg_ptr, msg_len, sig_ptr): i64 {
+    return ed25519_verify(g_crypto_pk, msg_ptr, msg_len, sig_ptr);
+}
+
+# GET /api/pubkey — the server's Ed25519 identity public key (hex), so a client can
+# verify server signatures (e.g. the audit head_sig).
+fn handle_pubkey(ctx, conn, buf, blen, params): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("alg"),    json_v_str_new(str_lit("ed25519")));
+    json_v_obj_set(o, str_lit("pubkey"), json_v_str_new(crypto_pubkey_hex()));
+    return resp_json(conn, "200 OK", o);
+}

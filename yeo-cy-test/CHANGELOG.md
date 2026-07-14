@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — third `sy-core` module ported: `crypto` → sigil (first server-side sigil use beyond TLS)
+- **`src/crypto.cyr` — SecureYeoman's `crypto` module, ported onto sigil.** sy-core's
+  crypto is the primitive layer (AES-GCM/X25519/Ed25519/SHA-2/HMAC/HKDF) that
+  audit/auth/tee lean on; sigil is its Cyrius target (already linked for TLS — this is
+  the first **server-side** use beyond the handshake). `crypto_init()` generates a
+  server **Ed25519 identity keypair** (`ed25519_generate_keypair`), read-only after
+  init so signing is thread-safe.
+- **`GET /api/pubkey`** publishes the server's Ed25519 public key (`{alg, pubkey}`),
+  and **`GET /api/audit` now includes `head_sig`** — an Ed25519 signature over the
+  audit chain's head hash (signed under `g_audit_lock`). So a client gets **server
+  authenticity** on top of libro's tamper-evidence: the audit log is provably from
+  this server.
+- **Independently verified.** New backend **scenario 14** verifies `head_sig` against
+  `/api/pubkey` using Python's `cryptography` (OpenSSL Ed25519) — proving sigil's
+  server-side signature interoperates with a standard implementation, not just itself
+  (falls back to a structural check if `cryptography` is absent). New unit invariant
+  (5th): a sign→verify round-trip (tamper rejected) + a **SHA-256 known-answer** (RFC
+  6234 `"abc"` vector) for impl-independent correctness.
+- **Gotcha fixed in-probe:** sigil's `hex_encode` returns a **cstr**, not a Cyrius
+  `str`, so `crypto_pubkey_hex`/`crypto_sign_hex` wrap it in `str_from` before
+  `json_v_str_new` (passing the raw cstr crashed the response handler).
+- **Limitation (future bite):** the identity key is **ephemeral** — regenerated each
+  process start, so the pubkey changes on restart. A persistent sealed key (à la
+  sy-core's `tee`) is the natural follow-on. Suite: **5 unit + 40 backend + 10 UI**,
+  green.
+
 ### Changed — audit chain is now DURABLE (libro patrastore); adopted patra 1.12.10 + libro 2.8.1 (the quote-corruption fixes this probe drove)
 - **Bumped `[deps.patra]` 1.12.9 → 1.12.10 and `[deps.libro]` 2.8.0 → 2.8.1.** Both
   ship the fix for the single-quote corruption this probe hit for the third time:

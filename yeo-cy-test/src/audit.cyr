@@ -99,6 +99,10 @@ fn audit_json(): i64 {
     var head = g_audit_head;
     if (head == 0) { head = str_lit(""); }
     json_v_obj_set(o, str_lit("head"),       json_v_str_new(head));
+    # head_sig: an Ed25519 signature (crypto module → sigil) over the head hash, so a
+    # client with GET /api/pubkey can verify the chain head is authentically from this
+    # server — authenticity layered on libro's tamper-evidence. Signed under the lock.
+    json_v_obj_set(o, str_lit("head_sig"),   json_v_str_new(crypto_sign_hex(str_data(head), str_len(head))));
     json_v_obj_set(o, str_lit("persistent"), json_v_bool_new(1));
     mutex_unlock(g_audit_lock);
     return o;

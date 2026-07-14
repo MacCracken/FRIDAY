@@ -445,6 +445,33 @@ _hwok = (st == 200 and all(k in hw for k in _hwkeys)
 (ok if _hwok else bad)(
     f"13. /api/hwinfo -> hw summary (devices={hw.get('device_count')}, gpu={hw.get('gpu_count')}, mem={hw.get('total_memory_bytes')})")
 
+# 14. crypto → sigil — the third sy-core module, and the first server-side use of
+#     sigil beyond TLS. The server holds an Ed25519 identity key: GET /api/pubkey
+#     publishes it, and GET /api/audit signs the chain head (head_sig). INDEPENDENT
+#     cross-check: verify head_sig against the pubkey with Python's cryptography
+#     (OpenSSL Ed25519) — proving sigil's server signature interoperates with a
+#     standard implementation, not just itself. Falls back to a structural check if
+#     `cryptography` isn't installed (so CI without it still passes).
+st, pb = req("GET", "/api/pubkey")
+pub = json.loads(pb) if st == 200 else {}
+st2, ab = req("GET", "/api/audit")
+aud = json.loads(ab) if st2 == 200 else {}
+c14_wellformed = (pub.get("alg") == "ed25519" and len(pub.get("pubkey", "")) == 64
+                  and len(aud.get("head_sig", "")) == 128)
+c14_verified = None  # None = cryptography unavailable (structural check only)
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    _pk = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub["pubkey"]))
+    _pk.verify(bytes.fromhex(aud["head_sig"]), aud["head"].encode())  # raises if invalid
+    c14_verified = True
+except ImportError:
+    c14_verified = None
+except Exception:
+    c14_verified = False
+(ok if c14_wellformed and c14_verified is not False else bad)(
+    f"14. /api/pubkey Ed25519 + audit head_sig "
+    f"{'verifies independently (OpenSSL)' if c14_verified else 'well-formed'} (alg={pub.get('alg')})")
+
 stop_server(srv)
 
 # ── summary ──

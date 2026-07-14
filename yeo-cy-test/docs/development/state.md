@@ -71,7 +71,21 @@ caches the summary JSON; **`GET /api/hwinfo`** serves it. On this host it report
 gpu_count, tpu_count, npu_count, warnings}` — e.g. 2 devices / 1 GPU / ~64 GB. The
 cached string is immutable, so all workers serve it lock-free.
 
-4 unit invariants + **39 backend scenarios** + 10 UI pass — **green + stable** at
+**Third module: `crypto` → sigil (first server-side sigil use beyond TLS).** sy-core's
+`crypto` is the primitive layer (AES-GCM/X25519/Ed25519/SHA-2/HMAC/HKDF) audit/auth/tee
+lean on; its Cyrius target is **sigil** (already linked here for TLS). `src/crypto.cyr`
+generates a server **Ed25519 identity keypair** at startup (`ed25519_generate_keypair`,
+read-only after → signing is thread-safe), exposes it at **`GET /api/pubkey`**
+(`{alg, pubkey}`), and **signs the audit chain head** (`head_sig` on `GET /api/audit`)
+so a client can verify the log is authentically from this server — authenticity on top
+of libro's tamper-evidence. **Independently cross-checked:** Python's `cryptography`
+(OpenSSL Ed25519) verifies `head_sig` against `/api/pubkey` (scenario 14) — sigil's
+server signature interoperates with a standard impl. Unit invariant adds a SHA-256
+known-answer (RFC 6234) for impl-independent correctness. Limitation: the identity key
+is **ephemeral** (regenerated per process start) — a persistent sealed key (à la
+sy-core's tee) is a future bite.
+
+5 unit invariants + **40 backend scenarios** + 10 UI pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -119,7 +133,7 @@ cached string is immutable, so all workers serve it lock-free.
   fixed in sigil 3.9.9 (slot 0→8, cyrius 6.3.25); verify.py is 5/5 clean at 4 and an
   amplified stress is 0-error at 4 and 8 (see FINDINGS).
   Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET /api/audit`,
-  `GET /api/hwinfo`, `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
+  `GET /api/hwinfo`, `GET /api/pubkey`, `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
   (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
   `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. Caveat (FINDINGS):
   AUTOINCREMENT reuses ids.
@@ -146,6 +160,14 @@ cached string is immutable, so all workers serve it lock-free.
   delete_note`, so every note mutation is durably recorded — surviving a restart
   (scenario 12c) and safe for arbitrary content (libro 2.8.1 bound INSERT / patra
   1.12.10 `''`).
+- `src/crypto.cyr` — **the `sy-core` `crypto` module, ported onto sigil** (first
+  server-side sigil use beyond TLS). `crypto_init()` (main-thread) generates a server
+  Ed25519 keypair (`ed25519_generate_keypair`, read-only after → sign is thread-safe);
+  `crypto_pubkey_hex()`/`crypto_sign_hex()` wrap sigil's `hex_encode` (which returns a
+  cstr) in `str_from`; `crypto_verify()` → `ed25519_verify` (1=ok). `handle_pubkey`
+  serves `GET /api/pubkey` `{alg, pubkey}`; `audit_json` adds `head_sig` (Ed25519 over
+  the head, under `g_audit_lock`). Keys ephemeral per process (persistent sealed key
+  = future).
 - `src/hwprobe.cyr` — **the `sy-core` `hwprobe` module, ported onto ai-hwaccel.**
   `hwprobe_init()` (main-thread) calls `hwlog_init()` then
   `registry_detect_no_exec()` (no subprocess spawning) once, caching
@@ -163,7 +185,7 @@ cached string is immutable, so all workers serve it lock-free.
 
 ## Tests
 
-- `src/test.cyr` — three invariants: (1) **patra bound-text** — a
+- `src/test.cyr` — five invariants: (1) **patra bound-text** — a
   quote/injection/unicode body bound via `patra_bind_text` round-trips
   byte-for-byte through a `TEXT` column and leaves the table intact; (2)
   **sandhi `route_match`** — `:name` path-param capture, segment-count rules,
@@ -173,10 +195,12 @@ cached string is immutable, so all workers serve it lock-free.
   whose `chain_head_hash` advances per entry (the hash-linking the `audit` module
   relies on); (4) **ai-hwaccel hwprobe** — `registry_detect_no_exec()` →
   `registry_to_summary_json` yields a non-empty JSON summary (the detect→serialize
-  path `/api/hwinfo` relies on; hardware-agnostic). Passes via `cyrius run
+  path `/api/hwinfo` relies on; hardware-agnostic); (5) **sigil crypto** — a server
+  Ed25519 sign→verify round-trip (tamper rejected) + a SHA-256 known-answer (RFC
+  6234, impl-independent), the `crypto` module's primitives. Passes via `cyrius run
   src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **39-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **40-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -186,8 +210,10 @@ cached string is immutable, so all workers serve it lock-free.
   chain (12a/b): `/api/audit` stays `verified` + `persistent` after all mutations
   incl. the concurrent ones + a controlled create+update+delete adds exactly 3
   linked entries, audit durability (12c): the on-disk chain survives a full server
-  restart with entries + head intact and still verified, and hwprobe (13):
-  `/api/hwinfo` returns a valid ai-hwaccel summary**). **All scenarios are stable** (the cyrius 6.3.15
+  restart with entries + head intact and still verified, hwprobe (13):
+  `/api/hwinfo` returns a valid ai-hwaccel summary, and crypto (14): `/api/pubkey`
+  Ed25519 + the audit `head_sig` verifies INDEPENDENTLY via OpenSSL Ed25519
+  (Python cryptography)**). **All scenarios are stable** (the cyrius 6.3.15
   str_builder fix removed the concurrency flakiness). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
@@ -195,7 +221,7 @@ cached string is immutable, so all workers serve it lock-free.
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
   the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 39 backend e2e + 10 UI e2e.
+- `tests/run.sh` — one command: build + unit + 40 backend e2e + 10 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).
@@ -214,7 +240,9 @@ Direct (declared in `cyrius.cyml`):
   `tls`/`async`/`random`/`fdlopen`/`dynlib` were sandhi's transitive modules when it
   was folded; with the thin `server` profile bundle they (and `bayan`/`hashmap`) are
   now declared explicitly. `thread`/`atomic` back sandhi's `run_pooled` /
-  `run_pooled_tls`. `tls` pulls sigil transitively. **`fs`, `process`, `ct`,
+  `run_pooled_tls`. `tls` pulls **sigil** transitively — now used **directly
+  server-side** by `src/crypto.cyr` (Ed25519 keygen/sign/verify, SHA-256), not just
+  for TLS. **`fs`, `process`, `ct`,
   `keccak`, `thread_local`, `slice`** were added for **libro** (its `dist/libro.deps`
   sidecar lists them); **`args`** (argc/argv) for **ai-hwaccel** (its CLI helpers
   reference them; unused on the probe's no-exec detection path).
@@ -241,10 +269,10 @@ _None — this is a probe, not a library._
 ## Next
 
 The probe is now **growing toward the real SecureYeoman → Cyrius port** (see
-[`roadmap.md`](roadmap.md)). Two `sy-core` modules are in and complete: **`audit` →
-libro** (now durable via patrastore) and **`hwprobe` → ai-hwaccel**. The audit
-quote-corruption that gated persistence was fixed upstream (patra 1.12.10 + libro
-2.8.1, both driven by this probe) and adopted here. Next bite: the next `sy-core`
-module — **`crypto` → sigil** (most foundational; audit/auth/tee lean on it) or
-**`sandbox` → kavach** (v3.7.1). The viability findings remain a first-class output
-— see [`../../FINDINGS.md`](../../FINDINGS.md).
+[`roadmap.md`](roadmap.md)). **Three `sy-core` modules are in and complete:**
+**`audit` → libro** (durable via patrastore, Ed25519-signed head), **`hwprobe` →
+ai-hwaccel**, and **`crypto` → sigil** (server-side Ed25519 + SHA-256, OpenSSL-interop
+verified). Next bite candidates: **`sandbox` → kavach** (v3.7.1), **`auth`** (JWT/PKCE
+via bote + sigil), or a persistent sealed identity key for `crypto` (à la sy-core's
+tee). The viability findings remain a first-class output — see
+[`../../FINDINGS.md`](../../FINDINGS.md).

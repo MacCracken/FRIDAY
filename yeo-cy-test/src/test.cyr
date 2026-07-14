@@ -13,8 +13,12 @@
 #   4. ai-hwaccel detection: registry_detect_no_exec() → registry_to_summary_json
 #      produces a non-empty JSON summary — the sy-core `hwprobe` module
 #      (src/hwprobe.cyr) integration.
+#   5. sigil crypto: an Ed25519 sign→verify round-trip (tamper is rejected) and a
+#      SHA-256 known-answer (RFC 6234 vector, independent of the impl) — the sy-core
+#      `crypto` module (src/crypto.cyr) integration.
 
 include "src/httpd.cyr"
+include "src/crypto.cyr"
 
 # Returns 0 on pass, non-zero on failure.
 fn test_bind_text_verbatim_and_safe(): i64 {
@@ -159,6 +163,28 @@ fn test_hwprobe(): i64 {
     return 0;
 }
 
+# Returns 0 on pass, non-zero (case code) on failure. Consumer-side integration
+# guard on sigil (the sy-core `crypto` module's Cyrius target, server-side beyond
+# TLS): the server Ed25519 keypair signs and verifies, a tampered message is
+# rejected, and SHA-256 matches the RFC 6234 known-answer for "abc" (independent of
+# the impl — not a round-trip). This is the primitive layer the audit head_sig +
+# /api/pubkey rely on.
+fn test_crypto(): i64 {
+    fl_init();
+    if (crypto_init() == 0) { return 1; }
+    if (str_len(crypto_pubkey_hex()) != 64) { return 2; }   # 32-byte pubkey → 64 hex
+    var sig = alloc(64);
+    ed25519_sign(g_crypto_sk, "audit-head", 10, sig);
+    if (crypto_verify("audit-head", 10, sig) != 1) { return 3; }   # valid sig verifies
+    if (crypto_verify("audit-heaD", 10, sig) != 0) { return 4; }   # tamper rejected
+    # SHA-256("abc") = ba7816bf... (RFC 6234 / NIST vector) — independent correctness.
+    if (_cstr_eq(sha256_hex("abc", 3),
+                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0) {
+        return 5;
+    }
+    return 0;
+}
+
 fn main() {
     alloc_init();
 
@@ -198,6 +224,15 @@ fn main() {
         return 1;
     }
     println("ok: ai-hwaccel detects and summarizes hardware to JSON");
+
+    var cr = test_crypto();
+    if (cr != 0) {
+        print("FAIL: sigil crypto (Ed25519 sign/verify + SHA-256) (code ", 52);
+        fmt_int(cr);
+        println(")");
+        return 1;
+    }
+    println("ok: sigil Ed25519 sign/verify + SHA-256 known-answer");
     return 0;
 }
 
