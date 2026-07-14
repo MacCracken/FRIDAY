@@ -30,10 +30,16 @@ var g_jwt_secret     = 0;          # 32-byte HS256 HMAC secret (ephemeral)
 var g_jwt_secret_len = 32;
 var g_admin_pw       = "changeme"; # demo admin credential  → role=admin
 var g_user_pw        = "user1234"; # demo non-admin credential → role=user (for RBAC)
+var g_auth_key_path  = "yeo-auth.key"; # persisted 32-byte HS256 secret (0600, gitignored)
 
+# Persistent HMAC secret: load if present, else generate + persist — so JWTs issued
+# before a restart still verify after. Reuses crypto_key_load/save (src/crypto.cyr).
 fn auth_init(): i64 {
     g_jwt_secret = alloc(32);
-    random_bytes(g_jwt_secret, 32);
+    if (crypto_key_load(g_auth_key_path, g_jwt_secret, 32) == 0) {
+        random_bytes(g_jwt_secret, 32);
+        crypto_key_save(g_auth_key_path, g_jwt_secret, 32);
+    }
     return 1;
 }
 

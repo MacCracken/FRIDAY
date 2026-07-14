@@ -26,14 +26,40 @@
 
 var g_crypto_sk = 0;   # 64-byte Ed25519 secret key (heap, read-only after init)
 var g_crypto_pk = 0;   # 32-byte Ed25519 public key (heap, read-only after init)
+var g_identity_path = "yeo-identity.key";   # persisted 32-byte Ed25519 seed (0600, gitignored)
 
-# One-time init on the main thread, before any worker spawns. Generates the server's
-# Ed25519 identity keypair. (ed25519_init is idempotent — audit_init also calls it.)
+# ── key material at rest (shared by crypto + auth) ──
+# NB stored as PLAINTEXT at 0600 (owner-only). A real deploy seals keys with a
+# hardware-backed key (sy-core's `tee`); that's a future bite (see FINDINGS).
+
+# Load exactly `n` bytes from `path` into `dst`. Returns 1 iff the file has >= n bytes.
+fn crypto_key_load(path, dst, n): i64 {
+    return file_read_all(path, dst, n) == n;
+}
+
+# Persist `n` bytes to `path`, created owner-only (0600 = 384) — key material must
+# never be world-readable. Returns 1 on success.
+fn crypto_key_save(path, src, n): i64 {
+    var fd = file_open(path, (O_CREAT | O_WRONLY | O_TRUNC), 384);
+    if (fd < 0) { return 0; }
+    var w = file_write(fd, src, n);
+    file_close(fd);
+    return w == n;
+}
+
+# One-time init on the main thread, before any worker spawns. Loads the PERSISTED
+# 32-byte Ed25519 SEED (re-deriving the keypair) so the published pubkey + the signed
+# audit head stay stable across restarts; on first run, generates + persists a seed.
 fn crypto_init(): i64 {
     ed25519_init();
     g_crypto_sk = alloc(64);
     g_crypto_pk = alloc(32);
-    ed25519_generate_keypair(g_crypto_sk, g_crypto_pk);
+    var seed = alloc(32);
+    if (crypto_key_load(g_identity_path, seed, 32) == 0) {
+        random_bytes(seed, 32);
+        crypto_key_save(g_identity_path, seed, 32);
+    }
+    ed25519_keypair(seed, g_crypto_sk, g_crypto_pk);
     return 1;
 }
 

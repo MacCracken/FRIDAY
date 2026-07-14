@@ -19,6 +19,9 @@
 #   6. auth JWT: an HS256 issue→verify round-trip returns the subject; a tampered
 #      token and an expired token are both rejected — the sy-core `auth` module
 #      (src/auth.cyr) integration.
+#   7. key persistence: crypto_key_save → crypto_key_load round-trips 32 bytes at
+#      rest, and a missing file loads as absent — the at-rest key I/O behind the
+#      persistent HMAC secret + Ed25519 seed.
 
 include "src/httpd.cyr"
 include "src/crypto.cyr"
@@ -223,6 +226,20 @@ fn test_auth(): i64 {
     return 0;
 }
 
+# Returns 0 on pass, non-zero (case code) on failure. Guard on the at-rest key I/O
+# (crypto_key_save/load) behind the persistent HMAC secret + Ed25519 seed: a 32-byte
+# blob round-trips through a file, and a missing file loads as absent. Temp path.
+fn test_keys(): i64 {
+    var src = alloc(32);
+    random_bytes(src, 32);
+    if (crypto_key_save("/tmp/_yeo_keytest.key", src, 32) == 0) { return 1; }
+    var dst = alloc(32);
+    if (crypto_key_load("/tmp/_yeo_keytest.key", dst, 32) == 0) { return 2; }
+    if (memeq(src, dst, 32) == 0) { return 3; }                       # round-trip mismatch
+    if (crypto_key_load("/tmp/_yeo_absent_ffff.key", dst, 32) != 0) { return 4; }  # missing → 0
+    return 0;
+}
+
 fn main() {
     alloc_init();
 
@@ -280,6 +297,15 @@ fn main() {
         return 1;
     }
     println("ok: auth HS256 JWT issue/verify + tamper & expiry rejected");
+
+    var ky = test_keys();
+    if (ky != 0) {
+        print("FAIL: key persistence save/load (code ", 40);
+        fmt_int(ky);
+        println(")");
+        return 1;
+    }
+    println("ok: key persistence save/load round-trips at rest");
     return 0;
 }
 

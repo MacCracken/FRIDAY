@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — persistent keys at rest: JWTs + server identity survive a restart (crypto + auth)
+- **The auth HS256 secret and the crypto Ed25519 identity are now persisted at rest**,
+  closing the "ephemeral key" limitation both modules carried. `crypto_init` loads a
+  32-byte Ed25519 **seed** from `yeo-identity.key` (re-deriving the keypair via
+  `ed25519_keypair`), and `auth_init` loads the HMAC secret from `yeo-auth.key`; each
+  generates + persists on first run. So a restart keeps issued JWTs valid and the
+  server's published pubkey (and signed audit head) stable.
+- **Owner-only (0600) at rest.** New shared `crypto_key_load`/`crypto_key_save`
+  (`src/crypto.cyr`) use `file_open(…, O_CREAT|O_WRONLY|O_TRUNC, 0600)` so key material
+  is never world-readable. Both `*.key` files are gitignored.
+- **Verified across a real restart.** New backend **scenario 17**: capture a token +
+  pubkey, restart the server, and confirm the pre-restart token still verifies
+  (`/api/me` 200) and the pubkey is unchanged — the keys were reloaded, not
+  regenerated. New unit invariant (7th): a `crypto_key_save`→`crypto_key_load`
+  round-trip, and a missing file loads as absent.
+- **Honest limitation:** keys are **plaintext** files (0600). At-rest **sealing**
+  (sy-core's `tee`, hardware-backed) is the remaining hardening — the plaintext files
+  are the interim. Suite: **7 unit + 43 backend + 10 UI**, green.
+
 ### Added — fourth `sy-core` module ported: `auth` → JWT sessions + RBAC (login, Bearer-protected + role-gated routes)
 - **`src/auth.cyr` — SecureYeoman's `auth` module, first bite (JWT sessions).** The
   token core of sy-core's auth (which is JWT + API keys + RBAC + OIDC/PKCE + WebAuthn).

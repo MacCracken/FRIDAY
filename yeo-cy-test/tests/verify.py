@@ -31,6 +31,8 @@ HTTPS_HOST, HTTPS_PORT = "localhost", 8443   # cert SAN: DNS:localhost, IP:127.0
 BIN = "./build/yeo-cy-test"
 DB = "yeo.patra"
 AUDIT_DB = "yeo-audit.patra"   # libro patrastore-backed audit chain (persistent)
+AUTH_KEY = "yeo-auth.key"      # persisted HS256 secret (0600)
+IDENTITY_KEY = "yeo-identity.key"  # persisted Ed25519 seed (0600)
 passes, fails = [], []
 
 def ok(name):   passes.append(name); print(f"  \033[32mPASS\033[0m {name}")
@@ -122,7 +124,7 @@ def wait_https(timeout=10):
     return False
 
 # ── cleanup ──
-for f in (DB, AUDIT_DB):
+for f in (DB, AUDIT_DB, AUTH_KEY, IDENTITY_KEY):
     try: os.remove(f)
     except FileNotFoundError: pass
 
@@ -545,6 +547,24 @@ _c16 = (_su == 200 and _tu and _adm_a == 200 and _admj.get("role") == "admin"
         and _adm_u == 403 and _adm_n == 401 and _meuj.get("role") == "user")
 (ok if _c16 else bad)(
     f"16. RBAC: /api/admin admin {_adm_a}/user {_adm_u}/none {_adm_n}; user-role={_meuj.get('role')}")
+
+# 17. persistent keys — the HS256 secret and Ed25519 identity SEED are stored at rest
+#     (0600, yeo-auth.key / yeo-identity.key), so a restart does NOT invalidate issued
+#     tokens or rotate the server identity. Capture a token + pubkey, RESTART the
+#     server, then assert the pre-restart token still verifies (/api/me 200) and the
+#     pubkey is unchanged — proving the keys were reloaded, not regenerated.
+_s17, _l17 = req("POST", "/api/login", json.dumps({"password": "changeme"}))
+tok_before = json.loads(_l17).get("token", "") if _s17 == 200 else ""
+_, _pk17a = req("GET", "/api/pubkey")
+pk_before = json.loads(_pk17a).get("pubkey", "")
+stop_server(srv)
+srv = start_server()  # fresh process — reloads yeo-auth.key + yeo-identity.key
+me17, _ = _auth_get("/api/me", tok_before)
+_, _pk17b = req("GET", "/api/pubkey")
+pk_after = json.loads(_pk17b).get("pubkey", "")
+_c17 = (tok_before and me17 == 200 and pk_before and pk_before == pk_after)
+(ok if _c17 else bad)(
+    f"17. persistent keys across restart: pre-restart token valid={me17 == 200}, pubkey stable={pk_before == pk_after}")
 
 stop_server(srv)
 

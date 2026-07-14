@@ -45,9 +45,11 @@ self-consistency.
   **Flagged for upstream confirmation — NOT filed** pending a root-cause repro. If
   confirmed, it's a data-format round-trip bug; if it's a usage requirement, bayan
   should document it. *(Unconfirmed — bayan.)*
-- **Limitations (future bites):** ephemeral HMAC secret (tokens don't survive restart —
-  a persistent sealed secret, à la sy-core's tee); plaintext credential (needs Argon2);
-  RBAC (protect `/api/notes` by role), PKCE/OIDC, and WebAuthn still to come.
+- **Since landed (later bites):** **RBAC** — a `role` claim + role-gated `/api/admin`
+  (401 vs 403); and a **persistent HMAC secret** (`yeo-auth.key`, 0600) so tokens
+  survive a restart. **Remaining:** plaintext credential (needs a Cyrius **Argon2**),
+  at-rest key **sealing** (sy-core's `tee`), enforcing RBAC on the note mutations,
+  and PKCE/OIDC/WebAuthn.
 
 ## Update — `crypto` → sigil: server-side Ed25519 works and interops with OpenSSL (2026-07-13)
 
@@ -71,10 +73,12 @@ libro's tamper-evidence.
   the type). Fix: wrap in `str_from(hex_encode(...))`. Worth a note for consumers who
   expect the `*_hex` helpers to return a `str` like most string-producing APIs; a
   doc-comment on the return type (or `*_hex_str` variants) would remove the trap.
-- **Concurrency:** keys are generated once at init and read-only after, so signing is
-  thread-safe (per-call signature buffer); the audit-head signing rides the existing
-  `g_audit_lock`. **Limitation:** the identity key is ephemeral (regenerated per
-  process) — a persistent sealed key (à la sy-core's `tee`) is a future bite.
+- **Concurrency:** keys are loaded/generated once at init and read-only after, so
+  signing is thread-safe (per-call signature buffer); the audit-head signing rides the
+  existing `g_audit_lock`. **Now persistent** (later bite): the Ed25519 **seed** is
+  stored at `yeo-identity.key` (0600) and re-derived on start, so the pubkey + signed
+  audit head are stable across restarts. Remaining: at-rest **sealing** (sy-core's
+  `tee`, hardware-backed) — the plaintext-file interim is honest but not sealed.
 
 ## Update — the single-quote corruption: filed, FIXED at both layers, adopted → audit chain now durable (2026-07-13)
 
