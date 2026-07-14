@@ -36,7 +36,10 @@ are ciphertext (a 60-byte `[12 IV | 32 key | 16 tag]` blob), not raw keys.
   there is no Cyrius TEE/TPM binding, so the KEK is `SY_SEAL_KEY`-derived (HKDF), with a
   fixed **insecure dev key** fallback (warned) when unset (empty `SY_SEAL_KEY` also
   falls back — hardened after review). Real hardware sealing needs a Cyrius TEE API. *(Gap.)*
-- 🔵 **Env note:** the bundled sigil is **3.9.8** (`lib/sigil.cyr`), not 3.9.9. And a
+- 🔵 **Env note:** the resolved `lib/sigil.cyr` read **3.9.8**, not the 3.9.9 the docs
+  claimed. That discrepancy was NOT a stale label — it was a stale `lib/` shadowing the
+  pinned snapshot, and it was hiding the 3.9.9 slot-0 fix (see the 🟠 finding above;
+  now `cyrius lib sync --full`'d to sigil **3.11.1**). And a
   time-sink: an isolation `cyrius run tmp.cyr` fails to find `src/httpd.cyr` unless the
   shell cwd is `yeo-cy-test/` (a bare compile-not-found exits 1, easy to misread as a
   logic failure).
@@ -65,11 +68,54 @@ self-consistency.
   builds it from primitives — which is what this bite does. **Ask (filed to bote): a
   thin `bote-jwt` profile exposing issue + verify** (mirrors the sandhi server-profile
   split this probe drove). *(To file — bote; documented here, no bote issue created yet.)*
-- 🔵 **No Cyrius Argon2 (password hashing).** sy-core hashes the admin password with
-  **Argon2id**; the ecosystem has no Argon2 (sigil is Ed25519/SHA/HMAC/HKDF/AES-GCM).
-  The probe does a length-checked plaintext compare as a placeholder — a real login
-  needs a memory-hard password-hash primitive. Gap noted (candidate: a sigil `argon2`
-  or a new `phal`-style lib). *(Gap — sigil/ecosystem.)*
+- ✅ **RESOLVED — sigil 3.12.0 now ships native Argon2id, driven by this probe.**
+  *(Previously recorded as: "No Cyrius Argon2 … the ecosystem has no Argon2 … the probe
+  does a length-checked plaintext compare as a placeholder." **That framing was too
+  strong and is retracted.**)* The accurate gap was narrower. Argon2id **was** reachable
+  before 3.12.0 — just not *sovereignly*: OpenSSL's libcrypto exposes `ARGON2ID @
+  default` (verified on this host, OpenSSL 3.6.3) and cyrius's `tls_dlsym` escape hatch
+  can reach `EVP_KDF` (verified: derives byte-identical output to `openssl kdf`). So the
+  real finding was: **sigil shipped no NATIVE Argon2id, and the only path to it was a
+  libcrypto ABI binding through a soft-deprecated hatch** (`lib/tls.cyr`: "won't survive
+  a native-TLS transport swap"), which would break sigil's headline *"zero external
+  crypto dependencies"* and the sovereignty goal. Adopting that hatch was **rejected on
+  principle**, and the gap fixed at the source instead: **sigil 3.12.0** adds
+  **BLAKE2b (RFC 7693)** + **Argon2id/i/d (RFC 9106)** — all three RFC 9106 §5 official
+  vectors pass, cross-checked against OpenSSL's providers, with a thin `[lib.argon2]`
+  profile (1050 lines) for exactly this login use case. **Probe adoption is still
+  pending:** cyrius 6.4.62 folds sigil **3.11.1**, so `argon2id` is not reachable here
+  until cyrius folds 3.12.0; the plaintext compare stays until then. (Context, not an
+  excuse: sy-core's own `verify_admin_password` also falls back to a constant-time
+  **plaintext** compare when `SECUREYEOMAN_ADMIN_PASSWORD_HASH` is unset — it *verifies*
+  a PHC hash, it never issues one.) *(Resolved — sigil 3.12.0; probe adoption blocked on
+  a cyrius snapshot fold.)*
+
+- 🟠 **A stale `lib/` silently shadowed the pinned snapshot — hiding a crypto fix for
+  three minor versions.** The probe's gitignored `lib/` (resolved deps) sat at **sigil
+  3.9.8** while the pinned **cyrius 6.4.62 folds sigil 3.11.1**. Cyrius *does* notice —
+  `note: cwd ./lib/ shadows version-pinned …/lib/` — but the note is severity *note*,
+  and **says nothing about version skew**, so a consumer cannot tell it is building
+  against crypto three minor versions behind. Concretely, this probe was carrying sigil
+  from **before the 3.9.9 `_SIGIL_CBANK_SLOT` 0→8 fix** — the fix whose own issue names
+  *this probe* as the reporting consumer — while `lib/patra.cyr` declares
+  `enum SqlTls { TLS_TOKS = 0; … }`. **sigil's crypto-bank slot and patra's SQL-parse
+  scratch were both pinned to thread-local slot 0**: exactly the documented corruption
+  condition (a patra query clobbers sigil's pinned bank → a later `cbank()` reads
+  patra's scratch pointer as the lane index → indexes the wrong lane of the
+  process-global banked crypto buffers → corrupts an in-flight handshake's key
+  schedule). **Latent, not observed:** the suite passed throughout, and sigil's issue
+  reports the failure as layout-dependent ("every 4th handshake fails under a specific
+  worker layout") — so this is a real *exposure*, not a reproduced failure; do not read
+  it as "the probe was broken". **Fixed here** with `cyrius lib sync --full` (sigil
+  3.9.8→3.11.1, slot 0→8, clear of patra's 0-4); suite re-verified green (8 unit + 46
+  backend + 13 UI). **Ask (to file — cyrius): make the shadow-lib note report the actual
+  skew** (e.g. `./lib/ shadows pinned snapshot: sigil 3.9.8 vs 3.11.1`) and/or have
+  `cyrius lib sync` verify freshness. A silent multi-version *crypto* skew is a
+  security-relevant hazard, not a cosmetic one. **Own-goal worth recording:** an earlier
+  bite noticed "bundled sigil is 3.9.8, not 3.9.9" and filed it as a stale doc label
+  instead of pulling the thread — the discrepancy *was* the bug.
+  *(**FILED** — `cyrius/docs/development/issues/yeo-cy-test-shadow-lib-silent-version-skew.md`;
+  awaiting the cyrius maintainer's commit.)*
 - 🟡 **bayan `base64url_decode` returned NULL on a valid no-pad round-trip in-probe.**
   `base64url_decode(base64url_encode("hello", 5), 7)` returned 0 (the encoder's output
   is standard base64url — Python decodes the probe's tokens fine). The dist impl
@@ -172,7 +218,7 @@ probe and released, then adopted here — the probe's whole reason to exist.
 ## Update — re-run on cyrius 6.4.62: last lock removed (lock-free reads), thin sandhi profile bundle dogfooded (2026-07-13)
 
 Bumped to **cyrius 6.4.62 / patra 1.12.9 / sandhi 1.8.2 (thin `server` profile
-bundle) / sigil 3.9.9 (via cyrius) / sakshi 2.4.6** (was 6.3.0-pinned / 1.12.6 /
+bundle) / sigil 3.11.1 (via cyrius) / sakshi 2.4.6** (was 6.3.0-pinned / 1.12.6 /
 folded sandhi / 2.4.0). Baseline re-verified green **before** any change: build OK,
 2 unit invariants, **35 backend + 10 UI** scenarios pass at `max_conns=4`. Two
 previously-filed findings shipped upstream and were adopted this cycle.

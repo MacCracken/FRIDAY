@@ -7,7 +7,7 @@
 
 **0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.4.62 /
 patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile bundle) / sigil
-3.9.9 (via cyrius) / sakshi 2.4.6** (2026-07-13; regenerate `lib/` with `cyrius lib sync
+3.11.1 (via cyrius) / sakshi 2.4.6** (2026-07-14; regenerate `lib/` with `cyrius lib sync
 --full` + `cyrius deps` — see Toolchain note). Serves **HTTP (:8080) and HTTPS
 (:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set over the patra
 backend, both at **`max_conns=4`**. Both original 🔴 blockers (TS/TSX→JS emit,
@@ -38,8 +38,9 @@ patra string safety) stay closed.
   3.9.9 / cyrius 6.3.25); `str_builder`/array-local codegen (6.3.15); patra
   table-cache (1.12.7); both sandhi findings; sigil's concurrent-handshake crash.)
 
-No new findings this cycle — every previously-filed ecosystem finding is now shipped
-and adopted. See [`../../FINDINGS.md`](../../FINDINGS.md) and each repo's
+One new finding this cycle (🟠 a stale `lib/` silently shadowed the pinned snapshot,
+hiding sigil's 3.9.9 slot-0 fix for three minor versions — now re-synced to 3.11.1);
+every previously-filed ecosystem finding is shipped and adopted. See [`../../FINDINGS.md`](../../FINDINGS.md) and each repo's
 `docs/development/issues/`.
 
 **First `sy-core` module grown into the probe: `audit` → libro (PERSISTENT).** The
@@ -100,12 +101,15 @@ token, wrong role): authentication vs authorization. `src/auth.cyr` is stateless
 issued token decodes as a standard RFC 7519 JWT (alg/typ + sub/role/iat/exp) in Python
 (scenario 15). **Findings:** the mapping's target **bote** is JWT **verify-only** (an
 MCP resource server — no issue path) with no thin jwt profile, so issuance is built
-from primitives (to file); **no Cyrius Argon2** for password hashing (plaintext
-compare here — a gap); and **bayan's `base64url_decode` returned null** on a valid
+from primitives (to file); password hashing was a gap (**plaintext compare here**) —
+now fixed at the source: **sigil 3.12.0 ships native Argon2id** (RFC 9106), driven by
+this probe, though adoption waits on cyrius folding 3.12.0 (it folds 3.11.1); and
+**bayan's `base64url_decode` returned null** on a valid
 no-pad round-trip in-probe (worked around with an in-probe decoder — root cause
 unconfirmed, flagged). The HMAC secret is now **persistent** (`yeo-auth.key`, 0600) so
 tokens survive a restart. The RBAC is now **enforced on the note resource** (below).
-Limitations (future bites): plaintext credential (needs Argon2), and PKCE/OIDC/WebAuthn.
+Limitations (future bites): the credential is still a plaintext compare — swap to
+`argon2id` once cyrius folds sigil 3.12.0 — plus PKCE/OIDC/WebAuthn.
 
 **Persistent keys (both crypto + auth), SEALED at rest.** `crypto_key_load`/
 `crypto_key_save` (`src/crypto.cyr`) seal 32-byte key material with **AES-256-GCM**
@@ -122,7 +126,8 @@ AES-256-GCM under a hardware-backed key. `src/tee.cyr` ports the sealing onto **
 derived by HKDF from **`SY_SEAL_KEY`** (fixed insecure **dev key** fallback + warning if
 unset/empty); `tee_unseal` decrypt-verifies and returns the plaintext or 0. `GET
 /api/tee` reports `{algorithm, sealed, key_source, dev_key}`. Sealing works cleanly on
-the bundled sigil **3.9.8** (encrypt is NIST-correct, decrypt authenticates). **🟡
+the bundled sigil (3.9.8 at the time; now 3.11.1 — encrypt is NIST-correct, decrypt
+authenticates). **🟡
 Finding (DX): sigil's return conventions are inconsistent** — `aes_gcm_decrypt` returns
 `SIGIL_ERR_NONE == 0` on **success**, but `ed25519_verify` returns `1` on success. That
 footgun briefly made me mis-record a "sigil bug" + build an unnecessary workaround; an
@@ -147,7 +152,9 @@ new lib gap** — used only existing auth primitives (the stack was already suff
 
 ## Toolchain
 
-- **Cyrius pin**: `6.4.62` (in `cyrius.cyml [package].cyrius`); bundles sigil 3.9.9.
+- **Cyrius pin**: `6.4.62` (in `cyrius.cyml [package].cyrius`); folds sigil 3.11.1.
+  NB `lib/` had drifted to sigil 3.9.8 (pre the 3.9.9 slot-0 fix, colliding with patra's
+  thread-local slot 0) until re-synced 2026-07-14 — see FINDINGS.
   patra `1.12.9`, **sandhi `1.8.2`** (the thin `dist/sandhi-server.cyr` **profile
   bundle**, no longer the folded stdlib), and sakshi `2.4.6` pinned via `[deps.*]`.
   Because the thin bundle carries only session_cache + conn + server/mod, the deps it
@@ -164,7 +171,7 @@ new lib gap** — used only existing auth primitives (the stack was already suff
   bit the probe: a bare sync left `lib/sigil.cyr` at 3.9.4 (the pre-fix opt-in
   banking) while cyrius 6.3.12 actually bundles sigil 3.9.7 — so the probe built
   against the old crypto race and the TLS pool appeared to still crash. `--full`
-  pulls the whole snapshot (current sigil 3.9.9). See FINDINGS.
+  pulls the whole snapshot (current sigil 3.11.1). See FINDINGS.
 
 ## Source
 

@@ -4,6 +4,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — stale `lib/` was hiding sigil's slot-0 fix (a latent sigil⇄patra collision)
+- **The probe was building against sigil 3.9.8, not the 3.11.1 the pinned cyrius 6.4.62
+  folds.** `lib/` (gitignored, locally resolved) had drifted and *shadowed* the
+  version-matched snapshot. The consequence was not cosmetic: 3.9.8 predates sigil
+  **3.9.9's `_SIGIL_CBANK_SLOT` 0→8 fix**, so sigil's crypto-bank slot and patra's
+  SQL-parse scratch (`enum SqlTls { TLS_TOKS = 0; … }`) were both pinned to thread-local
+  **slot 0** — exactly the corruption condition sigil 3.9.9 fixed, in exactly the
+  configuration its issue names (a TLS pool over a patra-backed API — *this probe*).
+  **Latent, not observed** (the suite passed throughout; sigil reports the failure as
+  layout-dependent), so this is an exposure, not a reproduced fault. Fixed with
+  `cyrius lib sync --full` → sigil **3.11.1**, slot 8, clear of patra's 0-4. Suite
+  re-verified green: **8 unit + 46 backend + 13 UI**. **Filed to cyrius**
+  (`docs/development/issues/yeo-cy-test-shadow-lib-silent-version-skew.md`): the
+  shadow-`lib/` note should name the actual skew (and warn, not note, when a bundled lib
+  version differs) instead of staying silent about it.
+
+### Changed — docs corrected
+- **Retracted the overstated Argon2 finding.** "The ecosystem has no Argon2 … so the
+  probe does a plaintext compare" was too strong: Argon2id *was* reachable via OpenSSL's
+  `EVP_KDF` through cyrius's `tls_dlsym` hatch (verified). The accurate gap — **sigil
+  shipped no NATIVE Argon2id, and the only path was a libcrypto ABI binding through a
+  soft-deprecated hatch**, breaking sigil's "zero external crypto dependencies" — was
+  fixed at the source: **sigil 3.12.0** now ships BLAKE2b (RFC 7693) + Argon2id/i/d
+  (RFC 9106), driven by this probe. Probe adoption waits on a cyrius fold of 3.12.0.
+- Current-state sigil version references corrected 3.9.9 → **3.11.1** (the docs had
+  claimed the folded version while `lib/` actually carried 3.9.8).
+
 ### Added — RBAC enforcement on note mutations (auth applied to the real resource)
 - **Note WRITES are now access-controlled; reads stay public.** The `auth` module's
   JWT/RBAC (previously demonstrated only on `/api/me` + `/api/admin`) is applied to the
