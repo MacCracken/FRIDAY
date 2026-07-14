@@ -7,6 +7,40 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — `tee` → AES-256-GCM key sealing works; 🟡 sigil's return conventions are inconsistent (a consumer footgun I tripped on) (2026-07-13)
+
+Fifth `sy-core` module ported (`src/tee.cyr`): seal the persisted key material at rest
+with **AES-256-GCM** (sigil) under an HKDF KEK, so `yeo-auth.key` / `yeo-identity.key`
+are ciphertext (a 60-byte `[12 IV | 32 key | 16 tag]` blob), not raw keys.
+
+- ✅ **AES-256-GCM sealing works cleanly on sigil (3.9.8, bundled in cyrius 6.4.62).**
+  `aes_gcm_encrypt` produces NIST-correct output (verified vs the NIST AES-256-GCM
+  known-answer), and `aes_gcm_decrypt` correctly authenticates + decrypts (valid tag →
+  success + plaintext; tampered ct/tag → rejected, pt zeroed). `tee_unseal` is a plain
+  decrypt-verify; a 2-lens adversarial review + tamper tests (unit invariant 8 +
+  scenario 18) confirm it.
+- 🟡 **REAL finding — sigil's success/failure return conventions are INCONSISTENT, and
+  it bit me.** `aes_gcm_decrypt` returns **`SIGIL_ERR_NONE == 0` on SUCCESS** (non-zero
+  = tag mismatch), but `ed25519_verify` returns **`1` on success** (0 = fail). I read
+  the ed25519 convention, assumed AES-GCM matched, and wrote `if (aes_gcm_decrypt(...)
+  == 0) return failure` — which **inverted the check and rejected every valid blob**.
+  **CORRECTION (important):** I briefly mis-recorded this as a "🔴 sigil aes_gcm_decrypt
+  tag-check is broken" finding and even built a re-encrypt-verify workaround around my
+  own inverted check. The **adversarial review + re-measurement caught it**: the NIST
+  test I ran showed `rc=0`, which I read as "rejected" but actually means SUCCESS. There
+  is **no sigil bug**; the workaround was removed and `tee_unseal` now just checks
+  `aes_gcm_decrypt(...) != 0`. The genuine, filable finding is the **API footgun**:
+  sigil should make its AEAD/verify functions share one success convention (or return a
+  bool), and document each return. *(To file — sigil, DX/consistency, not a defect.)*
+- 🔵 **GAP: no hardware-backed KEK.** sy-core's tee wants a TPM/SGX/SEV-sealed KEK;
+  there is no Cyrius TEE/TPM binding, so the KEK is `SY_SEAL_KEY`-derived (HKDF), with a
+  fixed **insecure dev key** fallback (warned) when unset (empty `SY_SEAL_KEY` also
+  falls back — hardened after review). Real hardware sealing needs a Cyrius TEE API. *(Gap.)*
+- 🔵 **Env note:** the bundled sigil is **3.9.8** (`lib/sigil.cyr`), not 3.9.9. And a
+  time-sink: an isolation `cyrius run tmp.cyr` fails to find `src/httpd.cyr` unless the
+  shell cwd is `yeo-cy-test/` (a bare compile-not-found exits 1, easy to misread as a
+  logic failure).
+
 ## Update — `auth` → JWT sessions: works on sigil+bayan; bote is verify-only; a bayan base64url snag (2026-07-13)
 
 Fourth `sy-core` module ported (`src/auth.cyr`, first bite): `POST /api/login` issues

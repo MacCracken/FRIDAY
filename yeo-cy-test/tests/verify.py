@@ -566,6 +566,19 @@ _c17 = (tok_before and me17 == 200 and pk_before and pk_before == pk_after)
 (ok if _c17 else bad)(
     f"17. persistent keys across restart: pre-restart token valid={me17 == 200}, pubkey stable={pk_before == pk_after}")
 
+# 18. tee → AES-256-GCM key sealing (sy-core's `tee`). The persisted key files are
+#     CIPHERTEXT at rest, not raw keys: GET /api/tee reports the algorithm, and the
+#     on-disk yeo-auth.key is a sealed blob (12 IV + 32 key + 16 tag = 60 bytes), not
+#     the 32-byte raw secret. (Persistence *through* sealing is covered by scenario 17.)
+_st18, _tb = req("GET", "/api/tee")
+tee = json.loads(_tb) if _st18 == 200 else {}
+key_size = os.path.getsize(AUTH_KEY) if os.path.exists(AUTH_KEY) else 0
+_c18 = (_st18 == 200 and tee.get("algorithm") == "AES-256-GCM"
+        and tee.get("sealed") is True and key_size == 60)
+(ok if _c18 else bad)(
+    f"18. tee sealing: /api/tee alg={tee.get('algorithm')} sealed={tee.get('sealed')}; "
+    f"yeo-auth.key={key_size}B (sealed=60, raw would be 32)")
+
 stop_server(srv)
 
 # ── summary ──

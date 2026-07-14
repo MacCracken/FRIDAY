@@ -4,6 +4,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — fifth `sy-core` module: `tee` (AES-256-GCM key sealing at rest)
+- **`src/tee.cyr` — SecureYeoman's `tee` module.** sy-core's tee seals secrets with
+  AES-256-GCM under a hardware-backed key; this ports the sealing onto **sigil**
+  (AES-256-GCM + HKDF) and applies it to the persisted key material — so `yeo-auth.key`
+  / `yeo-identity.key` are now **ciphertext at rest** (a 60-byte `[12 IV | 32 key | 16
+  tag]` blob), not raw keys. `tee_seal`/`tee_unseal` (a plain AES-256-GCM
+  seal/decrypt-verify); KEK = HKDF from `SY_SEAL_KEY` (a fixed insecure **dev key**
+  fallback + warning if unset/empty). New **`GET /api/tee`** reports `{algorithm,
+  sealed, key_source, dev_key}`. Verified: round-trip + ciphertext/tag tamper rejected
+  (unit invariant 8), on-disk file is sealed 60 B (scenario 18), keys survive restart
+  through sealing (scenario 17).
+- **🟡 Finding — sigil's return conventions are inconsistent** (a consumer footgun):
+  `aes_gcm_decrypt` returns **`SIGIL_ERR_NONE == 0` on success** (non-zero = tag
+  mismatch), whereas `ed25519_verify` returns **`1` on success**. **Correction:** I
+  briefly mis-recorded this as a "🔴 sigil aes_gcm_decrypt is broken" finding (I read
+  `rc=0` as "rejected" when it means success) and built an unnecessary re-encrypt-verify
+  workaround around my own inverted check. An **adversarial review + re-measurement
+  caught it** — there is **no sigil bug**; the workaround was removed and `tee_unseal`
+  now just checks `!= 0`. The real, filable finding is the API inconsistency. (To file —
+  sigil DX; not a defect.)
+- **Gap:** no hardware-backed KEK (no Cyrius TEE/TPM API) — the KEK is `SY_SEAL_KEY`-
+  derived. Suite: **8 unit + 44 backend + 10 UI**, green. No dep bump (sigil/bayan
+  already linked); `main.cyr` wires `tee_init` before `crypto_init`.
+
 ### Added — persistent keys at rest: JWTs + server identity survive a restart (crypto + auth)
 - **The auth HS256 secret and the crypto Ed25519 identity are now persisted at rest**,
   closing the "ephemeral key" limitation both modules carried. `crypto_init` loads a

@@ -83,9 +83,9 @@ of libro's tamper-evidence. **Independently cross-checked:** Python's `cryptogra
 server signature interoperates with a standard impl. Unit invariant adds a SHA-256
 known-answer (RFC 6234) for impl-independent correctness. The identity key is now
 **persistent**: `crypto_init` loads a 32-byte Ed25519 **seed** from `yeo-identity.key`
-(0600) and re-derives the keypair, so the pubkey + signed audit head stay stable
-across restarts (see the persistent-keys note below). At-rest sealing (TEE) is the
-remaining hardening.
+and re-derives the keypair, so the pubkey + signed audit head stay stable across
+restarts. The seed is **AES-256-GCM sealed** at rest (the `tee` module — see below);
+the remaining hardening is a hardware-backed KEK (no Cyrius TEE/TPM API yet).
 
 **Fourth module: `auth` → JWT sessions + RBAC.** sy-core's `auth` is the defining
 SecureYeoman capability (JWT + API keys + RBAC + OIDC/PKCE + WebAuthn). Landed so far:
@@ -107,16 +107,29 @@ unconfirmed, flagged). The HMAC secret is now **persistent** (`yeo-auth.key`, 06
 tokens survive a restart. Limitations (future bites): plaintext credential (needs
 Argon2), and PKCE/OIDC/WebAuthn (+ enforcing RBAC on the note mutations) still to come.
 
-**Persistent keys (both crypto + auth).** `crypto_key_load`/`crypto_key_save`
-(`src/crypto.cyr`) store 32-byte key material as **plaintext at 0600** (owner-only)
-via `file_open(…, O_CREAT|O_WRONLY|O_TRUNC, 0600)`. The auth HS256 secret
+**Persistent keys (both crypto + auth), SEALED at rest.** `crypto_key_load`/
+`crypto_key_save` (`src/crypto.cyr`) seal 32-byte key material with **AES-256-GCM**
+(via the `tee` module) and write it owner-only (0600) — on disk each `*.key` is a
+60-byte `[12 IV | 32 key | 16 tag]` blob, never the raw key. The auth HS256 secret
 (`yeo-auth.key`) and the crypto Ed25519 seed (`yeo-identity.key`) load-or-generate at
-init, so a restart keeps issued JWTs valid and the server identity stable (scenario
-17: pre-restart token still verifies, pubkey unchanged). Both `*.key` are gitignored.
-**At-rest sealing (sy-core's `tee`, hardware-backed) is the remaining step** — plaintext
-files are the honest interim.
+init, so a restart keeps issued JWTs valid and the server identity stable (scenario 17:
+pre-restart token still verifies, pubkey unchanged; scenario 18: files are sealed). Both
+`*.key` gitignored.
 
-7 unit invariants + **43 backend scenarios** + 10 UI pass — **green + stable** at
+**Fifth module: `tee` → AES-256-GCM key sealing.** sy-core's `tee` seals secrets with
+AES-256-GCM under a hardware-backed key. `src/tee.cyr` ports the sealing onto **sigil**
+(AES-256-GCM + HKDF): `tee_seal(pt, n)` → `[12 random IV | ct | 16 tag]` under a KEK
+derived by HKDF from **`SY_SEAL_KEY`** (fixed insecure **dev key** fallback + warning if
+unset/empty); `tee_unseal` decrypt-verifies and returns the plaintext or 0. `GET
+/api/tee` reports `{algorithm, sealed, key_source, dev_key}`. Sealing works cleanly on
+the bundled sigil **3.9.8** (encrypt is NIST-correct, decrypt authenticates). **🟡
+Finding (DX): sigil's return conventions are inconsistent** — `aes_gcm_decrypt` returns
+`SIGIL_ERR_NONE == 0` on **success**, but `ed25519_verify` returns `1` on success. That
+footgun briefly made me mis-record a "sigil bug" + build an unnecessary workaround; an
+adversarial review + re-measurement corrected it (no bug — `rc==0` is success). Gap: no
+hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
+
+8 unit invariants + **44 backend scenarios** + 10 UI pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -164,7 +177,7 @@ files are the honest interim.
   fixed in sigil 3.9.9 (slot 0→8, cyrius 6.3.25); verify.py is 5/5 clean at 4 and an
   amplified stress is 0-error at 4 and 8 (see FINDINGS).
   Endpoints: `GET /`, `GET /app.js`, `GET /api/health`, `GET /api/audit`,
-  `GET /api/hwinfo`, `GET /api/pubkey`, `POST /api/login`, `GET /api/me`,
+  `GET /api/hwinfo`, `GET /api/pubkey`, `GET /api/tee`, `POST /api/login`, `GET /api/me`,
   `GET /api/admin` (RBAC), `GET|POST /api/notes`, `GET|PUT|DELETE /api/notes/:id`. Persistence: `TEXT` bodies via bound `?` params
   (injection-safe). Ids are patra `AUTOINCREMENT` (column-list `INSERT`, echoed via
   `last_insert_id`); `PUT`/`DELETE` 404 via `rows_affected`. Caveat (FINDINGS):
@@ -202,6 +215,11 @@ files are the honest interim.
   serves `GET /api/pubkey` `{alg, pubkey}`; `audit_json` adds `head_sig` (Ed25519 over
   the head, under `g_audit_lock`). `crypto_key_load`/`crypto_key_save` are the shared
   0600 key-file I/O (also used by `auth`).
+- `src/tee.cyr` — **the `sy-core` `tee` module: AES-256-GCM key sealing.** `tee_init`
+  derives the KEK (HKDF from `SY_SEAL_KEY`, dev-key fallback). `tee_seal(pt, n)` →
+  `[12 IV | ct | 16 tag]` (fresh random IV); `tee_unseal` decrypt-verifies (checking
+  `aes_gcm_decrypt`'s `SIGIL_ERR_NONE == 0` = success convention — FINDINGS).
+  `handle_tee` serves `GET /api/tee`. Included before `crypto` (which seals through it).
 - `src/auth.cyr` — **the `sy-core` `auth` module (first bite: JWT sessions).**
   `auth_init()` makes a random HS256 HMAC secret. `auth_issue(sub, ttl)` builds a
   standard JWT — `base64url(header)."."base64url(payload)."."base64url(HMAC-SHA256(...))`
@@ -231,7 +249,7 @@ files are the honest interim.
 
 ## Tests
 
-- `src/test.cyr` — seven invariants: (1) **patra bound-text** — a
+- `src/test.cyr` — eight invariants: (1) **patra bound-text** — a
   quote/injection/unicode body bound via `patra_bind_text` round-trips
   byte-for-byte through a `TEXT` column and leaves the table intact; (2)
   **sandhi `route_match`** — `:name` path-param capture, segment-count rules,
@@ -247,10 +265,11 @@ files are the honest interim.
   HS256 issue→verify round-trip returns the subject and the `role` claim, and a
   tampered token + an expired token are both rejected (the `auth` module); (7) **key
   persistence** — `crypto_key_save`→`crypto_key_load` round-trips 32 bytes at rest and
-  a missing file loads as absent (the at-rest key I/O). Passes via `cyrius run
-  src/test.cyr` (idempotent).
+  a missing file loads as absent (the at-rest key I/O); (8) **tee sealing** — an
+  AES-256-GCM `tee_seal`→`tee_unseal` round-trips and a tampered ciphertext/tag is
+  rejected. Passes via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **43-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **44-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -275,7 +294,7 @@ files are the honest interim.
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
   the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 43 backend e2e + 10 UI e2e.
+- `tests/run.sh` — one command: build + unit + 44 backend e2e + 10 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).
@@ -327,9 +346,11 @@ The probe is now **growing toward the real SecureYeoman → Cyrius port** (see
 (durable via patrastore, Ed25519-signed head), **`hwprobe` → ai-hwaccel**, **`crypto`
 → sigil** (server-side Ed25519 + SHA-256, OpenSSL-interop verified), and **`auth`**
 (JWT sessions — HS256 login + Bearer-protected route, sigil HMAC, standard-JWT interop).
-The auth/crypto keys are now **persistent at rest** (0600 files). Next bite
-candidates: **enforce RBAC on the note mutations** (+ a frontend login flow — the
-full-stack secured-app push), **TEE-seal the keys at rest** (`sandbox`/`tee` — replace
-the plaintext key files with hardware-backed sealing), **`sandbox` → kavach** (v3.7.1),
-Argon2 password hashing (once a Cyrius Argon2 exists), or PKCE/OIDC/WebAuthn. The
-viability findings remain a first-class output — see [`../../FINDINGS.md`](../../FINDINGS.md).
+The auth/crypto keys are now **AES-256-GCM sealed at rest** (via the `tee` module).
+Next bite candidates: **enforce RBAC on the note mutations** (+ a frontend login flow —
+the full-stack secured-app push), **`sandbox` → kavach** (v3.7.1), a **hardware-backed
+KEK** for `tee` (needs a Cyrius TEE/TPM binding), Argon2 password hashing (once a Cyrius
+Argon2 exists), or PKCE/OIDC/WebAuthn. (A briefly-mis-recorded "sigil aes_gcm_decrypt
+bug" was retracted — it was a return-convention misread I caught via adversarial review;
+the real finding is sigil's inconsistent success conventions.) The viability findings
+remain a first-class output — see [`../../FINDINGS.md`](../../FINDINGS.md).

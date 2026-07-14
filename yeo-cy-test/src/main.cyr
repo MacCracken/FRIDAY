@@ -43,6 +43,7 @@
 # via lib/thread_local.cyr (patra owns slots 0-4; the probe's handle uses slot 15).
 
 include "src/httpd.cyr"
+include "src/tee.cyr"
 include "src/crypto.cyr"
 include "src/auth.cyr"
 include "src/audit.cyr"
@@ -306,6 +307,7 @@ fn main() {
     alloc_init();
 
     if (db_init() == 0) { println("error: patra_open failed"); return 1; }
+    tee_init();
     crypto_init();
     auth_init();
     audit_init();
@@ -321,6 +323,7 @@ fn main() {
     sandhi_router_add(router, "GET",    "/api/audit",     &handle_audit);
     sandhi_router_add(router, "GET",    "/api/hwinfo",    &handle_hwinfo);
     sandhi_router_add(router, "GET",    "/api/pubkey",    &handle_pubkey);
+    sandhi_router_add(router, "GET",    "/api/tee",       &handle_tee);
     sandhi_router_add(router, "POST",   "/api/login",     &handle_login);
     sandhi_router_add(router, "GET",    "/api/me",        &handle_me);
     sandhi_router_add(router, "GET",    "/api/admin",     &handle_admin);

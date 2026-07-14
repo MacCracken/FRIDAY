@@ -29,22 +29,33 @@ var g_crypto_pk = 0;   # 32-byte Ed25519 public key (heap, read-only after init)
 var g_identity_path = "yeo-identity.key";   # persisted 32-byte Ed25519 seed (0600, gitignored)
 
 # ── key material at rest (shared by crypto + auth) ──
-# NB stored as PLAINTEXT at 0600 (owner-only). A real deploy seals keys with a
-# hardware-backed key (sy-core's `tee`); that's a future bite (see FINDINGS).
+# Sealed with AES-256-GCM via the `tee` module (src/tee.cyr) and written owner-only
+# (0600). On disk the file is [12 IV | n ciphertext | 16 tag] = n+28 bytes — never the
+# raw key. (The KEK is a `SY_SEAL_KEY`-derived secret, not yet hardware-backed — see
+# tee.cyr / FINDINGS.)
 
-# Load exactly `n` bytes from `path` into `dst`. Returns 1 iff the file has >= n bytes.
+# Load an `n`-byte key from `path`: read the sealed blob (n+28 bytes) and unseal it
+# into `dst`. Returns 1 on success, 0 if the file is absent/wrong-size or the GCM tag
+# fails (tampered blob or wrong KEK).
 fn crypto_key_load(path, dst, n): i64 {
-    return file_read_all(path, dst, n) == n;
+    var buf = alloc(n + 28);
+    var got = file_read_all(path, buf, n + 28);
+    if (got != (n + 28)) { return 0; }
+    var pt = tee_unseal(buf, got);
+    if (pt == 0) { return 0; }
+    memcpy(dst, pt, n);
+    return 1;
 }
 
-# Persist `n` bytes to `path`, created owner-only (0600 = 384) — key material must
-# never be world-readable. Returns 1 on success.
+# Seal `n` bytes and persist to `path`, created owner-only (0600 = 384). Returns 1 on
+# success.
 fn crypto_key_save(path, src, n): i64 {
+    var blob = tee_seal(src, n);
     var fd = file_open(path, (O_CREAT | O_WRONLY | O_TRUNC), 384);
     if (fd < 0) { return 0; }
-    var w = file_write(fd, src, n);
+    var w = file_write(fd, blob, n + 28);
     file_close(fd);
-    return w == n;
+    return w == (n + 28);
 }
 
 # One-time init on the main thread, before any worker spawns. Loads the PERSISTED

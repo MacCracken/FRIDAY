@@ -1,0 +1,86 @@
+# src/tee.cyr — SecureYeoman `tee` module: AES-256-GCM key sealing at rest.
+#
+# The fifth sy-core module grown into the probe. sy-core's `tee` seals secrets
+# (model weights) with **AES-256-GCM under a hardware-backed key**. This bite ports
+# the sealing mechanism onto **sigil** (AES-256-GCM + HKDF) and applies it to the
+# probe's persisted key material: `crypto_key_save`/`crypto_key_load` now seal/unseal
+# through here, so `yeo-auth.key` / `yeo-identity.key` are **ciphertext at rest**,
+# not plaintext.
+#
+# KEY-ENCRYPTION-KEY: derived by HKDF-SHA256 from the **`SY_SEAL_KEY`** environment
+# variable. **GAP (honest):** sy-core's tee wants a *hardware-backed* KEK (TPM/SGX/
+# SEV); there is no Cyrius TEE/TPM API yet, so the KEK comes from an env secret. If
+# `SY_SEAL_KEY` is unset, a fixed **INSECURE DEV KEY** is used (files are still
+# sealed, but decryptable by anyone with this source) and a warning is printed — set
+# `SY_SEAL_KEY` in production. Filed as a gap (needs a Cyrius TEE/TPM binding).
+#
+# Sealed blob = [12-byte IV | ciphertext (= plaintext len) | 16-byte GCM tag], so a
+# 32-byte key seals to 60 bytes. A FRESH random IV per seal (no nonce reuse). Unseal
+# verifies the GCM tag (constant-time) and returns 0 on any tamper/wrong-key.
+#
+# sigil API (grounded against lib/sigil.cyr): aes_gcm_global_init();
+#   aes_gcm_encrypt(key32, iv12, aad, aad_len, pt, pt_len, ct_out, tag_out16) [AES-256,
+#   14 rounds]; aes_gcm_decrypt(...) -> SIGIL_ERR_NONE(0) on success / non-zero on tag
+#   mismatch (NB: opposite of ed25519_verify's 1=ok — see FINDINGS); zeroes pt_out on
+#   failure. hkdf(salt,sl,ikm,il,info,fl,out,ol).
+
+var g_tee_kek = 0;   # 32-byte AES-256 KEK (derived once at init, read-only after)
+var g_tee_dev = 0;   # 1 = the insecure dev KEK is in use (SY_SEAL_KEY unset)
+
+fn tee_init(): i64 {
+    aes_gcm_global_init();
+    g_tee_kek = alloc(32);
+    var salt = "sy-tee-seal-v1";
+    var info = "yeo-cy-test-key-sealing";
+    var master = getenv("SY_SEAL_KEY");
+    if ((master != 0) && (strlen(master) > 0)) {   # non-empty env → real KEK
+        hkdf(salt, strlen(salt), master, strlen(master), info, strlen(info), g_tee_kek, 32);
+        g_tee_dev = 0;
+    } else {
+        var dev = "INSECURE-DEV-KEY-set-SY_SEAL_KEY-in-production";
+        hkdf(salt, strlen(salt), dev, strlen(dev), info, strlen(info), g_tee_kek, 32);
+        g_tee_dev = 1;
+        println("warning: SY_SEAL_KEY unset — sealing at-rest keys with an INSECURE dev key");
+    }
+    return 1;
+}
+
+# Seal `n` plaintext bytes → an owned blob of n+28 bytes [12 IV | n ct | 16 tag].
+# AES-256-GCM under the KEK, with a fresh random IV each call (no nonce reuse).
+fn tee_seal(pt, n): i64 {
+    var blob = alloc(n + 28);
+    random_bytes(blob, 12);
+    aes_gcm_encrypt(g_tee_kek, blob, 0, 0, pt, n, blob + 12, blob + 12 + n);
+    return blob;
+}
+
+# Unseal a `total`-byte blob → an owned plaintext buffer of (total-28) bytes
+# (NUL-terminated), or 0 on authentication failure (tampered blob or wrong KEK).
+#
+# CONVENTION GOTCHA (see FINDINGS): sigil's `aes_gcm_decrypt` returns
+# **SIGIL_ERR_NONE == 0 on SUCCESS** (non-zero = tag mismatch) — the OPPOSITE of
+# `ed25519_verify`, which returns 1 on success. So the check is `!= 0` = failure. On
+# failure sigil zeroes pt_out (its no-plaintext-leak contract), so no partial plaintext
+# escapes.
+fn tee_unseal(blob, total): i64 {
+    if (total < 28) { return 0; }
+    var n = total - 28;
+    var pt = alloc(n + 1);
+    if (aes_gcm_decrypt(g_tee_kek, blob, 0, 0, blob + 12, n, blob + 12 + n, pt) != 0) {
+        return 0;   # SIGIL_ERR_INTEGRITY_MISMATCH — tag failed (tampered/wrong key)
+    }
+    store8(pt + n, 0);
+    return pt;
+}
+
+# GET /api/tee — sealing status (observability only; NEVER exposes the KEK).
+fn handle_tee(ctx, conn, buf, blen, params): i64 {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("algorithm"), json_v_str_new(str_lit("AES-256-GCM")));
+    json_v_obj_set(o, str_lit("sealed"),    json_v_bool_new(1));
+    var src = str_lit("env");
+    if (g_tee_dev == 1) { src = str_lit("dev"); }
+    json_v_obj_set(o, str_lit("key_source"), json_v_str_new(src));
+    json_v_obj_set(o, str_lit("dev_key"),    json_v_bool_new(g_tee_dev));
+    return resp_json(conn, "200 OK", o);
+}
