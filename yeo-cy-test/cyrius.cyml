@@ -40,7 +40,7 @@ modules = ["dist/sakshi.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.12.9"
+tag = "1.12.10"
 modules = ["dist/patra.cyr"]
 
 # libro — cryptographic audit chain (SHA-256 hash-linked, tamper-evident). The
@@ -52,7 +52,7 @@ modules = ["dist/patra.cyr"]
 # pattern.
 [deps.libro]
 git = "https://github.com/MacCracken/libro.git"
-tag = "2.8.0"
+tag = "2.8.1"
 modules = ["dist/libro.cyr"]
 
 # ai-hwaccel — hardware accelerator detection (GPU/TPU/NPU/AI-ASIC) + planning.

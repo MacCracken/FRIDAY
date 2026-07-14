@@ -6,8 +6,8 @@
 ## Version
 
 **0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.4.62 /
-patra 1.12.9 / sandhi 1.8.2 (thin `server` profile bundle) / sigil 3.9.9 (via
-cyrius) / sakshi 2.4.6** (2026-07-13; regenerate `lib/` with `cyrius lib sync
+patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile bundle) / sigil
+3.9.9 (via cyrius) / sakshi 2.4.6** (2026-07-13; regenerate `lib/` with `cyrius lib sync
 --full` + `cyrius deps` — see Toolchain note). Serves **HTTP (:8080) and HTTPS
 (:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set over the patra
 backend, both at **`max_conns=4`**. Both original 🔴 blockers (TS/TSX→JS emit,
@@ -42,18 +42,24 @@ No new findings this cycle — every previously-filed ecosystem finding is now s
 and adopted. See [`../../FINDINGS.md`](../../FINDINGS.md) and each repo's
 `docs/development/issues/`.
 
-**First `sy-core` module grown into the probe: `audit` → libro.** The probe is now
-evolving from a pure viability slice toward the real SecureYeoman → Cyrius port. The
-first module ported is `sy-core`'s **audit** (an append-only, hash-linked crypto
-audit log) onto **libro** (v2.7.10) — a near-exact lib match. Every note mutation
-(create/update/delete) appends a SHA-256 hash-linked entry to a process-global chain
-(`src/audit.cyr`), and `GET /api/audit` returns `{entries, verified, head}`. Appends
-serialize under `g_audit_lock` — a hash chain is inherently serial, so one writer at
-a time is correct, not a workaround. Verified under the probe's full concurrency:
-after 641 entries incl. 250 + 60 concurrent appends, `chain_verify` still holds (a
-torn append would flip `verified` to false). **Limitation (next bite):** the chain is
-in-memory, so it resets on restart; libro's `patrastore_*` (patra-backed persistence)
-is the planned follow-on. See [`roadmap.md`](roadmap.md).
+**First `sy-core` module grown into the probe: `audit` → libro (PERSISTENT).** The
+probe is now evolving from a pure viability slice toward the real SecureYeoman →
+Cyrius port. The first module ported is `sy-core`'s **audit** (an append-only,
+hash-linked crypto audit log) onto **libro** (v2.8.1) — a near-exact lib match. Every
+note mutation (create/update/delete) appends a SHA-256 hash-linked entry to a
+**patra-backed store** (libro `patrastore`, file `yeo-audit.patra`, separate from the
+notes DB); `GET /api/audit` returns `{entries, verified, head, persistent}` and
+re-verifies the **on-disk** chain each call. Appends serialize under `g_audit_lock`
+— a hash chain is inherently serial, so one writer at a time is correct, not a
+workaround. **Durable:** the log survives a restart — `audit_init` reconstructs the
+head hash from the on-disk entries so appends after a restart link onto the existing
+chain and the whole chain still verifies (scenario 12c). **Connection-per-thread**
+(TLS slot 14, like the notes `db()`): patra handles must be used on the thread that
+opened them, so each worker opens its own audit handle. Verified under full
+concurrency (250 + 60 concurrent appends → chain verifies) and across a restart.
+Now safe to store **arbitrary content** (quotes/injection/unicode) — the underlying
+libro `patrastore_append` uses a bound INSERT (libro 2.8.1) and patra escapes `''`
+(1.12.10); see the quote-corruption fix note below and FINDINGS.
 
 **Second module: `hwprobe` → ai-hwaccel.** sy-core's `hwprobe` is "a thin wrapper
 around `ai_hwaccel`" (hardware-accelerator detection); its Cyrius target,
@@ -65,7 +71,7 @@ caches the summary JSON; **`GET /api/hwinfo`** serves it. On this host it report
 gpu_count, tpu_count, npu_count, warnings}` — e.g. 2 devices / 1 GPU / ~64 GB. The
 cached string is immutable, so all workers serve it lock-free.
 
-4 unit invariants + **38 backend scenarios** + 10 UI pass — **green + stable** at
+4 unit invariants + **39 backend scenarios** + 10 UI pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -127,14 +133,19 @@ cached string is immutable, so all workers serve it lock-free.
     `patra_result_read_text` is a pure memcpy — the last reason to hold a lock is
     gone. Writers serialize via patra's per-fd exclusive flock; reads run fully in
     parallel; `last_insert_id`/`rows_affected` are per-handle.
-- `src/audit.cyr` — **the `sy-core` `audit` module, ported onto libro.** A
-  process-global SHA-256 hash-linked audit chain (`chain_new`/`chain_append`/
-  `chain_verify`/`chain_head_hash`). `audit_init()` (main-thread) creates the chain
-  + `g_audit_lock`; `audit_log(source, action, details)` appends one SEV_INFO entry
-  under the lock (serial by nature); `audit_json()` builds the `/api/audit` body
-  `{entries, verified, head}` under the lock. Wired into `handle_create/update/
-  delete_note`, so every note mutation is recorded. In-memory this bite (resets on
-  restart) — libro `patrastore_*` persistence is the next bite.
+- `src/audit.cyr` — **the `sy-core` `audit` module, ported onto libro's persistent
+  patrastore.** A SHA-256 hash-linked audit chain persisted to `yeo-audit.patra`
+  (separate from the notes DB) via `patrastore_open`/`patrastore_append`/
+  `patrastore_load_all` + `entry_new(…, prev_hash)` + `verify_chain`. `audit_init()`
+  (main-thread) `ed25519_init`s, ensures the store, and reconstructs the head hash
+  from the on-disk entries (restart continuity); `audit_store()` opens a **per-thread**
+  handle (TLS slot 14 — patra is connection-per-thread, like `db()`); `audit_log(source,
+  action, details)` links + persists one SEV_INFO entry under `g_audit_lock` (serial by
+  nature) and advances the shared head; `audit_json()` re-verifies the on-disk chain
+  and returns `{entries, verified, head, persistent}`. Wired into `handle_create/update/
+  delete_note`, so every note mutation is durably recorded — surviving a restart
+  (scenario 12c) and safe for arbitrary content (libro 2.8.1 bound INSERT / patra
+  1.12.10 `''`).
 - `src/hwprobe.cyr` — **the `sy-core` `hwprobe` module, ported onto ai-hwaccel.**
   `hwprobe_init()` (main-thread) calls `hwlog_init()` then
   `registry_detect_no_exec()` (no subprocess spawning) once, caching
@@ -165,17 +176,18 @@ cached string is immutable, so all workers serve it lock-free.
   path `/api/hwinfo` relies on; hardware-agnostic). Passes via `cyrius run
   src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **38-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **39-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
   HTTP↔HTTPS shared backend, ALPN negotiates `http/1.1` (9i), 60-concurrent-HTTPS
   served without crashing (10), read-during-write: 310 reads under concurrent
   writes → 0 torn/garbled (11) proving lock-free TEXT readback, the audit
-  chain (12): `/api/audit` stays `verified` after all mutations incl. the
-  concurrent ones (641 entries) + a controlled create+update+delete adds exactly 3
-  linked entries, and hwprobe (13): `/api/hwinfo` returns a valid ai-hwaccel
-  summary with the expected keys/types**). **All scenarios are stable** (the cyrius 6.3.15
+  chain (12a/b): `/api/audit` stays `verified` + `persistent` after all mutations
+  incl. the concurrent ones + a controlled create+update+delete adds exactly 3
+  linked entries, audit durability (12c): the on-disk chain survives a full server
+  restart with entries + head intact and still verified, and hwprobe (13):
+  `/api/hwinfo` returns a valid ai-hwaccel summary**). **All scenarios are stable** (the cyrius 6.3.15
   str_builder fix removed the concurrency flakiness). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
@@ -183,7 +195,7 @@ cached string is immutable, so all workers serve it lock-free.
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
   drives the rendered UI (list → add → detail → edit → delete), cross-checking
   the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 38 backend e2e + 10 UI e2e.
+- `tests/run.sh` — one command: build + unit + 39 backend e2e + 10 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).
@@ -210,13 +222,16 @@ Direct (declared in `cyrius.cyml`):
   bundle** (`[deps.sandhi]`, `modules = ["dist/sandhi-server.cyr"]`; 141 KB vs the
   590 KB full folded bundle). Server-side TLS + Conn-aware router + `run_pooled`/
   `run_pooled_tls`.
-- **libro** `2.8.0` — cryptographic audit chain (SHA-256 hash-linked, tamper-
-  evident); the Cyrius target for `sy-core`'s `audit` module (`[deps.libro]`).
-  GPL-3.0-only (compatible with this project's AGPL-3.0-only).
+- **libro** `2.8.1` — cryptographic audit chain (SHA-256 hash-linked, tamper-
+  evident) + patra-backed `patrastore`; the Cyrius target for `sy-core`'s `audit`
+  module (`[deps.libro]`). GPL-3.0-only (compatible with this project's AGPL-3.0-only).
+  2.8.1 fixed the raw-SQL quote-drop in `patrastore_append` (bound INSERT) — the P1
+  this probe filed.
 - **ai-hwaccel** `2.3.14` — hardware-accelerator detection (GPU/TPU/NPU/AI-ASIC);
   the Cyrius target for `sy-core`'s `hwprobe` module (`[deps.ai-hwaccel]`). Already
   a Cyrius lib. Detection is read-only (`registry_detect_no_exec`, no subprocess).
-- **patra** `1.12.9` — SQL persistence (`[deps.patra]`)
+- **patra** `1.12.10` — SQL persistence (`[deps.patra]`). 1.12.10 added standard
+  `''` escaping + `patra_quote_str` (the P1 quote fix this probe drove).
 - **sakshi** `2.4.6` — required transitively by patra (`[deps.sakshi]`)
 
 ## Consumers
@@ -226,11 +241,10 @@ _None — this is a probe, not a library._
 ## Next
 
 The probe is now **growing toward the real SecureYeoman → Cyrius port** (see
-[`roadmap.md`](roadmap.md)). Two `sy-core` modules are in: **`audit` → libro** and
-**`hwprobe` → ai-hwaccel**. Pending / next bites: **persist the audit chain via
-libro's `patrastore_*`** (deferred — its API needs `ed25519_init` + `str`-typed
-paths + caller-managed `prev_hash`, and its `patrastore_append` builds INSERTs by
-string concatenation, which needs escaping verification before use); then the next
-module — **`crypto` → sigil** (most foundational) or **`sandbox` → kavach** (v3.7.1).
-The viability findings remain a first-class output — see
-[`../../FINDINGS.md`](../../FINDINGS.md).
+[`roadmap.md`](roadmap.md)). Two `sy-core` modules are in and complete: **`audit` →
+libro** (now durable via patrastore) and **`hwprobe` → ai-hwaccel**. The audit
+quote-corruption that gated persistence was fixed upstream (patra 1.12.10 + libro
+2.8.1, both driven by this probe) and adopted here. Next bite: the next `sy-core`
+module — **`crypto` → sigil** (most foundational; audit/auth/tee lean on it) or
+**`sandbox` → kavach** (v3.7.1). The viability findings remain a first-class output
+— see [`../../FINDINGS.md`](../../FINDINGS.md).

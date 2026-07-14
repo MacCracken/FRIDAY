@@ -7,6 +7,61 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — the single-quote corruption: filed, FIXED at both layers, adopted → audit chain now durable (2026-07-13)
+
+The headline of this session, and the probe working exactly as intended: a real
+data-integrity bug, hit for the **third time**, root-caused, fixed **upstream** in two
+libs, and adopted back into the probe — turning the audit module from in-memory into a
+durable, tamper-evident log that can store arbitrary content.
+
+**The bug (🔴 data integrity).** libro's audit store (`patrastore_append`) built each
+row by **raw SQL string interpolation** — `INSERT INTO audit_entries VALUES ('…')`.
+patra's SQL tokenizer had **no `''` (doubled-quote) escaping**: a single `'` in a
+value made the generated SQL malformed → `PATRA_ERR_SYNTAX` → `patrastore_append`
+logged "insert failed" and **the record was silently dropped**. For an audit log
+(argonaut's PID-1 tamper-evidence, and this probe's), a value that can't round-trip is
+a correctness hole, not a nit. **Reproduced empirically** from the probe: an audit
+entry whose `details` held `O'Brien` returned an exit code proving the entry count
+stayed behind (dropped). patra's own roadmap already carried this as **P1**
+(argonaut/libro), so this was the third consumer-hit.
+
+**Root-caused to BOTH layers.** A 4-agent recon of patra found two things: (1) patra's
+lexer (`src/sql.cyr`) ends a `'…'` literal at the first inner quote with zero
+lookahead — so `'a''b'` lexes to two tokens, not one escaped `a'b`; and (2) patra
+**already had** a quote-safe path — prepared statements + `patra_bind_text` (values
+pass as bytes, never reparsed as SQL) — that libro simply wasn't using. So "fix patra"
+was really "fix both": patra's genuine lexer defect **and** libro's raw-SQL usage.
+
+**Fixed upstream (both released) and adopted here:**
+- **patra 1.12.10** — the SQL tokenizer now implements standard `''` escaping,
+  collapsing `''`→`'` **in place** (no-`''` literals stay zero-copy) with
+  `patra_exec`/`patra_query` copying the caller's buffer only when a `''` is present;
+  plus a new **`patra_quote_str`** helper. Regression `test_exec_quote_escaping`;
+  gates 893 tests + 7 fuzz (incl. the SQL parser) + libro 15/15 + vidya 19/19.
+- **libro 2.8.1** — `patrastore_append` rewritten to a **bound INSERT**
+  (`patra_prepare` + `patra_bind_text` ×10 + `patra_exec_prepared`), the durable,
+  escaping-free path (works on patra 1.12.9+). Regression `test_ps_quote`.
+- **Probe:** bumped `[deps.patra]` → 1.12.10, `[deps.libro]` → 2.8.1. The audit chain
+  now stores arbitrary note content verbatim.
+
+**Payoff — `audit` is now DURABLE.** With the corruption closed, `src/audit.cyr`
+migrated from an in-memory chain to libro's **patra-backed `patrastore`**
+(`yeo-audit.patra`): every note mutation persists a hash-linked entry, `GET /api/audit`
+re-verifies the **on-disk** chain, and the log **survives a restart** — `audit_init`
+reconstructs the head hash from the on-disk entries so post-restart appends link onto
+the existing chain and the whole thing still verifies. Uses **connection-per-thread**
+handles (patra requires a handle be used on the opening thread — isolated + confirmed:
+single-threaded works, a main-opened handle used by a worker crashes; TLS slot 14,
+like the notes `db()`), with `g_audit_lock` serializing the (inherently serial) chain
++ the shared head. New backend **scenario 12c** proves durability (chain survives a
+full server restart, entries + head intact, still verified). Suite: **4 unit + 39
+backend + 10 UI**, green.
+
+**Lesson.** The `fix patra` ask uncovered (again) that the assumed-broken lib already
+had the safe path — the durable fix spanned two repos, and filing is what let each be
+root-caused where a black-box consumer couldn't. Both libs were fixed *from* this
+probe and released, then adopted here — the probe's whole reason to exist.
+
 ## Update — re-run on cyrius 6.4.62: last lock removed (lock-free reads), thin sandhi profile bundle dogfooded (2026-07-13)
 
 Bumped to **cyrius 6.4.62 / patra 1.12.9 / sandhi 1.8.2 (thin `server` profile

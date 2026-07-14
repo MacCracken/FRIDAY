@@ -30,6 +30,7 @@ HOST, PORT = "127.0.0.1", 8080
 HTTPS_HOST, HTTPS_PORT = "localhost", 8443   # cert SAN: DNS:localhost, IP:127.0.0.1
 BIN = "./build/yeo-cy-test"
 DB = "yeo.patra"
+AUDIT_DB = "yeo-audit.patra"   # libro patrastore-backed audit chain (persistent)
 passes, fails = [], []
 
 def ok(name):   passes.append(name); print(f"  \033[32mPASS\033[0m {name}")
@@ -121,7 +122,7 @@ def wait_https(timeout=10):
     return False
 
 # ── cleanup ──
-for f in (DB,):
+for f in (DB, AUDIT_DB):
     try: os.remove(f)
     except FileNotFoundError: pass
 
@@ -390,20 +391,23 @@ for t in r11_rt: t.join()
 (ok if not r11_viol else bad)(
     f"11. read-during-write: {r11_reads[0]} reads, {len(r11_viol)} torn/garbled (lock-free TEXT readback)")
 
-# 12. Audit chain (libro) — the first sy-core module ported into the probe. Every
-#     note mutation (create/update/delete) appends a SHA-256 hash-linked entry to a
-#     process-global libro chain, serialized by g_audit_lock (a hash chain is
-#     inherently serial — one writer at a time is correct, not a workaround). GET
-#     /api/audit returns {entries, verified, head}. After ALL prior scenarios —
-#     including 250 + 60 CONCURRENT mutations — the chain must still verify: a torn
-#     concurrent append would break the hash links and flip verified to false. Then
-#     a controlled create+update+delete must add EXACTLY 3 entries (no other thread
-#     is mutating at this point) and advance the head. (Audit is in-memory this
-#     bite, so it resets on restart; libro patrastore persistence is the next bite.)
+# 12. Audit chain (libro, PERSISTENT via patrastore) — the first sy-core module
+#     ported into the probe. Every note mutation (create/update/delete) appends a
+#     SHA-256 hash-linked entry to a patra-backed libro store, serialized by
+#     g_audit_lock (a hash chain is inherently serial — one writer at a time is
+#     correct, not a workaround). GET /api/audit returns {entries, verified, head,
+#     persistent}. After ALL prior scenarios — including 250 + 60 CONCURRENT
+#     mutations — the chain must still verify: a torn concurrent append would break
+#     the hash links and flip verified to false. Then a controlled
+#     create+update+delete must add EXACTLY 3 entries (no other thread is mutating at
+#     this point) and advance the head. 12c proves DURABILITY: the on-disk chain
+#     survives a full server restart, entries intact and still verified (the head is
+#     reconstructed so new entries link across the restart boundary).
 st, b = req("GET", "/api/audit")
 a0 = json.loads(b) if st == 200 else {}
-(ok if st == 200 and a0.get("verified") is True and a0.get("entries", 0) > 0 and a0.get("head")
-    else bad)(f"12a. audit chain intact after all mutations (entries={a0.get('entries')}, verified={a0.get('verified')})")
+(ok if st == 200 and a0.get("verified") is True and a0.get("entries", 0) > 0
+    and a0.get("head") and a0.get("persistent") is True
+    else bad)(f"12a. audit chain intact + persistent after all mutations (entries={a0.get('entries')}, verified={a0.get('verified')})")
 e0, h0 = a0.get("entries", 0), a0.get("head", "")
 _st, _r = req("POST", "/api/notes", json.dumps({"body": "audit-delta"}))
 _aid = json.loads(_r)["id"]
@@ -413,6 +417,16 @@ st, b = req("GET", "/api/audit")
 a1 = json.loads(b) if st == 200 else {}
 (ok if st == 200 and a1.get("entries", 0) == e0 + 3 and a1.get("verified") is True and a1.get("head") != h0
     else bad)(f"12b. create+update+delete -> +{a1.get('entries',0)-e0} entries (want 3), verified={a1.get('verified')}, head advanced")
+# 12c. Durability: the audit chain survives a server restart (patrastore persists
+#      to yeo-audit.patra; the head is reconstructed on reopen). Entries and head
+#      must be identical after the restart, and the chain still verifies.
+e2, h2 = a1.get("entries", 0), a1.get("head", "")
+stop_server(srv)
+srv = start_server()  # reloads yeo.patra AND yeo-audit.patra
+st, b = req("GET", "/api/audit")
+a2 = json.loads(b) if st == 200 else {}
+(ok if st == 200 and a2.get("entries", 0) == e2 and a2.get("head") == h2 and a2.get("verified") is True
+    else bad)(f"12c. audit chain survives restart (entries {a2.get('entries')}=={e2}, verified={a2.get('verified')})")
 
 # 13. hwprobe → ai-hwaccel — the second sy-core module ported in. GET /api/hwinfo
 #     serves the host's accelerator summary, detected ONCE at startup via

@@ -1,60 +1,105 @@
-# src/audit.cyr — SecureYeoman `audit` module, ported onto libro.
+# src/audit.cyr — SecureYeoman `audit` module, ported onto libro (PERSISTENT).
 #
-# This is the FIRST real sy-core module grown into the probe. sy-core's audit
-# module (crates/sy-core/src/audit/mod.rs) is an append-only, HMAC/SHA-256
-# hash-LINKED cryptographic audit log — each entry chains to the previous one's
-# hash, so any tampering with a past entry breaks verification. Its Cyrius target
-# is `libro` (v2.7.10): a purpose-built SHA-256 hash-linked, tamper-evident audit
-# chain. Near-exact fit — the module maps to one lib.
+# The first sy-core module grown into the probe. sy-core's audit module
+# (crates/sy-core/src/audit/mod.rs) is an append-only, hash-LINKED cryptographic
+# audit log; libro is its purpose-built Cyrius counterpart. This bite makes it
+# DURABLE: entries persist to a patra-backed store (libro's `patrastore_*`), so the
+# audit chain survives a restart — a proper audit log, not an in-memory one.
 #
-# Here every note mutation (create/update/delete) appends a signed entry to a
-# process-global chain, and GET /api/audit returns the chain length, head hash,
-# and — the whole point — its live verification status.
+# Every note mutation (create/update/delete) appends a SHA-256 hash-linked entry;
+# `GET /api/audit` returns `{entries, verified, head, persistent}`, where `verified`
+# is a live verification of the ON-DISK chain.
 #
-# CONCURRENCY: a hash-linked chain is INHERENTLY serial. Each new entry links to
-# the current head's hash, so concurrent appends across the sandhi worker pool
-# MUST be serialized or the links race. `g_audit_lock` does that. This is NOT the
-# kind of workaround the db layer shed (patra went lock-free via per-thread
-# handles) — an append-only chain is serial by definition; one writer at a time is
-# correct, not a limitation. Reads (verify/len/head for /api/audit) also take the
-# lock so /api/audit sees a consistent snapshot.
+# Why libro's patrastore is now safe for arbitrary field content: it used to build
+# the INSERT by raw string interpolation, so a `'` in a value silently dropped the
+# record (patra P1). Fixed in libro 2.8.1 (bound INSERT via patra_prepare +
+# patra_bind_text) and patra 1.12.10 (standard `''` escaping) — both adopted by the
+# pin bump this bite. So the audit chain can store any note content, quotes and all.
 #
-# libro API used (grounded against the 2.7.10 dist):
-#   chain_new() -> chain            severities: SEV_INFO=1 WARNING=2 ERROR=3 CRITICAL=4
-#   chain_append(c, sev, source, action, details)   (source/action/details are `str`)
-#   chain_verify(c) -> 0 on OK, a non-zero error object on tamper
-#   chain_len(c) -> i64             chain_head_hash(c) -> hash `str` (0 if empty)
+# CONCURRENCY: a hash-linked chain is inherently serial (each entry links the
+# previous head's hash), so `g_audit_lock` serializes every append and read. That
+# lock also serializes access to the single shared audit patra handle (opened once
+# on the main thread) — safe by construction, and correct for an append-only log
+# (unlike the notes DB, which is per-thread for parallel reads). The store is a
+# SEPARATE patra file from the notes DB.
+#
+# libro API used (grounded against the 2.8.1 dist):
+#   ed25519_init()                        — sigil crypto init (entry hashing/signing)
+#   patrastore_open(str) -> store         — patra-backed audit store (own handle)
+#   entry_new(sev, source, action, details, prev_hash) -> entry
+#   patrastore_append(store, entry)       — persist one linked entry
+#   patrastore_load_all(store) -> vec<entry>   (in chain/insertion order)
+#   patrastore_len(store) -> i64
+#   entry_hash(entry) -> hash str
+#   verify_chain(entries_vec, 0) -> 0 on OK (non-zero error object on tamper)
+#     NB patrastore_load_and_verify returns entries-OR-error (both non-zero) — not a
+#     boolean — so the verified check uses verify_chain(...) == 0 directly.
 
-var g_audit_chain = 0;   # libro chain handle (chain_new)
-var g_audit_lock  = 0;   # serializes append + read (mutex_new)
+var g_audit_lock  = 0;                 # serializes append + read (chain is serial)
+var g_audit_head  = 0;                 # current chain head hash (str) for linking
+var g_audit_path  = "yeo-audit.patra"; # audit store file (separate from notes DB)
+# Thread-local slot for THIS worker's audit patrastore handle. patra is
+# connection-per-thread: a handle must be used on the thread that opened it (the
+# notes DB uses db()/slot 15 for the same reason). Per lib/thread_local.cyr's slot
+# registry: 0-4 patra, 8 sigil, 15 notes (TLS_DB) — 14 is claimed here from FREE.
+var TLS_AUDIT = 14;
 
-# One-time init on the main thread, before any worker spawns — the chain and the
-# mutex it is guarded by must both exist before the pooled workers can append.
+# This worker thread's audit store handle (connection-per-thread), opened lazily on
+# first use. Each worker gets its own patra fd to the shared audit file; appends are
+# still serialized by g_audit_lock (the chain is serial) and by patra's per-fd write
+# flock, and a reader sees other workers' committed entries via patra's cross-handle
+# commit-gen visibility. Returns 0 only on open failure.
+fn audit_store(): i64 {
+    var s = thread_local_get(TLS_AUDIT);
+    if (s == 0) {
+        s = patrastore_open(str_from(g_audit_path));
+        thread_local_set(TLS_AUDIT, s);
+    }
+    return s;
+}
+
+# One-time init on the main thread, before any worker spawns. Ensures the store
+# (and its table) exist and reconstructs the head hash from any entries already on
+# disk, so appends after a restart link onto the existing chain (the whole chain
+# then still verifies across the restart boundary). Uses a throwaway main-thread
+# handle for reconstruction — workers open their own via audit_store().
 fn audit_init(): i64 {
-    g_audit_chain = chain_new();
-    g_audit_lock  = mutex_new();
+    ed25519_init();
+    g_audit_lock = mutex_new();
+    var s = patrastore_open(str_from(g_audit_path));
+    if (s == 0) { return 0; }
+    var loaded = patrastore_load_all(s);
+    var n = vec_len(loaded);
+    if (n > 0) { g_audit_head = entry_hash(vec_get(loaded, n - 1)); }
+    else       { g_audit_head = str_from(""); }
+    patrastore_close(s);
     return 1;
 }
 
-# Append an audit event. `source` and `action` are static cstr labels (e.g.
-# "notes"/"create"); `details` is a `str` the caller already holds (e.g. the note
-# id via str_from_int). SEV_INFO — routine operations; escalate later bites.
+# Append an audit event, linked onto the current head, and persist it. `source`
+# and `action` are static cstr labels; `details` is a `str` (e.g. the note id).
+# Values are stored via a bound INSERT (libro 2.8.1) — quote/metachar-safe.
 fn audit_log(source, action, details) {
     mutex_lock(g_audit_lock);
-    chain_append(g_audit_chain, SEV_INFO, str_from(source), str_from(action), details);
+    var e = entry_new(SEV_INFO, str_from(source), str_from(action), details, g_audit_head);
+    patrastore_append(audit_store(), e);
+    g_audit_head = entry_hash(e);
     mutex_unlock(g_audit_lock);
 }
 
-# Build the GET /api/audit JSON: { "entries": N, "verified": bool, "head": "<hash>" }.
-# `verified` is the live chain_verify result — true iff no past entry was altered.
+# Build the GET /api/audit JSON from the ON-DISK chain: { entries, verified, head,
+# persistent }. `verified` re-verifies the whole persisted chain (a torn or
+# tampered on-disk entry — or a broken restart link — flips it false).
 fn audit_json(): i64 {
     mutex_lock(g_audit_lock);
+    var loaded = patrastore_load_all(audit_store());
     var o = json_v_obj_new();
-    json_v_obj_set(o, str_lit("entries"),  json_v_int_new(chain_len(g_audit_chain)));
-    json_v_obj_set(o, str_lit("verified"), json_v_bool_new(chain_verify(g_audit_chain) == 0));
-    var head = chain_head_hash(g_audit_chain);
+    json_v_obj_set(o, str_lit("entries"),    json_v_int_new(vec_len(loaded)));
+    json_v_obj_set(o, str_lit("verified"),   json_v_bool_new(verify_chain(loaded, 0) == 0));
+    var head = g_audit_head;
     if (head == 0) { head = str_lit(""); }
-    json_v_obj_set(o, str_lit("head"), json_v_str_new(head));
+    json_v_obj_set(o, str_lit("head"),       json_v_str_new(head));
+    json_v_obj_set(o, str_lit("persistent"), json_v_bool_new(1));
     mutex_unlock(g_audit_lock);
     return o;
 }

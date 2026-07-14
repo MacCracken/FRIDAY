@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — audit chain is now DURABLE (libro patrastore); adopted patra 1.12.10 + libro 2.8.1 (the quote-corruption fixes this probe drove)
+- **Bumped `[deps.patra]` 1.12.9 → 1.12.10 and `[deps.libro]` 2.8.0 → 2.8.1.** Both
+  ship the fix for the single-quote corruption this probe hit for the third time:
+  a `'` in a value written through libro's raw-SQL `patrastore_append` produced
+  `PATRA_ERR_SYNTAX` and **silently dropped the record**. Fixed at both layers —
+  **patra 1.12.10** (SQL tokenizer now implements standard `''` escaping +
+  `patra_quote_str`) and **libro 2.8.1** (`patrastore_append` rewritten to a bound
+  INSERT via `patra_prepare` + `patra_bind_text`). So the audit chain can now store
+  arbitrary note content (quotes, injection payloads, unicode) verbatim.
+- **`audit` module migrated in-memory → PERSISTENT (libro patrastore).**
+  `src/audit.cyr` now appends each hash-linked entry to a patra-backed store
+  (`yeo-audit.patra`, separate from the notes DB) instead of a process-global
+  in-memory chain, so **the audit log survives a restart**. `GET /api/audit` gains
+  a `persistent: true` field and re-verifies the **on-disk** chain each call.
+  - **Connection-per-thread**, mirroring the notes DB: each worker opens its own
+    patra handle to the audit file, lazily cached in thread-local **slot 14** (per
+    `lib/thread_local.cyr`'s registry: 0-4 patra, 8 sigil, 15 notes, **14 audit**).
+    patra is connection-per-thread — a handle opened on the main thread crashes when
+    used by a worker (isolated + confirmed: single-threaded works, cross-thread
+    doesn't), so audit uses per-thread handles like `db()`.
+  - **`g_audit_lock` retained** (a hash chain is inherently serial — one writer at a
+    time is correct, not a workaround) and now also holds the shared head hash
+    (`g_audit_head`) consistent across workers.
+  - **Head reconstruction on restart:** `audit_init` reloads the on-disk entries and
+    sets the head to the last entry's hash, so appends after a restart link onto the
+    existing chain and the whole chain still verifies across the boundary.
+- **Tests:** backend **scenario 12** now asserts `persistent: true`; new **scenario
+  12c** proves durability — the chain survives a full server restart with entries +
+  head intact and still verified. `tests/verify.py` cleans `yeo-audit.patra`; suite
+  is **4 unit + 39 backend + 10 UI**, green.
+
 ### Added — second `sy-core` module ported: `hwprobe` → ai-hwaccel
 - **`src/hwprobe.cyr` — SecureYeoman's `hwprobe` module, ported onto ai-hwaccel
   (v2.3.14).** sy-core's hwprobe is "a thin wrapper around `ai_hwaccel`" (hardware-

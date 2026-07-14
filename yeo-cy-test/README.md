@@ -36,10 +36,13 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   Cyrius SQL database. Notes persist to `yeo.patra` (ids via patra
   `AUTOINCREMENT`) and survive restarts.
 - **Audit** — [libro](https://github.com/MacCracken/libro), a SHA-256 hash-linked,
-  tamper-evident audit chain. The **first `sy-core` module ported into the probe**
-  (sy-core's `audit`): every note mutation appends a linked entry, and
-  `GET /api/audit` reports the chain's live `verified` status. In-memory this bite
-  (libro `patrastore` persistence is the next step).
+  tamper-evident audit chain, **persisted via libro's patra-backed `patrastore`**
+  (`yeo-audit.patra`). The **first `sy-core` module ported into the probe**
+  (sy-core's `audit`): every note mutation appends a linked entry, `GET /api/audit`
+  reports the on-disk chain's live `verified` status, and **the log survives a
+  restart** (the head is reconstructed so the chain stays linked across the boundary).
+  Now stores arbitrary content safely — the single-quote corruption that gated this
+  was fixed upstream (patra 1.12.10 + libro 2.8.1) after the probe filed it.
 - **Hardware probe** — [ai-hwaccel](https://github.com/MacCracken/ai-hwaccel),
   accelerator detection. The **second `sy-core` module ported** (sy-core's `hwprobe`,
   itself a thin wrapper over ai_hwaccel): detected once at startup with **no
@@ -86,7 +89,7 @@ curl -s localhost:8080/api/notes
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 38 backend e2e + 10 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 39 backend e2e + 10 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -97,12 +100,12 @@ emitted frontend against the backend) each start/stop their own server.
 ```
 src/main.cyr     — handlers, route registration, patra CRUD, audit+hwprobe wiring, dual HTTP+HTTPS serve
 src/httpd.cyr    — JSON/file response helpers + body accessors over sandhi's server
-src/audit.cyr    — sy-core `audit` module → libro (hash-linked audit chain; GET /api/audit)
+src/audit.cyr    — sy-core `audit` module → libro patrastore (persistent hash-linked audit chain; GET /api/audit)
 src/hwprobe.cyr  — sy-core `hwprobe` module → ai-hwaccel (accelerator detection; GET /api/hwinfo)
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel)
-tests/verify.py  — 38-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/verify.py  — 39-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
 tests/ui_check.mjs — headless full-stack UI e2e (drives the emitted app.js vs the backend)
-tests/run.sh     — one command: build + unit + 38 backend + 10 UI
+tests/run.sh     — one command: build + unit + 39 backend + 10 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -114,9 +117,9 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-**cyrius 6.4.62 / patra 1.12.9 / sandhi 1.8.2 (thin `server` profile bundle) / sigil
-3.9.9 / sakshi 2.4.6**; regenerate `lib/` with `cyrius lib sync --full` + `cyrius
-deps`). Both original blockers — TS/TSX→JS emit and patra SQL string safety — are
+**cyrius 6.4.62 / patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile
+bundle) / sigil 3.9.9 / sakshi 2.4.6**; regenerate `lib/` with `cyrius lib sync
+--full` + `cyrius deps`). Both original blockers — TS/TSX→JS emit and patra SQL string safety — are
 closed, and the probe is a thin sandhi + patra composition (server-side TLS + ALPN,
 retired hand-rolled HTTPS stack).
 
@@ -134,15 +137,18 @@ collision → `g_dbpath` rename; the multi-worker-TLS slot-0 collision → `max_
 sigil's concurrent-handshake crash.) No new findings this cycle.
 
 **Now growing into the real port.** Two `sy-core` modules are ported in: **`audit` →
-[libro](https://github.com/MacCracken/libro)** (a hash-linked audit chain — every
-note mutation appends a linked entry, `GET /api/audit` reports its live `verified`
-status, holding under the probe's full concurrency: 641 entries incl. the 250 + 60
-concurrent mutations, still verified) and **`hwprobe` →
+[libro](https://github.com/MacCracken/libro)** (a **persistent** hash-linked audit
+chain via libro's `patrastore` — every note mutation appends a linked entry,
+`GET /api/audit` reports the on-disk chain's live `verified` status, it holds under
+full concurrency, and **it survives a restart**) and **`hwprobe` →
 [ai-hwaccel](https://github.com/MacCracken/ai-hwaccel)** (accelerator detection,
 served at `GET /api/hwinfo`, detected once at startup with no subprocess spawning).
-Both integrated with no upstream findings. The suite is **green + stable** (4 unit +
-**38 backend** + 10 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md); each
-finding is filed in its repo's `docs/development/issues/`.
+Making audit durable meant closing a real corruption the probe hit three times — a
+single quote in a value silently dropped the audit record — **fixed upstream and
+adopted here: patra 1.12.10** (standard `''` escaping + `patra_quote_str`) **and libro
+2.8.1** (bound INSERT in `patrastore_append`), both driven by this probe. The suite is
+**green + stable** (4 unit + **39 backend** + 10 UI, max_conns=4). Details in
+[FINDINGS.md](FINDINGS.md); each finding is filed in its repo's `docs/development/issues/`.
 
 ## License
 
