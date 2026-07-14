@@ -1,0 +1,60 @@
+# src/audit.cyr — SecureYeoman `audit` module, ported onto libro.
+#
+# This is the FIRST real sy-core module grown into the probe. sy-core's audit
+# module (crates/sy-core/src/audit/mod.rs) is an append-only, HMAC/SHA-256
+# hash-LINKED cryptographic audit log — each entry chains to the previous one's
+# hash, so any tampering with a past entry breaks verification. Its Cyrius target
+# is `libro` (v2.7.10): a purpose-built SHA-256 hash-linked, tamper-evident audit
+# chain. Near-exact fit — the module maps to one lib.
+#
+# Here every note mutation (create/update/delete) appends a signed entry to a
+# process-global chain, and GET /api/audit returns the chain length, head hash,
+# and — the whole point — its live verification status.
+#
+# CONCURRENCY: a hash-linked chain is INHERENTLY serial. Each new entry links to
+# the current head's hash, so concurrent appends across the sandhi worker pool
+# MUST be serialized or the links race. `g_audit_lock` does that. This is NOT the
+# kind of workaround the db layer shed (patra went lock-free via per-thread
+# handles) — an append-only chain is serial by definition; one writer at a time is
+# correct, not a limitation. Reads (verify/len/head for /api/audit) also take the
+# lock so /api/audit sees a consistent snapshot.
+#
+# libro API used (grounded against the 2.7.10 dist):
+#   chain_new() -> chain            severities: SEV_INFO=1 WARNING=2 ERROR=3 CRITICAL=4
+#   chain_append(c, sev, source, action, details)   (source/action/details are `str`)
+#   chain_verify(c) -> 0 on OK, a non-zero error object on tamper
+#   chain_len(c) -> i64             chain_head_hash(c) -> hash `str` (0 if empty)
+
+var g_audit_chain = 0;   # libro chain handle (chain_new)
+var g_audit_lock  = 0;   # serializes append + read (mutex_new)
+
+# One-time init on the main thread, before any worker spawns — the chain and the
+# mutex it is guarded by must both exist before the pooled workers can append.
+fn audit_init(): i64 {
+    g_audit_chain = chain_new();
+    g_audit_lock  = mutex_new();
+    return 1;
+}
+
+# Append an audit event. `source` and `action` are static cstr labels (e.g.
+# "notes"/"create"); `details` is a `str` the caller already holds (e.g. the note
+# id via str_from_int). SEV_INFO — routine operations; escalate later bites.
+fn audit_log(source, action, details) {
+    mutex_lock(g_audit_lock);
+    chain_append(g_audit_chain, SEV_INFO, str_from(source), str_from(action), details);
+    mutex_unlock(g_audit_lock);
+}
+
+# Build the GET /api/audit JSON: { "entries": N, "verified": bool, "head": "<hash>" }.
+# `verified` is the live chain_verify result — true iff no past entry was altered.
+fn audit_json(): i64 {
+    mutex_lock(g_audit_lock);
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_lit("entries"),  json_v_int_new(chain_len(g_audit_chain)));
+    json_v_obj_set(o, str_lit("verified"), json_v_bool_new(chain_verify(g_audit_chain) == 0));
+    var head = chain_head_hash(g_audit_chain);
+    if (head == 0) { head = str_lit(""); }
+    json_v_obj_set(o, str_lit("head"), json_v_str_new(head));
+    mutex_unlock(g_audit_lock);
+    return o;
+}

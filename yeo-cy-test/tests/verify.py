@@ -390,6 +390,47 @@ for t in r11_rt: t.join()
 (ok if not r11_viol else bad)(
     f"11. read-during-write: {r11_reads[0]} reads, {len(r11_viol)} torn/garbled (lock-free TEXT readback)")
 
+# 12. Audit chain (libro) — the first sy-core module ported into the probe. Every
+#     note mutation (create/update/delete) appends a SHA-256 hash-linked entry to a
+#     process-global libro chain, serialized by g_audit_lock (a hash chain is
+#     inherently serial — one writer at a time is correct, not a workaround). GET
+#     /api/audit returns {entries, verified, head}. After ALL prior scenarios —
+#     including 250 + 60 CONCURRENT mutations — the chain must still verify: a torn
+#     concurrent append would break the hash links and flip verified to false. Then
+#     a controlled create+update+delete must add EXACTLY 3 entries (no other thread
+#     is mutating at this point) and advance the head. (Audit is in-memory this
+#     bite, so it resets on restart; libro patrastore persistence is the next bite.)
+st, b = req("GET", "/api/audit")
+a0 = json.loads(b) if st == 200 else {}
+(ok if st == 200 and a0.get("verified") is True and a0.get("entries", 0) > 0 and a0.get("head")
+    else bad)(f"12a. audit chain intact after all mutations (entries={a0.get('entries')}, verified={a0.get('verified')})")
+e0, h0 = a0.get("entries", 0), a0.get("head", "")
+_st, _r = req("POST", "/api/notes", json.dumps({"body": "audit-delta"}))
+_aid = json.loads(_r)["id"]
+req("PUT", f"/api/notes/{_aid}", json.dumps({"body": "audit-delta-2"}))
+req("DELETE", f"/api/notes/{_aid}")
+st, b = req("GET", "/api/audit")
+a1 = json.loads(b) if st == 200 else {}
+(ok if st == 200 and a1.get("entries", 0) == e0 + 3 and a1.get("verified") is True and a1.get("head") != h0
+    else bad)(f"12b. create+update+delete -> +{a1.get('entries',0)-e0} entries (want 3), verified={a1.get('verified')}, head advanced")
+
+# 13. hwprobe → ai-hwaccel — the second sy-core module ported in. GET /api/hwinfo
+#     serves the host's accelerator summary, detected ONCE at startup via
+#     registry_detect_no_exec() (no subprocess spawning) and cached. Assert 200 +
+#     valid JSON + the expected summary keys with sane types. Hardware-agnostic (no
+#     specific device asserted) so it passes on any host, incl. accelerator-less CI.
+st, b = req("GET", "/api/hwinfo")
+try: hw = json.loads(b) if st == 200 else {}
+except Exception: hw = {}
+_hwkeys = ("device_count", "has_accelerator", "total_memory_bytes",
+           "accelerator_memory_bytes", "gpu_count", "tpu_count", "npu_count", "warnings")
+_hwok = (st == 200 and all(k in hw for k in _hwkeys)
+         and isinstance(hw.get("device_count"), int)
+         and isinstance(hw.get("has_accelerator"), bool)
+         and isinstance(hw.get("total_memory_bytes"), int))
+(ok if _hwok else bad)(
+    f"13. /api/hwinfo -> hw summary (devices={hw.get('device_count')}, gpu={hw.get('gpu_count')}, mem={hw.get('total_memory_bytes')})")
+
 stop_server(srv)
 
 # ── summary ──

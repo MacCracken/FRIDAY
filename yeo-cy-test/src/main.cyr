@@ -43,6 +43,8 @@
 # via lib/thread_local.cyr (patra owns slots 0-4; the probe's handle uses slot 15).
 
 include "src/httpd.cyr"
+include "src/audit.cyr"
+include "src/hwprobe.cyr"
 
 var PORT     = 8080;
 var TLS_PORT = 8443;
@@ -114,6 +116,13 @@ fn handle_health(ctx, conn, buf, blen, params): i64 {
     return resp_json(conn, "200 OK", o);
 }
 
+# GET /api/audit — the libro-backed audit chain's length, head hash, and live
+# verification status. `verified` is chain_verify: true iff no past entry was
+# altered (the tamper-evidence guarantee). See src/audit.cyr.
+fn handle_audit(ctx, conn, buf, blen, params): i64 {
+    return resp_json(conn, "200 OK", audit_json());
+}
+
 fn handle_list_notes(ctx, conn, buf, blen, params): i64 {
     # On THIS worker's own handle (db()) — no external lock. patra 1.12.8
     # materializes TEXT payloads into the result set under the query's flock, so
@@ -170,6 +179,7 @@ fn handle_create_note(ctx, conn, buf, blen, params): i64 {
     json_v_obj_set(o, str_lit("id"),      json_v_int_new(id));
     json_v_obj_set(o, str_lit("body"),    json_v_str_new(bstr));
     json_v_obj_set(o, str_lit("created"), json_v_int_new(ts));
+    audit_log("notes", "create", str_from_int(id));
     return resp_json(conn, "201 Created", o);
 }
 
@@ -246,6 +256,7 @@ fn handle_update_note(ctx, conn, buf, blen, params): i64 {
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("id"),   json_v_int_new(id));
     json_v_obj_set(o, str_lit("body"), json_v_str_new(bstr));
+    audit_log("notes", "update", str_from_int(id));
     return resp_json(conn, "200 OK", o);
 }
 
@@ -271,6 +282,7 @@ fn handle_delete_note(ctx, conn, buf, blen, params): i64 {
     if (affected <= 0) { return resp_json_err(conn, "404 Not Found", "note not found"); }
     var o = json_v_obj_new();
     json_v_obj_set(o, str_lit("deleted"), json_v_int_new(id));
+    audit_log("notes", "delete", str_from_int(id));
     return resp_json(conn, "200 OK", o);
 }
 
@@ -292,6 +304,8 @@ fn main() {
     alloc_init();
 
     if (db_init() == 0) { println("error: patra_open failed"); return 1; }
+    audit_init();
+    hwprobe_init();
 
     # sandhi's Conn-aware router: handlers take a SandhiConn, so the one router
     # serves both HTTP (router_handler_cp) and HTTPS (router_handler_c). sandhi
@@ -300,6 +314,8 @@ fn main() {
     sandhi_router_add(router, "GET",    "/",              &handle_index);
     sandhi_router_add(router, "GET",    "/app.js",        &handle_appjs);
     sandhi_router_add(router, "GET",    "/api/health",    &handle_health);
+    sandhi_router_add(router, "GET",    "/api/audit",     &handle_audit);
+    sandhi_router_add(router, "GET",    "/api/hwinfo",    &handle_hwinfo);
     sandhi_router_add(router, "GET",    "/api/notes",     &handle_list_notes);
     sandhi_router_add(router, "POST",   "/api/notes",     &handle_create_note);
     sandhi_router_add(router, "GET",    "/api/notes/:id", &handle_get_note);

@@ -10,11 +10,11 @@ cd "$(dirname "$0")/.."
 echo "▸ unit invariants (cyrius run src/test.cyr)…"
 cyrius run src/test.cyr
 
-echo "▸ backend e2e — 35 scenarios (tests/verify.py)…"
+echo "▸ backend e2e — 38 scenarios (tests/verify.py)…"
 python3 tests/verify.py
 
 echo "▸ full-stack UI e2e — 10 scenarios (tests/ui_check.mjs)…"
 node tests/ui_check.mjs
 
 rm -f yeo.patra yeo-test.patra
-echo "✓ all suites passed (unit + 35 backend + 10 full-stack UI)"
+echo "✓ all suites passed (unit + 38 backend + 10 full-stack UI)"

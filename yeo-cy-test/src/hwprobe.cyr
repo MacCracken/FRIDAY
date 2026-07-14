@@ -1,0 +1,38 @@
+# src/hwprobe.cyr — SecureYeoman `hwprobe` module, ported onto ai-hwaccel.
+#
+# The second sy-core module grown into the probe. sy-core's `hwprobe`
+# (crates/sy-core/src/hwprobe/mod.rs) is literally "a thin wrapper around
+# ai_hwaccel that converts its type system" — hardware accelerator detection for
+# AI workloads. Its Cyrius target is the **ai-hwaccel** lib (v2.3.14), which is
+# already Cyrius — so the port is thinner than most: detect, then expose.
+#
+# Design: hardware is static for a process, so detection runs ONCE at startup and
+# the summary JSON is cached; `GET /api/hwinfo` serves the cached string. We use
+# `registry_detect_no_exec()` — detection via /sys + /proc only, NEVER spawning
+# nvidia-smi/rocminfo/etc. subprocesses — which is the right call inside a server
+# (no per-request fork/exec, no command-injection surface, fast + deterministic).
+#
+# ai-hwaccel API used (grounded against the 2.3.14 dist):
+#   hwlog_init()                          — init ai-hwaccel's logger (reads env)
+#   registry_detect_no_exec() -> registry — full detection, no subprocess exec
+#   registry_to_summary_json(r) -> str    — compact JSON:
+#     {device_count, has_accelerator, total_memory_bytes, accelerator_memory_bytes,
+#      gpu_count, tpu_count, npu_count, warnings}
+
+var g_hwinfo = 0;   # cached summary JSON `str` (detected once at startup)
+
+# One-time init on the main thread, before workers spawn. Detects the host's
+# accelerators and caches the summary JSON. The cached str is immutable, so all
+# workers serve it concurrently with no lock.
+fn hwprobe_init(): i64 {
+    hwlog_init();
+    var r = registry_detect_no_exec();
+    g_hwinfo = registry_to_summary_json(r);
+    return 1;
+}
+
+# GET /api/hwinfo — the cached hardware-accelerator summary (device/gpu/tpu/npu
+# counts, total + accelerator memory). Served straight from the cached str.
+fn handle_hwinfo(ctx, conn, buf, blen, params): i64 {
+    return resp_raw(conn, "200 OK", "application/json; charset=utf-8", g_hwinfo);
+}

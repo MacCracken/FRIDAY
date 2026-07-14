@@ -7,6 +7,12 @@
 #   2. httpd route_match: `:name` path-param matching — segment-count rules,
 #      capture, and numeric parsing — the routing the /api/notes/:id resource
 #      depends on.
+#   3. libro audit chain: appends build a hash-linked chain that verifies and
+#      whose head hash advances per entry — the tamper-evidence the sy-core
+#      `audit` module (src/audit.cyr) is built on.
+#   4. ai-hwaccel detection: registry_detect_no_exec() → registry_to_summary_json
+#      produces a non-empty JSON summary — the sy-core `hwprobe` module
+#      (src/hwprobe.cyr) integration.
 
 include "src/httpd.cyr"
 
@@ -109,6 +115,50 @@ fn test_route_match(): i64 {
     return 0;
 }
 
+# Returns 0 on pass, non-zero (case code) on failure. Consumer-side integration
+# guard on libro (the sy-core `audit` module's Cyrius target): appends build a
+# chain that self-verifies, and the head hash advances with each entry — i.e. the
+# entries are hash-LINKED, not independent (the property that makes past-entry
+# tampering detectable). libro tests the tamper case itself; this guards that the
+# probe's use of chain_new/append/verify/head_hash holds together.
+fn test_audit_chain(): i64 {
+    var c = chain_new();
+    if (c == 0) { return 1; }
+    if (chain_verify(c) != 0) { return 2; }          # empty chain: vacuously valid
+    if (chain_len(c) != 0) { return 3; }
+
+    chain_append(c, SEV_INFO, str_from("notes"), str_from("create"), str_from("1"));
+    if (chain_len(c) != 1) { return 4; }
+    if (chain_verify(c) != 0) { return 5; }
+    var h1 = chain_head_hash(c);
+    if (h1 == 0) { return 6; }
+
+    chain_append(c, SEV_WARNING, str_from("notes"), str_from("delete"), str_from("1"));
+    if (chain_len(c) != 2) { return 7; }
+    if (chain_verify(c) != 0) { return 8; }
+    var h2 = chain_head_hash(c);
+    if (h2 == 0) { return 9; }
+
+    # Entries are linked, not independent: the head advances (h1 != h2).
+    # constant_time_eq_str returns 1 when equal, 0 when different.
+    if (constant_time_eq_str(h1, h2) != 0) { return 10; }
+
+    return 0;
+}
+
+# Returns 0 on pass, non-zero (case code) on failure. Consumer-side integration
+# guard on ai-hwaccel (the sy-core `hwprobe` module's Cyrius target): read-only
+# detection with no subprocess exec produces a non-empty summary JSON string.
+# Doesn't assert specific hardware (portable) — just that the detect→serialize
+# path the /api/hwinfo endpoint depends on works.
+fn test_hwprobe(): i64 {
+    hwlog_init();
+    var j = registry_to_summary_json(registry_detect_no_exec());
+    if (j == 0) { return 1; }
+    if (str_len(j) < 2) { return 2; }   # at minimum a "{}" object
+    return 0;
+}
+
 fn main() {
     alloc_init();
 
@@ -130,6 +180,24 @@ fn main() {
     }
 
     println("ok: patra bound text stores verbatim and is injection-safe");
+
+    var a = test_audit_chain();
+    if (a != 0) {
+        print("FAIL: libro audit chain (code ", 30);
+        fmt_int(a);
+        println(")");
+        return 1;
+    }
+    println("ok: libro audit chain links, verifies, and advances its head");
+
+    var hw = test_hwprobe();
+    if (hw != 0) {
+        print("FAIL: ai-hwaccel hwprobe detect/summarize (code ", 47);
+        fmt_int(hw);
+        println(")");
+        return 1;
+    }
+    println("ok: ai-hwaccel detects and summarizes hardware to JSON");
     return 0;
 }
 

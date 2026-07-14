@@ -22,7 +22,7 @@ output = "yeo-cy-test"
 #   * hashmap — map_* used by sandhi's TLS session_cache.cyr inside the slice.
 # tls still pulls sigil (→ pem_decode_certs, crypto) transitively, independent of
 # sandhi. See FINDINGS "thin sandhi-server profile".
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "freelist", "chrono", "thread", "atomic", "tls", "async", "random", "fdlopen", "dynlib", "hashmap", "bayan"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "bench", "net", "result", "tagged", "freelist", "chrono", "thread", "atomic", "tls", "async", "random", "fdlopen", "dynlib", "hashmap", "bayan", "fs", "process", "ct", "keccak", "thread_local", "slice", "args"]
 
 # The server-only slice (sandhi 1.8.0 profile bundles; 1.8.1 made run_pooled_tls
 # safe at max_conns>1, which the probe's 4-worker TLS pool needs). ~76% smaller
@@ -42,3 +42,25 @@ modules = ["dist/sakshi.cyr"]
 git = "https://github.com/MacCracken/patra.git"
 tag = "1.12.9"
 modules = ["dist/patra.cyr"]
+
+# libro — cryptographic audit chain (SHA-256 hash-linked, tamper-evident). The
+# Cyrius target for SecureYeoman's sy-core `audit` module (a near-exact match: an
+# append-only signed audit log). First real sy-core module ported into the probe.
+# GPL-3.0-only, compatible with this project's AGPL-3.0-only. Consumed as its dist
+# bundle. libro's stdlib requires (fs, process, ct, keccak, thread_local, slice —
+# beyond the probe's set) are declared in [deps].stdlib above per the thin-bundle
+# pattern.
+[deps.libro]
+git = "https://github.com/MacCracken/libro.git"
+tag = "2.8.0"
+modules = ["dist/libro.cyr"]
+
+# ai-hwaccel — hardware accelerator detection (GPU/TPU/NPU/AI-ASIC) + planning.
+# The Cyrius target for SecureYeoman's sy-core `hwprobe` module (sy-core's hwprobe
+# is literally "a thin wrapper around ai_hwaccel"). Detection is read-only; the
+# probe runs registry_detect_no_exec() (no subprocess spawning) ONCE at startup and
+# serves the cached summary JSON at GET /api/hwinfo.
+[deps.ai-hwaccel]
+git = "https://github.com/MacCracken/ai-hwaccel.git"
+tag = "2.3.14"
+modules = ["dist/ai-hwaccel.cyr"]

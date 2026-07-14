@@ -7,6 +7,81 @@ was on **Cyrius 6.0.3**; see the dated re-run sections below for newer toolchain
 
 Severity: 🔴 blocker · 🟡 friction · 🔵 note/nice-to-have
 
+## Update — re-run on cyrius 6.4.62: last lock removed (lock-free reads), thin sandhi profile bundle dogfooded (2026-07-13)
+
+Bumped to **cyrius 6.4.62 / patra 1.12.9 / sandhi 1.8.2 (thin `server` profile
+bundle) / sigil 3.9.9 (via cyrius) / sakshi 2.4.6** (was 6.3.0-pinned / 1.12.6 /
+folded sandhi / 2.4.0). Baseline re-verified green **before** any change: build OK,
+2 unit invariants, **35 backend + 10 UI** scenarios pass at `max_conns=4`. Two
+previously-filed findings shipped upstream and were adopted this cycle.
+
+- ✅ **The probe is now FULLY LOCK-FREE — `g_db_lock` removed (patra 1.12.9).** Last
+  cycle the probe filed *and fixed* the patra readback race (`patra_query` released
+  its shared flock before `patra_result_read_text` lazily read the payload pages, so
+  a concurrent writer could tear a TEXT/BLOB body returned as `PATRA_OK`); the fix
+  (`_rs_materialize`, which snapshots every TEXT/BYTES payload into an owned heap
+  buffer **while the shared flock is held**) shipped in patra **1.12.8** and is now
+  folded into **1.12.9**. Adopted here: every handler calls `db()` — this worker's
+  own connection-per-thread patra handle — with **no mutex**. patra's "lock-free
+  parallel reads" promise now holds for **TEXT** columns too (was fixed-width only).
+  **New scenario 11** (`tests/verify.py`) is the regression guard: 310 reads issued
+  while a writer mutates the same rows → **0 torn/garbled** (was the whole reason the
+  lock existed). This closes the last workaround the probe carried — it went from
+  "two workarounds + a lock" (6.3.42) to **zero**.
+- ✅ **Adopted sandhi's thin `server` PROFILE BUNDLE — the probe's own filed finding,
+  dogfooded (sandhi 1.8.0 → 1.8.2).** Long ago the probe filed the **"bundled-libs →
+  individual-packages split"** (the server-only slice was dragging in sandhi's full
+  client/h2/rpc/discovery surface as ~400 KB+ of static). sandhi 1.8.0 shipped
+  **profile bundles**; the probe now consumes the **`server`** profile as a single
+  `dist/sandhi-server.cyr` module via `[deps.sandhi]` — **141 KB vs the 590 KB full
+  folded bundle (~76 % smaller)** — as **sandhi's first profile-bundle consumer**.
+  The thin bundle carries only session_cache + conn + server/mod, so its former
+  transitive deps are now **declared explicitly** in `[deps].stdlib`: `bayan`
+  (the probe's `json_v_*`; `json` stays dropped — it collides with bayan on
+  `json_v_*`/`_jv_*`/`_jp_*`) and `hashmap` (`map_*`, sandhi's TLS session cache).
+  `tls` still pulls sigil transitively. sandhi **1.8.1** made `run_pooled_tls` safe
+  at `max_conns>1`; the probe's TLS pool stays at 4 — scenarios 9/10/11 green.
+
+Net: the slice is a **thin, lock-free sandhi(server-profile) + patra composition**,
+green + stable at `max_conns=4` on the current toolchain, with every previously-filed
+ecosystem finding now shipped and adopted. No new findings this cycle.
+
+**Port kickoff — positive viability data point (2026-07-13):** the probe began
+growing into the real SecureYeoman → Cyrius port by lifting the first `sy-core`
+module. `sy-core`'s **audit** module (append-only, hash-linked crypto log) ported
+onto **libro** (v2.7.10) with **zero upstream friction** — the "one sy-core module ↦
+one purpose-built Cyrius lib" pattern held: libro's `chain_new`/`chain_append`/
+`chain_verify` API dropped straight into the note handlers, and the chain verified
+after 641 entries incl. the probe's 250 + 60 concurrent mutations (a hash chain is
+inherently serial, so a single `g_audit_lock` around appends is correct, not a
+workaround). No Cyrius/libro bug or gap surfaced. Env notes only: libro's 2.8.0 is
+untagged at the time (since tagged — bumped to 2.8.0); its `dist/libro.deps` sidecar
+required six more stdlib modules (`fs`/`process`/`ct`/`keccak`/`thread_local`/`slice`)
+declared in `[deps].stdlib`.
+
+**Second module — `hwprobe` ↦ ai-hwaccel (v2.3.14), also zero friction.** sy-core's
+hwprobe is a thin wrapper over `ai_hwaccel`, which is *already* a Cyrius lib, so the
+port is one call: `registry_detect_no_exec()` (no subprocess spawn) →
+`registry_to_summary_json(r)` → cache → serve at `GET /api/hwinfo`. Detected real
+hardware on the dev box (2 devices / 1 GPU / ~64 GB). Env note only: ai-hwaccel's CLI
+helpers reference `argc`/`argv`, so `args` was added to `[deps].stdlib` (unused on the
+no-exec path). No ai-hwaccel/cyrius bug or gap.
+
+**Deferred, with a real usage-contract note (not yet a filed finding — needs
+verification): libro `patrastore` persistence.** Making the audit chain durable via
+libro's patra-backed store is the natural next bite, but its usage contract is
+heavier than the in-memory chain: `patrastore_open` requires `ed25519_init()` first
+(entries are signed) and a `str`-typed path (not a raw cstr); the caller manages
+`prev_hash` linking (`entry_new(…, prev_hash)` + track the head). More importantly,
+`patrastore_append` builds its INSERT by **string-concatenating the entry fields into
+SQL** (`str_builder_add(sb, details)` into `VALUES ('…')`) with no visible escaping —
+a potential SQL-break / injection risk for audit `details` containing a quote. This
+is **flagged, NOT filed** — it must be reproduced first (append an entry with a quote
+in `details`, observe the insert). The probe's current usage would be safe (numeric
+ids only), but a faithful audit log stores arbitrary text, so this gates adopting
+patrastore. Next real bite either verifies+files this, or moves to `crypto` ↦ sigil /
+`sandbox` ↦ kavach. See CHANGELOG / state.md for the full mapping.
+
 ## Update — re-run on cyrius 6.3.42: BOTH residuals shipped (and both were consumer MISDIAGNOSES); new patra readback finding (2026-07-03)
 
 Bumped to **cyrius 6.3.42** (asked for 6.3.41; cycc auto-drifted 6.3.41→6.3.42

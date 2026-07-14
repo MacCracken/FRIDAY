@@ -4,6 +4,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — second `sy-core` module ported: `hwprobe` → ai-hwaccel
+- **`src/hwprobe.cyr` — SecureYeoman's `hwprobe` module, ported onto ai-hwaccel
+  (v2.3.14).** sy-core's hwprobe is "a thin wrapper around `ai_hwaccel`" (hardware-
+  accelerator detection); ai-hwaccel is *already* a Cyrius lib, so the port is thin.
+  `hwprobe_init()` runs **`registry_detect_no_exec()` once at startup** — detection
+  via /sys + /proc only, **never spawning subprocesses** (no per-request fork/exec,
+  no command-injection surface) — and caches `registry_to_summary_json(r)`. New
+  **`GET /api/hwinfo`** serves the cached JSON `{device_count, has_accelerator,
+  total_memory_bytes, accelerator_memory_bytes, gpu_count, tpu_count, npu_count,
+  warnings}`. The cached string is immutable → all workers serve it lock-free.
+- **Tests:** 4th unit invariant (detect→serialize yields non-empty JSON) + backend
+  **scenario 13** (`/api/hwinfo` → 200, valid JSON, expected keys/types;
+  hardware-agnostic so it passes on accelerator-less CI). Suite: **4 unit + 38
+  backend + 10 UI**, green.
+- **Deps:** `[deps.ai-hwaccel]` (2.3.14); added `args` to `[deps].stdlib` (ai-hwaccel's
+  CLI helpers reference `argc`/`argv`, unused on the no-exec path). ai-hwaccel
+  integrated cleanly — no upstream findings. Also **bumped libro 2.7.10 → 2.8.0**
+  (now tagged; resolves the earlier "2.8.0 untagged" note).
+
+### Added — first `sy-core` module ported: `audit` → libro (the probe starts growing into the real port)
+- **`src/audit.cyr` — SecureYeoman's `audit` module, ported onto libro (v2.7.10).**
+  The probe pivots from a pure viability slice toward the actual SecureYeoman → Cyrius
+  port; `audit` is the first module in. sy-core's audit is an append-only, hash-linked
+  cryptographic log; libro is a purpose-built SHA-256 hash-linked, tamper-evident audit
+  chain — a near-exact lib match. Every note mutation (`create`/`update`/`delete`)
+  appends a `SEV_INFO` entry to a process-global chain; **`GET /api/audit`** returns
+  `{entries, verified, head}`, where `verified` is the live `chain_verify` result.
+- **Appends serialize under `g_audit_lock`.** A hash-linked chain is inherently serial
+  (each entry links the previous head's hash), so one writer at a time is *correct*, not
+  a workaround — unlike the db layer, which went lock-free via per-thread handles.
+- **Verified under the probe's full concurrency.** New backend **scenario 12**: after
+  all prior scenarios (incl. 250 + 60 *concurrent* mutations → 641 entries) the chain
+  still `verified` (a torn concurrent append would break the links and flip it false),
+  and a controlled create+update+delete adds exactly 3 linked entries with an advancing
+  head. New unit invariant (3rd): `chain_append` → `chain_verify` OK, head advances.
+- **Deps:** `[deps.libro]` (2.7.10 — latest published tag; local `VERSION` is 2.8.0 but
+  untagged). GPL-3.0-only, compatible with this project's AGPL-3.0-only. libro's stdlib
+  requires (`fs`, `process`, `ct`, `keccak`, `thread_local`, `slice`) added to
+  `[deps].stdlib` per its `dist/libro.deps` sidecar. libro integrated cleanly — no
+  upstream findings.
+- **Limitation (next bite):** the chain is in-memory, so it resets on restart. libro's
+  `patrastore_*` (patra-backed persistence) is the planned follow-on. Suite: **3 unit +
+  37 backend + 10 UI**, green.
+
+### Changed — toolchain 6.4.62: last lock removed (lock-free reads), thin sandhi profile bundle adopted
+- **Bumped to cyrius 6.4.62 / patra 1.12.9 / sandhi 1.8.2 (thin `server` profile
+  bundle) / sigil 3.9.9 (via cyrius) / sakshi 2.4.6.** Baseline re-verified green on
+  the new pins: build OK, 2 unit invariants, **35 backend** + 10 UI scenarios pass.
+- ✅ **Removed `g_db_lock` — the probe is now fully lock-free.** patra **1.12.8**'s
+  `_rs_materialize` snapshots every TEXT/BYTES payload into an owned heap buffer
+  *while the query's shared flock is held*, so `patra_result_read_text` is a pure
+  memcpy — closing the readback race that was the lock's last remaining job (see the
+  6.3.42 entry). Folded into patra **1.12.9** and adopted here: handlers call `db()`
+  (this worker's own per-thread handle) directly, no mutex. patra's
+  connection-per-thread "lock-free parallel reads" promise is delivered for TEXT
+  columns too (was fixed-width only). New **scenario 11** (`tests/verify.py`) proves
+  it: 310 reads during concurrent writes → **0 torn/garbled**.
+- ✅ **Adopted sandhi's thin `server` profile bundle (sandhi 1.8.0 → 1.8.2).** sandhi
+  is pulled via `[deps.sandhi]` as `dist/sandhi-server.cyr` (**141 KB vs the 590 KB
+  full folded bundle, ~76 % smaller**) instead of the folded-stdlib monolith — the
+  **"bundled-libs → individual-packages split" this probe filed**, now shipped and
+  **dogfooded here as sandhi's first profile-bundle consumer**. The thin bundle
+  carries only session_cache + conn + server/mod, so `bayan` (`json_v_*`) and
+  `hashmap` (`map_*`, sandhi's TLS session cache) — previously transitive — are now
+  **declared explicitly** in `[deps].stdlib`. sandhi 1.8.1 made `run_pooled_tls` safe
+  at `max_conns>1`; the TLS pool stays at 4 (verified: scenarios 9/10/11 green).
+
 ### Changed — toolchain 6.3.42: both residuals shipped (both were consumer misdiagnoses); new patra finding
 - **Bumped to cyrius 6.3.42 / patra 1.12.7 / sandhi 1.7.0 / sigil 3.9.9 (folded) /
   sakshi 2.4.3.** (Asked for 6.3.41; cycc auto-drifted 6.3.41→6.3.42 same day — pin
