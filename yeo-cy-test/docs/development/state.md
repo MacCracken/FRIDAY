@@ -113,9 +113,13 @@ the tag (~244 ms, ~19 MiB per login; per-thread arena via `argon2id_into`); and
 no-pad round-trip in-probe (worked around with an in-probe decoder — root cause
 unconfirmed, flagged). The HMAC secret is now **persistent** (`yeo-auth.key`, 0600) so
 tokens survive a restart. The RBAC is now **enforced on the note resource** (below).
-Limitations (future bites): `/api/login` is **not rate-limited**, and each attempt now
-costs ~19 MiB + ~244 ms of Argon2id — a memory-amplification vector that the next auth
-bite should gate; plus PKCE/OIDC/WebAuthn.
+`/api/login` has **admission control**: Argon2id's ~244 ms made it a request-amplification
+lever (measured: `/api/health` 6 ms → 942 ms under 8 concurrent attempts; ~40 wedged the
+server), so at most 2 concurrent derivations run and the excess is shed **429 before any
+Argon2 work** — 40 concurrent now settle in 0.5 s with `/api/health` at 1 ms (scenario 20).
+Limitations (future bites): that is a concurrency cap, not a **rate limiter** (2 workers can
+be held indefinitely); a per-IP token bucket + failure backoff needs the client address,
+which sandhi does not hand the handler today. Plus PKCE/OIDC/WebAuthn.
 
 **Persistent keys (both crypto + auth), SEALED at rest.** `crypto_key_load`/
 `crypto_key_save` (`src/crypto.cyr`) seal 32-byte key material with **AES-256-GCM**
@@ -153,7 +157,7 @@ admins) — the backend stays the authority. Scenario 19 asserts the full write 
 scenario 0 bootstraps an admin token so `req`/`https_req` authenticate transparently. **No
 new lib gap** — used only existing auth primitives (the stack was already sufficient).
 
-**9 unit invariants** + **46 backend scenarios** + **13 UI** pass — **green + stable** at
+**9 unit invariants** + **47 backend scenarios** + **13 UI** pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -302,7 +306,7 @@ new lib gap** — used only existing auth primitives (the stack was already suff
   AES-256-GCM `tee_seal`→`tee_unseal` round-trips and a tampered ciphertext/tag is
   rejected. Passes via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **46-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **47-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -334,7 +338,7 @@ new lib gap** — used only existing auth primitives (the stack was already suff
   cross-checking the DOM vs the patra backend (**13 scenarios**: public read with the
   add form gated pre-login, admin CRUD, a user-role session that can add but whose
   admin-only delete control is hidden, XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 46 backend e2e + 13 UI e2e.
+- `tests/run.sh` — one command: build + unit + 47 backend e2e + 13 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).

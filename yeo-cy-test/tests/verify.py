@@ -642,6 +642,36 @@ _c19 = (utok and rid and uid and _r_pub == 200
     f"{_c_noauth}/{_u_noauth}/{_d_noauth} (want 401); user create/update {_u_create}/{_u_update} "
     f"(want 201/200); user-delete {_u_delete} (want 403) / admin-delete {_a_delete} (want 200)")
 
+# 20. login admission control — the guard on a DoS this probe INTRODUCED. Argon2id makes
+#     /api/login cost ~244 ms of CPU, so an unauthenticated attacker gets huge request
+#     amplification against a 4-worker pool: measured, 8 concurrent attempts pushed
+#     GET /api/health from 6 ms to 942 ms, and ~40 wedged the server. auth.cyr now caps
+#     CONCURRENT derivations (LOGIN_MAX_INFLIGHT=2 of 4 workers) and sheds the excess with
+#     429 *before* any Argon2 work, so a rejected attempt is ~free. Assert: under a burst
+#     (a) most attempts are shed 429, (b) at most LOGIN_MAX_INFLIGHT do real work,
+#     (c) unrelated traffic stays fast, and (d) a legitimate login still succeeds after.
+N20 = 40
+r20, lock20 = [], threading.Lock()
+def login_burst():
+    st, _ = req("POST", "/api/login", json.dumps({"password": "wrong"}), token=None, timeout=25)
+    with lock20: r20.append(st)
+th20 = [threading.Thread(target=login_burst) for _ in range(N20)]
+for t in th20: t.start()
+time.sleep(0.10)                      # let the burst occupy the pool
+t0 = time.time()
+h20, _ = req("GET", "/api/health", timeout=25)
+h20_ms = (time.time() - t0) * 1000
+for t in th20: t.join()
+shed = sum(1 for s in r20 if s == 429)
+worked = sum(1 for s in r20 if s == 401)   # reached Argon2 and was correctly rejected
+st20_ok, _ = req("POST", "/api/login", json.dumps({"password": ADMIN_PW}), token=None)
+_c20 = (h20 == 200 and h20_ms < 500 and shed > 0 and worked <= 2 and st20_ok == 200
+        and (shed + worked) == N20)
+(ok if _c20 else bad)(
+    f"20. login admission control: {N20} concurrent -> {shed} shed 429 / {worked} hashed "
+    f"(cap 2); /api/health {h20_ms:.0f}ms during burst (was 942ms, then wedged); "
+    f"legit login after -> {st20_ok}")
+
 stop_server(srv)
 
 # ── summary ──

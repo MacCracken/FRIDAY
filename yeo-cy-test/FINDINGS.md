@@ -88,9 +88,21 @@ self-consistency.
   passwords are no longer in the source, only salt+tag. Measured **~244 ms and ~19 MiB per
   login** on this host (sigil's scalar Cyrius vs ~30 ms for OpenSSL's AVX2 C — ~8×, and
   inside RFC 9106's interactive budget). Per-thread arena via `argon2id_into` (slot 13) so
-  concurrent logins never touch the non-thread-safe `fl_alloc`. **New gap this opened:**
-  `/api/login` is now a memory-amplifying DoS vector if unbounded — ~19 MiB per attempt —
-  so it needs rate-limiting; noted as the next auth bite. *(RESOLVED end-to-end: filed →
+  concurrent logins never touch the non-thread-safe `fl_alloc`. **A DoS this opened — found, measured, and fixed:**
+  making passwords costly to crack made `/api/login` cheap to abuse. **My first
+  characterisation was wrong** and is corrected here: I wrote "memory-amplifying, ~19 MiB
+  per attempt". Measured, it is **not** memory — the per-worker arena means RSS is flat at
+  ~80 MB (4 workers x 19 MiB) whether you send 5 logins or 80. The real vector is **worker
+  saturation / request amplification**: a few hundred bytes buys ~244 ms of a 4-worker
+  pool. Measured on this host: `GET /api/health` **6 ms → 942 ms** under 8 concurrent
+  attempts, and ~40 concurrent **wedged the server** outright. **Fixed** with admission
+  control in `handle_login`: at most `LOGIN_MAX_INFLIGHT`=2 concurrent derivations, excess
+  shed **429 before any Argon2 work** (so a rejected attempt costs ~nothing). Re-measured:
+  40 concurrent → `{429: 38, 401: 2}` settling in 0.5 s, `/api/health` **1 ms** during the
+  burst, legit login still 200. Regression guard = scenario 20. **Still open:** this is a
+  concurrency cap, not a rate limiter — an attacker can keep 2 workers busy indefinitely.
+  A per-IP token bucket + failure backoff needs the client address, which sandhi does not
+  hand the handler today (**next auth bite; possible sandhi ask**). *(RESOLVED end-to-end: filed →
   fixed in sigil 3.12.0 → folded in cyrius 6.4.63 → adopted here.)*
 
 - 🟠 **A stale `lib/` silently shadowed the pinned snapshot — hiding a crypto fix for

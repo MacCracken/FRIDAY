@@ -21,12 +21,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Cost, measured:** ~**244 ms** and ~**19 MiB** per login on this host (sigil's scalar
   Cyrius vs ~30 ms for OpenSSL's AVX2 C — ~8×, and inside RFC 9106's interactive budget).
   Suite wall-clock 14s.
-- **New gap this opens (next auth bite):** `/api/login` is **not rate-limited**, so each
-  unauthenticated attempt now costs the server ~19 MiB — a memory-amplifying DoS vector.
-  Recorded in FINDINGS rather than left implicit.
+- **A DoS this opened — and closed in the same cycle.** Making passwords expensive to
+  crack made `/api/login` cheap to abuse. **Correcting my own first claim:** I recorded it
+  as "memory-amplifying, ~19 MiB per attempt"; measurement says otherwise — the per-worker
+  arena keeps RSS flat at ~80 MB across 5 or 80 logins. The real vector is **worker
+  saturation**: ~244 ms of a 4-worker pool per cheap request. Measured `GET /api/health`
+  **6 ms → 942 ms** at 8 concurrent attempts; ~40 **wedged the server**. Fixed with
+  admission control — at most **2** concurrent derivations, excess shed **429 before any
+  Argon2 work**. Re-measured: 40 concurrent → `{429: 38, 401: 2}` in 0.5 s, `/api/health`
+  **1 ms** during the burst, legit login still 200. New **scenario 20** guards it.
+- **Still open (next auth bite):** a concurrency cap is not a rate limiter — 2 workers can
+  be kept busy indefinitely. A per-IP token bucket + failure backoff needs the client
+  address, which sandhi does not currently expose to the handler (possible sandhi ask).
 - **Tests:** 9th unit invariant — the right password verifies; wrong / empty /
   off-by-one-byte are rejected; and the right password under the **wrong salt** is
-  rejected (proving the salt is bound into the tag). Suite: **9 unit + 46 backend + 13
+  rejected (proving the salt is bound into the tag). Suite: **9 unit + 47 backend + 13
   full-stack UI**, green.
 
 ### Changed — cyrius pin 6.4.62 → 6.4.63; `lib/` re-synced to sigil 3.12.0
@@ -46,7 +55,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **Latent, not observed** (the suite passed throughout; sigil reports the failure as
   layout-dependent), so this is an exposure, not a reproduced fault. Fixed with
   `cyrius lib sync --full` → sigil **3.11.1**, slot 8, clear of patra's 0-4. Suite
-  re-verified green: **8 unit + 46 backend + 13 UI**. **Filed to cyrius**
+  re-verified green: **8 unit + 47 backend + 13 UI**. **Filed to cyrius**
   (`docs/development/issues/yeo-cy-test-shadow-lib-silent-version-skew.md`): the
   shadow-`lib/` note should name the actual skew (and warn, not note, when a bundled lib
   version differs) instead of staying silent about it.
@@ -86,7 +95,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   public read 200; unauth create/update/delete → 401; user create/update → 201/200;
   user DELETE → 403; admin DELETE → 200). `ui_check.mjs` reworked to drive the login
   form and assert the RBAC-aware UI (gated add pre-login; admin CRUD; user can add but
-  the admin-only delete is hidden). Suite: **8 unit + 46 backend + 13 full-stack UI**,
+  the admin-only delete is hidden). Suite: **8 unit + 47 backend + 13 full-stack UI**,
   green.
 - **No new lib gap** — this bite used only existing auth primitives (sigil HMAC, bayan
   base64url + the in-probe base64url decoder), so it surfaced nothing new to file: a

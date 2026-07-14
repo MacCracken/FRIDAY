@@ -273,9 +273,10 @@ fn auth_verify_sub(token): i64 {
 # Derives with sy-core's parameters and constant-time compares the 32-byte tag — no
 # plaintext, no early-exit on tag bytes. Returns 1 on match, 0 otherwise.
 #
-# Cost is deliberate: ~244 ms and ~19 MiB per call on this host (that is what makes
-# offline cracking expensive). It also makes login a memory-amplifying DoS vector if
-# unbounded — a real deployment must rate-limit /api/login (noted in FINDINGS).
+# Cost is deliberate: ~244 ms per call on this host (that is what makes offline cracking
+# expensive). Memory is NOT per-call — the ~19 MiB arena is per worker thread and reused
+# (RSS measured flat at ~80 MB across 5 or 80 logins). The cost that bites is CPU: it makes
+# /api/login a request-amplification lever, which `handle_login`'s admission control caps.
 fn _auth_pw_ok(pw, salt, expected_tag): i64 {
     var tag = alloc(ARGON2_TAG);
     var rc = argon2id_into(_a2_mem(), str_data(pw), str_len(pw), salt, ARGON2_SALT,
@@ -294,8 +295,41 @@ fn _role_is(role, want): i64 {
 
 # ── handlers ──
 
-# POST /api/login {"password":"..."} → {token, token_type, expires_in} or 401.
+# ── login admission control ──
+#
+# Argon2id is deliberately expensive (~244 ms of CPU per attempt), which makes an
+# unauthenticated POST /api/login a request-amplification lever: a few hundred bytes buys
+# a quarter-second of a worker. The pool is 4 workers, so 8 concurrent attempts starved
+# real traffic — a measured `GET /api/health` went **6 ms → 942 ms**, and ~40 concurrent
+# attempts wedged the server outright. Making passwords costly to crack made the endpoint
+# cheap to abuse; this is the other half of that trade.
+#
+# Fix: cap CONCURRENT derivations. At most `LOGIN_MAX_INFLIGHT` logins may be hashing at
+# once; excess attempts are shed with 429 **before** any Argon2 work, so a rejected
+# attempt costs the server ~nothing (no amplification). With 2 of 4 workers, half the pool
+# is always free for real traffic no matter how hard login is hammered.
+#
+# NB this is a concurrency cap, not a full rate limiter: an attacker can still keep 2
+# workers busy indefinitely. Bounding sustained attempts (a per-IP token bucket, plus
+# lockout/backoff on repeated failures for the same subject) needs the client address,
+# which the handler does not currently get from sandhi — the next auth bite.
+var LOGIN_MAX_INFLIGHT = 2;    # of the 4-worker pool
+var g_login_inflight = 0;
+
+# POST /api/login {"password":"..."} → {token, token_type, expires_in}, 401, or 429.
+# Admission control wraps the real handler so there is exactly one decrement path.
 fn handle_login(ctx, conn, buf, blen, params): i64 {
+    var n = atomic_fetch_add(&g_login_inflight, 1);
+    if (n >= LOGIN_MAX_INFLIGHT) {
+        atomic_fetch_add(&g_login_inflight, 0 - 1);
+        return resp_json_err(conn, "429 Too Many Requests", "too many concurrent sign-in attempts");
+    }
+    var rc = _handle_login_inner(ctx, conn, buf, blen, params);
+    atomic_fetch_add(&g_login_inflight, 0 - 1);
+    return rc;
+}
+
+fn _handle_login_inner(ctx, conn, buf, blen, params): i64 {
     var bptr = http_body_ptr(buf, blen);
     var bln = http_body_len(buf, blen);
     if (bptr == 0 || bln <= 0) { return resp_json_err(conn, "400 Bad Request", "missing request body"); }

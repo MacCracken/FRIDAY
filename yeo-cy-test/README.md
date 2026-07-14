@@ -126,7 +126,7 @@ curl -s -X POST localhost:8080/api/notes -H "Authorization: Bearer $TOKEN" -d '{
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 46 backend e2e + 13 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 47 backend e2e + 13 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -143,9 +143,9 @@ src/crypto.cyr   — sy-core `crypto` module → sigil (Ed25519 keypair/sign; GE
 src/tee.cyr      — sy-core `tee` module → sigil AES-256-GCM key sealing (GET /api/tee; seals the *.key files)
 src/auth.cyr     — sy-core `auth` module → JWT sessions + RBAC (HS256 login; /api/me, /api/admin; gates /api/notes writes)
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel, sigil crypto, auth JWT)
-tests/verify.py  — 46-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/verify.py  — 47-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
 tests/ui_check.mjs — headless full-stack UI e2e (13 scenarios; drives the emitted app.js incl. sign-in vs the backend)
-tests/run.sh     — one command: build + unit + 46 backend + 13 UI
+tests/run.sh     — one command: build + unit + 47 backend + 13 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -193,7 +193,7 @@ meant closing a real corruption the probe hit three times — a single quote in 
 silently dropped the audit record — **fixed upstream and adopted here: patra 1.12.10**
 (standard `''` escaping + `patra_quote_str`) **and libro 2.8.1** (bound INSERT in
 `patrastore_append`), both driven by this probe. The suite is **green + stable** (8
-unit + **46 backend** + 13 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
+unit + **47 backend** + 13 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
 each finding is filed in its repo's `docs/development/issues/`.
 
 ## License
