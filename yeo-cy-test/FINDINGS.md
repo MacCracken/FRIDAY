@@ -82,13 +82,16 @@ self-consistency.
   principle**, and the gap fixed at the source instead: **sigil 3.12.0** adds
   **BLAKE2b (RFC 7693)** + **Argon2id/i/d (RFC 9106)** — all three RFC 9106 §5 official
   vectors pass, cross-checked against OpenSSL's providers, with a thin `[lib.argon2]`
-  profile (1050 lines) for exactly this login use case. **Probe adoption is still
-  pending:** cyrius 6.4.62 folds sigil **3.11.1**, so `argon2id` is not reachable here
-  until cyrius folds 3.12.0; the plaintext compare stays until then. (Context, not an
-  excuse: sy-core's own `verify_admin_password` also falls back to a constant-time
-  **plaintext** compare when `SECUREYEOMAN_ADMIN_PASSWORD_HASH` is unset — it *verifies*
-  a PHC hash, it never issues one.) *(Resolved — sigil 3.12.0; probe adoption blocked on
-  a cyrius snapshot fold.)*
+  profile (1050 lines) for exactly this login use case. **ADOPTED (2026-07-14):** cyrius **6.4.63** folds sigil 3.12.0, and the
+  probe now verifies credentials with `argon2id_into` at sy-core's exact parameters
+  (m=19456, t=2, p=1, 32-byte tag, 16-byte salt) — **the plaintext compare is gone**;
+  passwords are no longer in the source, only salt+tag. Measured **~244 ms and ~19 MiB per
+  login** on this host (sigil's scalar Cyrius vs ~30 ms for OpenSSL's AVX2 C — ~8×, and
+  inside RFC 9106's interactive budget). Per-thread arena via `argon2id_into` (slot 13) so
+  concurrent logins never touch the non-thread-safe `fl_alloc`. **New gap this opened:**
+  `/api/login` is now a memory-amplifying DoS vector if unbounded — ~19 MiB per attempt —
+  so it needs rate-limiting; noted as the next auth bite. *(RESOLVED end-to-end: filed →
+  fixed in sigil 3.12.0 → folded in cyrius 6.4.63 → adopted here.)*
 
 - 🟠 **A stale `lib/` silently shadowed the pinned snapshot — hiding a crypto fix for
   three minor versions.** The probe's gitignored `lib/` (resolved deps) sat at **sigil
@@ -114,8 +117,11 @@ self-consistency.
   security-relevant hazard, not a cosmetic one. **Own-goal worth recording:** an earlier
   bite noticed "bundled sigil is 3.9.8, not 3.9.9" and filed it as a stale doc label
   instead of pulling the thread — the discrepancy *was* the bug.
-  *(**FILED** — `cyrius/docs/development/issues/yeo-cy-test-shadow-lib-silent-version-skew.md`;
-  awaiting the cyrius maintainer's commit.)*
+  *(**FILED → SHIPPED in cyrius 6.4.63**, all three asks adopted: the note now NAMES the
+  skew, was escalated note→**warning**, and prints the fix command —
+  `warning: ./lib/ shadows version-pinned .../6.4.63/lib — 2 bundled lib(s) differ:
+  sigil 3.11.1 (pinned: 3.12.0), mabda 4.0.2 (pinned: 4.0.5)`. It immediately caught a
+  second stale bundle (mabda) this probe had not noticed.)*
 - 🟡 **bayan `base64url_decode` returned NULL on a valid no-pad round-trip in-probe.**
   `base64url_decode(base64url_encode("hello", 5), 7)` returned 0 (the encoder's output
   is standard base64url — Python decodes the probe's tokens fine). The dist impl

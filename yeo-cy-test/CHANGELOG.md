@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — credentials are Argon2id-hashed (the last plaintext gap, closed end-to-end)
+- **`_auth_pw_ok` now verifies with Argon2id** (sigil 3.12.0 via cyrius **6.4.63**) at
+  sy-core's exact parameters — m=19456 KiB, t=2, p=1, 32-byte tag, 16-byte salt — and
+  constant-time compares the tag. **The demo passwords are no longer in the source**:
+  `src/auth.cyr` stores only a salt + Argon2id tag per credential. This closes the probe's
+  last plaintext-credential gap, and the primitive exists *because this probe filed it*:
+  sigil had no password KDF, and the only route to Argon2id was escaping to OpenSSL's
+  libcrypto through a soft-deprecated `tls_dlsym` hatch — rejected as non-sovereign.
+  **Full arc: filed → implemented in sigil 3.12.0 → folded into cyrius 6.4.63 → adopted
+  here**, in one cycle.
+- **Concurrency:** logins run on sandhi workers, and sigil's allocating `argon2id` wrapper
+  would call the non-thread-safe `fl_alloc` per login. So each worker allocates its ~19 MiB
+  arena once (thread-local slot 13; sigil owns 8, patra 0-4, probe 14/15) and reuses it via
+  **`argon2id_into`**, which touches no allocator.
+- **Cost, measured:** ~**244 ms** and ~**19 MiB** per login on this host (sigil's scalar
+  Cyrius vs ~30 ms for OpenSSL's AVX2 C — ~8×, and inside RFC 9106's interactive budget).
+  Suite wall-clock 14s.
+- **New gap this opens (next auth bite):** `/api/login` is **not rate-limited**, so each
+  unauthenticated attempt now costs the server ~19 MiB — a memory-amplifying DoS vector.
+  Recorded in FINDINGS rather than left implicit.
+- **Tests:** 9th unit invariant — the right password verifies; wrong / empty /
+  off-by-one-byte are rejected; and the right password under the **wrong salt** is
+  rejected (proving the salt is bound into the tag). Suite: **9 unit + 46 backend + 13
+  full-stack UI**, green.
+
+### Changed — cyrius pin 6.4.62 → 6.4.63; `lib/` re-synced to sigil 3.12.0
+- 6.4.63 folds **sigil 3.12.0** (native BLAKE2b + Argon2id) and ships the fix for the
+  shadow-`lib/` finding this probe filed: the note is now a **warning** that **names the
+  skew** (`sigil 3.11.1 (pinned: 3.12.0), mabda 4.0.2 (pinned: 4.0.5)`) and prints the
+  re-sync command. It caught a second stale bundle (**mabda** 4.0.2 → 4.0.5) immediately.
+
 ### Fixed — stale `lib/` was hiding sigil's slot-0 fix (a latent sigil⇄patra collision)
 - **The probe was building against sigil 3.9.8, not the 3.11.1 the pinned cyrius 6.4.62
   folds.** `lib/` (gitignored, locally resolved) had drifted and *shadowed* the

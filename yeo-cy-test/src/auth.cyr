@@ -22,15 +22,68 @@
 # Statelessness: the HMAC secret is generated once at init and read-only after, so
 # issuing/verifying use only per-call buffers — thread-safe, no lock.
 #
-# LIMITATIONS (future bites): the HMAC secret is EPHEMERAL (per process, so tokens
-# don't survive a restart); the admin credential is a plaintext compare (sy-core
-# uses Argon2id — no Cyrius Argon2 yet, a gap); RBAC / PKCE / WebAuthn are later.
+# CREDENTIALS: Argon2id (RFC 9106) via sigil 3.12.0, at sy-core's exact parameters
+# (m=19456, t=2, p=1). This closes the probe's last plaintext-credential gap — and the
+# primitive exists because this probe filed the gap: sigil had no password KDF, and the
+# only path to Argon2id was escaping to OpenSSL's libcrypto through a soft-deprecated
+# `tls_dlsym` hatch, which would have broken sigil's "zero external crypto dependencies"
+# contract. sigil 3.12.0 (folded by cyrius 6.4.63) ships it natively instead.
+#
+# LIMITATIONS (future bites): PKCE / OIDC / WebAuthn. `/api/login` is NOT rate-limited —
+# each attempt costs ~244 ms + ~19 MiB, so an unbounded attacker can amplify memory; a
+# real deployment gates it (see FINDINGS).
 
 var g_jwt_secret     = 0;          # 32-byte HS256 HMAC secret (ephemeral)
 var g_jwt_secret_len = 32;
-var g_admin_pw       = "changeme"; # demo admin credential  → role=admin
-var g_user_pw        = "user1234"; # demo non-admin credential → role=user (for RBAC)
 var g_auth_key_path  = "yeo-auth.key"; # persisted 32-byte HS256 secret (0600, gitignored)
+
+# ── credentials: Argon2id-hashed, never plaintext ──
+#
+# sy-core's `verify_admin_password` verifies an **Argon2id** PHC hash (Rust `argon2` 0.5,
+# `Argon2::default()`), so these use its exact parameters: m=19456 KiB, t=2, p=1, 32-byte
+# tag, 16-byte salt. Reachable natively as of **sigil 3.12.0** (folded by cyrius 6.4.63) —
+# the probe drove that primitive precisely to close this gap; until it landed, this was a
+# length-checked plaintext compare (see FINDINGS).
+#
+# The demo passwords are NOT in this source. Stored per credential: a salt + the Argon2id
+# tag of the password under it. Login re-derives and constant-time compares. (The salts are
+# fixed and published rather than random-per-user only because these are throwaway demo
+# credentials and fixed salts make the values reproducible test vectors; a real deployment
+# generates a random salt per user and stores the PHC string.)
+var ARGON2_M = 19456;   # KiB — Argon2::default()
+var ARGON2_T = 2;       # passes
+var ARGON2_P = 1;       # lanes
+var ARGON2_TAG = 32;    # tag bytes
+var ARGON2_SALT = 16;   # salt bytes
+
+# admin / "changeme" → role=admin
+var g_admin_salt_hex = "a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2";
+var g_admin_hash_hex = "076ded3c3681c3b7e0bb39087599b6e241dc2b5aaf5b2ee71cdd80d90862ae27";
+# user / "user1234" → role=user (exercises RBAC)
+var g_user_salt_hex  = "c3c3c3c3c3c3c3c3d4d4d4d4d4d4d4d4";
+var g_user_hash_hex  = "4037965ccc61ec820b310a42f5eb0153157abb1e72bf9d714a720f97e1d54f45";
+
+# Decoded at init (hex → bytes), read-only after → thread-safe.
+var g_admin_salt = 0;
+var g_admin_hash = 0;
+var g_user_salt  = 0;
+var g_user_hash  = 0;
+
+# Per-thread Argon2 arena. Argon2id at m=19456 needs ~19 MiB of working memory; sigil's
+# allocating `argon2id` wrapper would call the non-thread-safe `fl_alloc` on every login,
+# and logins run on concurrent sandhi workers. So each worker allocates its arena ONCE
+# (first login on that thread) and reuses it via `argon2id_into`, which touches no
+# allocator. Slot 13: sigil owns 8, patra 0-4, this probe uses 14 (audit) / 15 (db).
+var TLS_A2MEM = 13;
+
+fn _a2_mem(): i64 {
+    var m = thread_local_get(TLS_A2MEM);
+    if (m == 0) {
+        m = fl_alloc(argon2_mem_bytes(ARGON2_M, ARGON2_P));
+        thread_local_set(TLS_A2MEM, m);
+    }
+    return m;
+}
 
 # Persistent HMAC secret: load if present, else generate + persist — so JWTs issued
 # before a restart still verify after. Reuses crypto_key_load/save (src/crypto.cyr).
@@ -40,6 +93,15 @@ fn auth_init(): i64 {
         random_bytes(g_jwt_secret, 32);
         crypto_key_save(g_auth_key_path, g_jwt_secret, 32);
     }
+    # Decode the credential salts/tags once (read-only after → no lock on the login path).
+    g_admin_salt = alloc(ARGON2_SALT);
+    g_admin_hash = alloc(ARGON2_TAG);
+    g_user_salt  = alloc(ARGON2_SALT);
+    g_user_hash  = alloc(ARGON2_TAG);
+    hex_decode_into(g_admin_salt_hex, strlen(g_admin_salt_hex), g_admin_salt);
+    hex_decode_into(g_admin_hash_hex, strlen(g_admin_hash_hex), g_admin_hash);
+    hex_decode_into(g_user_salt_hex,  strlen(g_user_salt_hex),  g_user_salt);
+    hex_decode_into(g_user_hash_hex,  strlen(g_user_hash_hex),  g_user_hash);
     return 1;
 }
 
@@ -207,12 +269,19 @@ fn auth_verify_sub(token): i64 {
     return json_v_str(json_v_obj_get(v, "sub"));
 }
 
-# Password check: str `pw` equals the configured cstr `expected`. NB a real deploy
-# hashes with Argon2id — no Cyrius Argon2 yet (a gap; see FINDINGS).
-fn _auth_pw_ok(pw, expected): i64 {
-    var n = strlen(expected);
-    if (str_len(pw) != n) { return 0; }
-    return memeq(str_data(pw), expected, n);
+# Password check: does `pw` (a str) hash to the stored Argon2id tag under `salt`?
+# Derives with sy-core's parameters and constant-time compares the 32-byte tag — no
+# plaintext, no early-exit on tag bytes. Returns 1 on match, 0 otherwise.
+#
+# Cost is deliberate: ~244 ms and ~19 MiB per call on this host (that is what makes
+# offline cracking expensive). It also makes login a memory-amplifying DoS vector if
+# unbounded — a real deployment must rate-limit /api/login (noted in FINDINGS).
+fn _auth_pw_ok(pw, salt, expected_tag): i64 {
+    var tag = alloc(ARGON2_TAG);
+    var rc = argon2id_into(_a2_mem(), str_data(pw), str_len(pw), salt, ARGON2_SALT,
+                           ARGON2_T, ARGON2_M, ARGON2_P, tag, ARGON2_TAG);
+    if (rc != SIGIL_ERR_NONE) { return 0; }
+    return ct_eq_bytes_lens(tag, ARGON2_TAG, expected_tag, ARGON2_TAG);
 }
 
 # Role claim (str) equals a cstr?
@@ -235,13 +304,14 @@ fn handle_login(ctx, conn, buf, blen, params): i64 {
     var pw = json_v_str(json_v_obj_get(v, "password"));
     if (pw == 0) { return resp_json_err(conn, "400 Bad Request", "missing string field 'password'"); }
 
-    # Map the credential to a (subject, role). Two demo credentials exercise RBAC.
+    # Map the credential to a (subject, role) by Argon2id-verifying against the stored
+    # salted tags. Two demo credentials exercise RBAC.
     var sub = 0;
     var role = 0;
-    if (_auth_pw_ok(pw, g_admin_pw) == 1) {
+    if (_auth_pw_ok(pw, g_admin_salt, g_admin_hash) == 1) {
         sub = "admin"; role = "admin";
     } else {
-        if (_auth_pw_ok(pw, g_user_pw) == 1) {
+        if (_auth_pw_ok(pw, g_user_salt, g_user_hash) == 1) {
             sub = "user"; role = "user";
         } else {
             return resp_json_err(conn, "401 Unauthorized", "invalid credentials");

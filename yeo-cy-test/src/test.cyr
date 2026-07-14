@@ -23,6 +23,10 @@
 #      rest (through tee sealing), and a missing file loads as absent.
 #   8. tee sealing: AES-256-GCM tee_seal → tee_unseal round-trips, and a tampered
 #      ciphertext/tag/IV is rejected — the sy-core `tee` module (src/tee.cyr).
+#   9. auth credentials: passwords verify by re-deriving **Argon2id** (sigil 3.12.0,
+#      sy-core's m=19456/t=2/p=1) and constant-time comparing the tag — a wrong/empty/
+#      off-by-one-byte password is rejected, and the right password under the WRONG salt
+#      is rejected (the salt is bound into the tag). No plaintext compare remains.
 
 include "src/httpd.cyr"
 include "src/tee.cyr"
@@ -228,6 +232,25 @@ fn test_auth(): i64 {
     return 0;
 }
 
+# Returns 0 on pass, non-zero (case code) on failure. Guard on the credential path:
+# passwords are verified by re-deriving **Argon2id** (sigil 3.12.0, at sy-core's
+# m=19456/t=2/p=1) and constant-time comparing the tag — never a plaintext compare.
+# The cross-salt case is the one that proves the salt actually binds: the admin password
+# must NOT verify against the user's salt+tag.
+fn test_auth_creds(): i64 {
+    auth_init();   # decodes the stored salts/tags
+    if (_auth_pw_ok(str_lit("changeme"), g_admin_salt, g_admin_hash) != 1) { return 1; }
+    if (_auth_pw_ok(str_lit("user1234"), g_user_salt, g_user_hash) != 1) { return 2; }
+    if (_auth_pw_ok(str_lit("wrong"), g_admin_salt, g_admin_hash) != 0) { return 3; }
+    # one byte off → must fail (no prefix/partial acceptance)
+    if (_auth_pw_ok(str_lit("changemf"), g_admin_salt, g_admin_hash) != 0) { return 4; }
+    # empty password → must fail
+    if (_auth_pw_ok(str_lit(""), g_admin_salt, g_admin_hash) != 0) { return 5; }
+    # right password, WRONG salt → must fail (the salt is bound into the tag)
+    if (_auth_pw_ok(str_lit("changeme"), g_user_salt, g_admin_hash) != 0) { return 6; }
+    return 0;
+}
+
 # Returns 0 on pass, non-zero (case code) on failure. Guard on the at-rest key I/O
 # (crypto_key_save/load) behind the persistent HMAC secret + Ed25519 seed: a 32-byte
 # blob round-trips through a file, and a missing file loads as absent. Temp path.
@@ -321,6 +344,15 @@ fn main() {
         return 1;
     }
     println("ok: auth HS256 JWT issue/verify + tamper & expiry rejected");
+
+    var ac = test_auth_creds();
+    if (ac != 0) {
+        print("FAIL: auth argon2id credential verify (code ", 45);
+        fmt_int(ac);
+        println(")");
+        return 1;
+    }
+    println("ok: auth credentials verify via argon2id (salt-bound, no plaintext)");
 
     var te = test_tee();
     if (te != 0) {

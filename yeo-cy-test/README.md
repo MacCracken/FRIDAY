@@ -65,8 +65,10 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   (unauthenticated) from **403** (wrong role). The token is a standard RFC 7519 JWT,
   independently decoded/validated in the tests. The HMAC secret and the Ed25519
   identity are **persisted at rest (0600)**, so tokens and the server identity survive
-  a restart. (bote — the mapped JWT lib — is verify-only, so issuance is built from
-  primitives; see FINDINGS.) **The RBAC is now enforced on the note resource** (below),
+  a restart. **Credentials are Argon2id-hashed** (sigil 3.12.0, at sy-core's
+  m=19456/t=2/p=1) — no plaintext password in the source, ~244 ms per login by design.
+  (bote — the mapped JWT lib — is verify-only, so issuance is built from primitives; see
+  FINDINGS.) **The RBAC is now enforced on the note resource** (below),
   not just the demo `/api/admin` route.
 - **RBAC-enforced writes** — the `auth` gate applied to `/api/notes`: **reads are
   public**, but `POST`/`PUT` require an authenticated session and **`DELETE` requires
@@ -155,8 +157,8 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-**cyrius 6.4.62 / patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile
-bundle) / sigil 3.11.1 / sakshi 2.4.6**; regenerate `lib/` with `cyrius lib sync
+**cyrius 6.4.63 / patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile
+bundle) / sigil 3.12.0 / sakshi 2.4.6**; regenerate `lib/` with `cyrius lib sync
 --full` + `cyrius deps`). Both original blockers — TS/TSX→JS emit and patra SQL string safety — are
 closed, and the probe is a thin sandhi + patra composition (server-side TLS + ALPN,
 retired hand-rolled HTTPS stack).
