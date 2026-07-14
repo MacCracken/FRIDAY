@@ -146,6 +146,10 @@ fn handle_list_notes(ctx, conn, buf, blen, params): i64 {
 }
 
 fn handle_create_note(ctx, conn, buf, blen, params): i64 {
+    # RBAC: creating a note requires an authenticated session (any role). The auth
+    # module verifies the Bearer JWT; 0 → no/invalid/expired token → 401. Reads stay
+    # public; writes are gated. (See src/auth.cyr auth_req_claims.)
+    if (auth_req_claims(buf, blen) == 0) { return resp_json_err(conn, "401 Unauthorized", "authentication required"); }
     var bptr = http_body_ptr(buf, blen);
     var bln = http_body_len(buf, blen);
     if (bptr == 0 || bln <= 0) { return resp_json_err(conn, "400 Bad Request", "missing request body"); }
@@ -227,6 +231,9 @@ fn handle_get_note(ctx, conn, buf, blen, params): i64 {
 # PUT /api/notes/:id — replace a note's body. {"body": "..."} in the request
 # body; the new body is a bound text param, the id a bound WHERE param.
 fn handle_update_note(ctx, conn, buf, blen, params): i64 {
+    # RBAC: editing a note requires an authenticated session (any role) — same gate
+    # as create. Reads remain public; this write is protected.
+    if (auth_req_claims(buf, blen) == 0) { return resp_json_err(conn, "401 Unauthorized", "authentication required"); }
     var id = sandhi_route_param_int(params, 0);
     if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
     var bptr = http_body_ptr(buf, blen);
@@ -269,6 +276,13 @@ fn handle_update_note(ctx, conn, buf, blen, params): i64 {
 # for patra having no rows-affected count, not a REST preference). Idempotent-200
 # is also valid REST; switched to 404-on-missing here to exercise the new API.
 fn handle_delete_note(ctx, conn, buf, blen, params): i64 {
+    # RBAC (role-gated): deletion is an ADMIN-only operation. Distinguish 401
+    # (no/invalid token → not authenticated) from 403 (valid token, non-admin role →
+    # not authorized) — the authentication/authorization split, applied to a real
+    # mutation. auth_req_role returns the verified `role` claim str, or 0 if unauthed.
+    var drole = auth_req_role(buf, blen);
+    if (drole == 0) { return resp_json_err(conn, "401 Unauthorized", "authentication required"); }
+    if (_role_is(drole, "admin") == 0) { return resp_json_err(conn, "403 Forbidden", "delete requires admin role"); }
     var id = sandhi_route_param_int(params, 0);
     if (id < 0) { return resp_json_err(conn, "400 Bad Request", "invalid id"); }
     var d = db();

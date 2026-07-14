@@ -22,6 +22,13 @@ Covers every probe-tested scenario:
      sigil 3.11.1 banking + the slot-0 fix made concurrent handshakes safe)
  11. concurrent read-during-write correctness (lock-free TEXT readback: patra 1.12.8
      materializes payloads under the query flock, so reads never tear vs a writer)
+ 12. persistent libro audit chain (create/update/delete → hash-linked entries; survives restart)
+ 13. hwprobe → ai-hwaccel accelerator summary; 14. crypto → sigil Ed25519 (independent verify)
+ 15. auth → HS256 JWT sessions; 16. RBAC role claims + role-gated /api/admin (401 vs 403)
+ 17. persistent keys across restart; 18. tee → AES-256-GCM key sealing at rest
+ 19. RBAC ENFORCEMENT on note writes (create/update=authed, delete=admin, reads public)
+Note writes are RBAC-gated, so req()/https_req() auto-attach an admin Bearer token (see
+scenario 0); pass token=None for the unauthenticated negative cases.
 Requires cert.pem/key.pem (./gen-certs.sh — build.sh mints them if absent).
 """
 import socket, subprocess, sys, time, json, os, threading, ssl, random, urllib.request, urllib.error
@@ -33,7 +40,17 @@ DB = "yeo.patra"
 AUDIT_DB = "yeo-audit.patra"   # libro patrastore-backed audit chain (persistent)
 AUTH_KEY = "yeo-auth.key"      # persisted HS256 secret (0600)
 IDENTITY_KEY = "yeo-identity.key"  # persisted Ed25519 seed (0600)
+ADMIN_PW, USER_PW = "changeme", "user1234"   # demo credentials → admin / user roles
 passes, fails = [], []
+
+# Note mutations (POST/PUT/DELETE /api/notes) are RBAC-gated (scenario 19): create/update
+# need any authenticated session, DELETE needs admin. So req()/https_req() auto-attach a
+# Bearer token on mutating methods — AUTH_TOKEN (an admin token) is set once after startup,
+# so every existing CRUD scenario authenticates transparently. Pass token=None to send a
+# request with NO Authorization header (the unauthenticated negative cases in scenario 19).
+_USE_GLOBAL = object()   # sentinel: "use the module-global AUTH_TOKEN"
+AUTH_TOKEN = None
+_MUTATION_METHODS = ("POST", "PUT", "DELETE")
 
 def ok(name):   passes.append(name); print(f"  \033[32mPASS\033[0m {name}")
 def bad(name, why=""): fails.append((name, why)); print(f"  \033[31mFAIL\033[0m {name}  {why}")
@@ -59,10 +76,13 @@ def stop_server(p):
     try: p.wait(timeout=5)
     except subprocess.TimeoutExpired: p.kill()
 
-def req(method, path, body=None, timeout=5):
+def req(method, path, body=None, timeout=5, token=_USE_GLOBAL):
     data = body.encode() if isinstance(body, str) else body
     r = urllib.request.Request(f"http://{HOST}:{PORT}{path}", data=data, method=method)
     if data is not None: r.add_header("Content-Type", "application/json")
+    tok = AUTH_TOKEN if token is _USE_GLOBAL else token
+    if tok and method in _MUTATION_METHODS:
+        r.add_header("Authorization", "Bearer " + tok)
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, resp.read().decode()
@@ -93,10 +113,13 @@ def status_of(raw_resp):
 def _https_ctx():
     return ssl.create_default_context(cafile="cert.pem")   # trust the probe's self-signed CA
 
-def https_req(method, path, body=None, ctx=None, timeout=5):
+def https_req(method, path, body=None, ctx=None, timeout=5, token=_USE_GLOBAL):
     data = body.encode() if isinstance(body, str) else body
     r = urllib.request.Request(f"https://{HTTPS_HOST}:{HTTPS_PORT}{path}", data=data, method=method)
     if data is not None: r.add_header("Content-Type", "application/json")
+    tok = AUTH_TOKEN if token is _USE_GLOBAL else token
+    if tok and method in _MUTATION_METHODS:
+        r.add_header("Authorization", "Bearer " + tok)
     try:
         with urllib.request.urlopen(r, timeout=timeout, context=ctx or _https_ctx()) as resp:
             return resp.status, resp.read().decode()
@@ -130,6 +153,13 @@ for f in (DB, AUDIT_DB, AUTH_KEY, IDENTITY_KEY):
 
 print("=== build/ present ===", os.path.exists(BIN))
 srv = start_server()
+
+# 0. Log in as admin and register the token so req()/https_req() authenticate every
+#    mutating scenario below (note writes are RBAC-gated — see scenario 19). The persisted
+#    HS256 secret keeps this token valid across the server restarts later in the suite.
+_st_boot, _lb_boot = req("POST", "/api/login", json.dumps({"password": ADMIN_PW}), token=None)
+AUTH_TOKEN = json.loads(_lb_boot).get("token", "") if _st_boot == 200 else None
+(ok if AUTH_TOKEN else bad)(f"0. admin login for authenticated mutations -> {_st_boot}")
 
 # 1. health
 st, b = req("GET", "/api/health")
@@ -241,10 +271,11 @@ dupcl = "POST /api/notes HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Len
 st = status_of(raw(dupcl))
 (ok if st == 400 else bad)(f"6b. duplicate Content-Length -> 400 (got {st})")
 
-sane = 'POST /api/notes HTTP/1.1\r\nHost: x\r\nContent-Length: 14\r\n\r\n{"body":"sane"}'
-# (Content-Length 14 vs 15-byte body; send exactly 14 of body to be precise)
+# A well-formed POST must now carry auth (note writes are RBAC-gated — scenario 19);
+# include the admin Bearer token so this exercises the sane-framing path, not a 401.
 sane_body = '{"body":"ok"}'
-sane = f"POST /api/notes HTTP/1.1\r\nHost: x\r\nContent-Length: {len(sane_body)}\r\n\r\n{sane_body}"
+sane = (f"POST /api/notes HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {AUTH_TOKEN}\r\n"
+        f"Content-Length: {len(sane_body)}\r\n\r\n{sane_body}")
 st = status_of(raw(sane))
 (ok if st in (200, 201) else bad)(f"6c. sane request -> 2xx (got {st})")
 
@@ -578,6 +609,38 @@ _c18 = (_st18 == 200 and tee.get("algorithm") == "AES-256-GCM"
 (ok if _c18 else bad)(
     f"18. tee sealing: /api/tee alg={tee.get('algorithm')} sealed={tee.get('sealed')}; "
     f"yeo-auth.key={key_size}B (sealed=60, raw would be 32)")
+
+# 19. RBAC ENFORCEMENT on note mutations (sy-core's auth, applied to the resource). The
+#     write endpoints are gated: create/update require ANY authenticated session, DELETE
+#     requires role=admin. Reads stay PUBLIC. Verifies the 401 (unauthenticated) vs 403
+#     (authenticated-but-unauthorized) split on the actual notes resource — not just the
+#     demo /api/admin probe route. This is the full-stack "secured writes" guarantee.
+_su19, _ub19 = req("POST", "/api/login", json.dumps({"password": USER_PW}), token=None)
+utok = json.loads(_ub19).get("token", "") if _su19 == 200 else ""
+
+_r_pub, _   = req("GET", "/api/notes", token=None)                                    # reads: public
+_c_noauth,_ = req("POST", "/api/notes", json.dumps({"body": "nope"}), token=None)     # write w/o token → 401
+_sc, _cb    = req("POST", "/api/notes", json.dumps({"body": "rbac-seed"}))            # seed (admin token)
+rid = json.loads(_cb).get("id") if _sc == 201 else None
+_u_noauth,_ = req("PUT", f"/api/notes/{rid}", json.dumps({"body": "x"}), token=None)  # → 401
+_d_noauth,_ = req("DELETE", f"/api/notes/{rid}", token=None)                          # → 401
+
+# A user-role session may create/update (any authenticated role) ...
+_u_create, _uc = req("POST", "/api/notes", json.dumps({"body": "by-user"}), token=utok)
+uid = json.loads(_uc).get("id") if _u_create == 201 else None
+_u_update, _   = req("PUT", f"/api/notes/{uid}", json.dumps({"body": "by-user-2"}), token=utok)
+# ... but DELETE is admin-only: a user token is authenticated yet unauthorized → 403.
+_u_delete, _ = req("DELETE", f"/api/notes/{uid}", token=utok)
+_a_delete, _ = req("DELETE", f"/api/notes/{uid}", token=AUTH_TOKEN)                   # admin → 200
+
+_c19 = (utok and rid and uid and _r_pub == 200
+        and _c_noauth == 401 and _u_noauth == 401 and _d_noauth == 401
+        and _u_create == 201 and _u_update == 200
+        and _u_delete == 403 and _a_delete == 200)
+(ok if _c19 else bad)(
+    f"19. RBAC writes: public-read {_r_pub}; unauth create/update/delete "
+    f"{_c_noauth}/{_u_noauth}/{_d_noauth} (want 401); user create/update {_u_create}/{_u_update} "
+    f"(want 201/200); user-delete {_u_delete} (want 403) / admin-delete {_a_delete} (want 200)")
 
 stop_server(srv)
 

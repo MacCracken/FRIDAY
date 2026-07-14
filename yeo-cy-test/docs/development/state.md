@@ -104,8 +104,8 @@ from primitives (to file); **no Cyrius Argon2** for password hashing (plaintext
 compare here — a gap); and **bayan's `base64url_decode` returned null** on a valid
 no-pad round-trip in-probe (worked around with an in-probe decoder — root cause
 unconfirmed, flagged). The HMAC secret is now **persistent** (`yeo-auth.key`, 0600) so
-tokens survive a restart. Limitations (future bites): plaintext credential (needs
-Argon2), and PKCE/OIDC/WebAuthn (+ enforcing RBAC on the note mutations) still to come.
+tokens survive a restart. The RBAC is now **enforced on the note resource** (below).
+Limitations (future bites): plaintext credential (needs Argon2), and PKCE/OIDC/WebAuthn.
 
 **Persistent keys (both crypto + auth), SEALED at rest.** `crypto_key_load`/
 `crypto_key_save` (`src/crypto.cyr`) seal 32-byte key material with **AES-256-GCM**
@@ -129,7 +129,20 @@ footgun briefly made me mis-record a "sigil bug" + build an unnecessary workarou
 adversarial review + re-measurement corrected it (no bug — `rc==0` is success). Gap: no
 hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
 
-8 unit invariants + **44 backend scenarios** + 10 UI pass — **green + stable** at
+**RBAC enforcement on note writes.** The `auth` module's JWT/RBAC is now applied to the
+live `/api/notes` resource, not just the demo `/api/admin` route: `POST`/`PUT` require an
+authenticated session (any role), `DELETE` requires **`role=admin`**, and `GET`
+list/detail stay **public** (reads open, writes gated). A small guard
+(`auth_req_claims`/`auth_req_role` in `src/auth.cyr`) verifies the Bearer token at the top
+of each mutation handler — 401 (unauthenticated) vs 403 (authenticated, non-admin) split,
+mirroring `handle_admin`. The **frontend** (`web/app.tsx`) gained a real sign-in flow
+(`#/login` → `/api/login`, in-memory JWT, role via `/api/me`, `Authorization: Bearer` on
+writes) and is **RBAC-aware** (add form only when signed in; delete control only for
+admins) — the backend stays the authority. Scenario 19 asserts the full write matrix;
+scenario 0 bootstraps an admin token so `req`/`https_req` authenticate transparently. **No
+new lib gap** — used only existing auth primitives (the stack was already sufficient).
+
+8 unit invariants + **46 backend scenarios** + **13 UI** pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
@@ -229,9 +242,11 @@ hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
   enforces `exp`, and returns the claims obj (`auth_verify_sub` wraps it). Endpoints:
   `handle_login` (credential → `sub`/`role`), `handle_me`, and `handle_admin` (RBAC:
   `_role_is(role, "admin")` → 200 / 403). `_bearer_token` reads the token via
-  `sandhi_server_find_header(…, "Authorization")`. Stateless → no lock. `auth_init`
-  loads/persists the HMAC secret (`yeo-auth.key`, 0600) via `crypto_key_*` so tokens
-  survive a restart.
+  `sandhi_server_find_header(…, "Authorization")`. A reusable request guard
+  `auth_req_claims`/`auth_req_role` verifies the Bearer token for protected handlers; the
+  `/api/notes` mutation handlers in `main.cyr` gate on it (POST/PUT → any authed role,
+  DELETE → admin, reads public). Stateless → no lock. `auth_init` loads/persists the HMAC
+  secret (`yeo-auth.key`, 0600) via `crypto_key_*` so tokens survive a restart.
 - `src/hwprobe.cyr` — **the `sy-core` `hwprobe` module, ported onto ai-hwaccel.**
   `hwprobe_init()` (main-thread) calls `hwlog_init()` then
   `registry_detect_no_exec()` (no subprocess spawning) once, caching
@@ -239,9 +254,13 @@ hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
   `handle_hwinfo` serves it raw at `GET /api/hwinfo` via `resp_raw`.
 - `web/app.tsx` — typed frontend, single source of truth: a SecureYeoman notes
   dashboard with a hash router exercising the **full** `/api/notes` resource —
-  `#/` Home (live status + count), `#/notes` (list + add + per-row delete),
-  `#/notes/:id` (detail: GET by id, edit→PUT, delete→DELETE). JSX lowers to the
-  emitter's `h()` runtime (text children → text nodes → XSS-safe).
+  `#/` Home (live status + count + session), `#/notes` (list [public] + add [auth] +
+  per-row delete [admin]), `#/notes/:id` (detail: GET by id, edit→PUT [auth],
+  delete→DELETE [admin]), `#/login` (POST `/api/login` → in-memory JWT, role via
+  `/api/me`), `#/logout`. Writes attach `Authorization: Bearer`; the UI is **RBAC-aware**
+  (gates the add form / delete control to what the session may do) but the backend is the
+  authority. JSX lowers to the emitter's `h()` runtime (text children → text nodes →
+  XSS-safe; null/false children skipped, so the conditional controls render nothing).
 - `web/app.js` — **generated** from `web/app.tsx` by `cyrius build --target=js`
   (do not hand-edit); `web/index.html` is a minimal mount + dashboard CSS.
 - `build.sh` — emits `web/app.js` from the TSX (`--target=js` + `node --check`),
@@ -269,7 +288,7 @@ hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
   AES-256-GCM `tee_seal`→`tee_unseal` round-trips and a tampered ciphertext/tag is
   rejected. Passes via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **44-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **46-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -285,16 +304,23 @@ hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
   (Python cryptography), and auth (15): `POST /api/login` → HS256 JWT, `GET /api/me`
   Bearer-protected (valid→200 sub, wrong-pw/no-token/tampered→401), token decodes as
   a standard RFC 7519 JWT, RBAC (16): `/api/admin` role-gated — admin→200, user→403,
-  none→401 (the 401-vs-403 authn/authz split), and persistent keys (17): after a full
-  restart a pre-restart JWT still verifies and the pubkey is unchanged**). **All scenarios are stable** (the cyrius 6.3.15
+  none→401 (the 401-vs-403 authn/authz split), persistent keys (17): after a full
+  restart a pre-restart JWT still verifies and the pubkey is unchanged, tee sealing (18):
+  `/api/tee` reports AES-256-GCM + the on-disk key file is a 60-byte sealed blob, and
+  RBAC enforcement (19): note writes gated — public read 200, unauth create/update/delete
+  →401, user create/update →201/200, user DELETE →403, admin DELETE →200 (scenario 0
+  bootstraps an admin token so all mutating scenarios authenticate transparently)**).
+  **All scenarios are stable** (the cyrius 6.3.15
   str_builder fix removed the concurrency flakiness). Run against a
   built `build/yeo-cy-test` (needs `cert.pem`/`key.pem` — `./gen-certs.sh`, or
   `build.sh` auto-mints).
 - `tests/ui_check.mjs` — **headless full-stack proof**: loads the real
   cyrius-emitted `web/app.js` into a DOM+fetch shim against a running server and
-  drives the rendered UI (list → add → detail → edit → delete), cross-checking
-  the DOM vs the patra backend (10 scenarios incl. XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 44 backend e2e + 10 UI e2e.
+  drives the rendered UI (sign in via the login form → add → detail → edit → delete),
+  cross-checking the DOM vs the patra backend (**13 scenarios**: public read with the
+  add form gated pre-login, admin CRUD, a user-role session that can add but whose
+  admin-only delete control is hidden, XSS-safe text-node rendering).
+- `tests/run.sh` — one command: build + unit + 46 backend e2e + 13 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).

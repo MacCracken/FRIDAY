@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — RBAC enforcement on note mutations (auth applied to the real resource)
+- **Note WRITES are now access-controlled; reads stay public.** The `auth` module's
+  JWT/RBAC (previously demonstrated only on `/api/me` + `/api/admin`) is applied to the
+  live `/api/notes` resource: `POST`/`PUT` require an authenticated session (any role),
+  `DELETE` requires **role=admin**; `GET` list/detail stay public. The 401
+  (unauthenticated) vs 403 (authenticated-but-unauthorized) split is now enforced on an
+  actual mutation, not just a demo route — the full-stack "secured writes" guarantee.
+- **Backend** (`src/main.cyr` + `src/auth.cyr`): a small request guard —
+  `auth_req_claims` / `auth_req_role` — verifies the request's Bearer token, and the
+  three mutation handlers gate on it before any DB work (401 on no/invalid token, 403
+  on a non-admin DELETE). Mirrors the already-tested `handle_admin` verify → `_role_is`
+  path exactly.
+- **Frontend** (`web/app.tsx`): a real sign-in flow — `#/login` POSTs to `/api/login`,
+  holds the HS256 JWT in memory, resolves the role via the Bearer-gated `/api/me`, and
+  attaches `Authorization: Bearer` to every mutating fetch. The UI is **RBAC-aware**:
+  the add form appears only when signed in, and the delete control only for admins — but
+  the backend stays the authority (it enforces 401/403 regardless of what the UI shows).
+  `#/logout` clears the session.
+- **Tests**: `verify.py` +2 — scenario **0** (admin-login bootstrap: `req`/`https_req`
+  auto-attach the admin Bearer token so every existing mutating scenario authenticates
+  transparently; `token=None` opts out) and scenario **19** (the full write matrix:
+  public read 200; unauth create/update/delete → 401; user create/update → 201/200;
+  user DELETE → 403; admin DELETE → 200). `ui_check.mjs` reworked to drive the login
+  form and assert the RBAC-aware UI (gated add pre-login; admin CRUD; user can add but
+  the admin-only delete is hidden). Suite: **8 unit + 46 backend + 13 full-stack UI**,
+  green.
+- **No new lib gap** — this bite used only existing auth primitives (sigil HMAC, bayan
+  base64url + the in-probe base64url decoder), so it surfaced nothing new to file: a
+  positive signal that the ported `auth` stack was already sufficient for real RBAC.
+  Standing gaps unchanged (no Cyrius Argon2 for password hashing; bote JWT is verify-only).
+
 ### Added — fifth `sy-core` module: `tee` (AES-256-GCM key sealing at rest)
 - **`src/tee.cyr` — SecureYeoman's `tee` module.** sy-core's tee seals secrets with
   AES-256-GCM under a hardware-backed key; this ports the sealing onto **sigil**

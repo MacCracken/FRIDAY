@@ -4,13 +4,22 @@
 // (cyrius 6.1.11+ TS/TSX → browser-JS + JSX emitter); do not hand-edit app.js.
 // JSX lowers to the emitter's `h(tag, props, ...children)` runtime, which
 // appends string children as text nodes (never innerHTML) — user-supplied note
-// bodies are XSS-safe by construction.
+// bodies are XSS-safe by construction. (h() skips null/false children, so the
+// RBAC-conditional controls below render nothing when not permitted.)
 //
 // A hash router swaps views into #app without server round-trips, exercising the
 // full /api/notes CRUD against the Cyrius (sandhi + patra) backend:
 //   #/            → Home   (live service status + note count)
-//   #/notes       → Notes  (list + add; per-row open / delete)
-//   #/notes/:id   → Note   (detail: view + edit (PUT) + delete (DELETE))
+//   #/notes       → Notes  (list [public] + add [auth]; per-row open / delete [admin])
+//   #/notes/:id   → Note   (detail: view [public] + edit (PUT) [auth] + delete [admin])
+//   #/login       → Sign in (POST /api/login → HS256 JWT); #/logout clears the session
+//
+// Note READS are public; WRITES are RBAC-gated by the backend (create/update need any
+// authenticated session, DELETE needs role=admin — see src/auth.cyr + verify.py #19).
+// The session token is held IN MEMORY (a page reload requires re-login — acceptable for
+// the probe; a real deploy would use a Secure/HttpOnly cookie). The UI mirrors the
+// backend's rules (hides controls the session can't use), but the backend is the
+// authority — it enforces 401/403 regardless of what the UI shows.
 interface Note {
   id: number;
   body: string;
@@ -31,11 +40,43 @@ const api: Fetcher = async <T,>(url: string, init?: RequestInit): Promise<T> => 
   return (await res.json()) as T;
 };
 
+// ── auth session (in-memory) ──
+let token: string | null = null;
+let role: string | null = null;
+
+// Attach the Bearer token to a mutating request's headers (no-op when signed out;
+// the backend then replies 401, which the callers surface).
+function authHeaders(base: Record<string, string>): Record<string, string> {
+  if (token) base["Authorization"] = "Bearer " + token;
+  return base;
+}
+
 const jsonInit = (method: string, body: string): RequestInit => ({
   method,
-  headers: { "Content-Type": "application/json" },
+  headers: authHeaders({ "Content-Type": "application/json" }),
   body: JSON.stringify({ body }),
 });
+
+async function login(password: string): Promise<void> {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) throw new Error(`sign-in failed (HTTP ${res.status})`);
+  token = ((await res.json()) as { token: string }).token;
+  // Resolve the role for RBAC-aware controls via the Bearer-gated /api/me.
+  const me = await fetch("/api/me", { headers: { "Authorization": "Bearer " + token } });
+  role = me.ok ? ((await me.json()) as { role: string }).role : null;
+}
+
+function logout(): void {
+  token = null;
+  role = null;
+}
+
+const isAuthed = (): boolean => token !== null;
+const isAdmin = (): boolean => role === "admin";
 
 async function listNotes(): Promise<Note[]> {
   return api<Note[]>("/api/notes");
@@ -54,18 +95,22 @@ async function updateNote(id: number, body: string): Promise<Note> {
 }
 
 async function deleteNote(id: number): Promise<void> {
-  const res = await fetch(`/api/notes/${id}`, { method: "DELETE" });
+  const res = await fetch(`/api/notes/${id}`, { method: "DELETE", headers: authHeaders({}) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
 function Header(active: string): JSX.Element {
   const cls = (name: string) => (name === active ? "tab active" : "tab");
+  const session = isAuthed()
+    ? <a className="tab session" href="#/logout">{`${role} · sign out`}</a>
+    : <a className={cls("login")} href="#/login">Sign in</a>;
   return (
     <header className="topbar">
       <span className="brand">SecureYeoman</span>
       <nav>
         <a className={cls("home")} href="#/">Home</a>
         <a className={cls("notes")} href="#/notes">Notes</a>
+        {session}
       </nav>
     </header>
   );
@@ -93,12 +138,16 @@ function NoteRow({ note }: { note: Note }): JSX.Element {
       showErr("notes", e.message);
     }
   };
+  // DELETE is admin-only (backend enforces it); only surface the control to admins.
+  const del = isAdmin()
+    ? <button className="del" onclick={onDelete}>delete</button>
+    : null;
   return (
     <li className="note" data-id={note.id}>
       <a className="body" href={`#/notes/${note.id}`}>{note.body}</a>
       <span className="meta">
         <time>{fmtTime(note.created)}</time>
-        <button className="del" onclick={onDelete}>delete</button>
+        {del}
       </span>
     </li>
   );
@@ -121,12 +170,40 @@ async function showHome(): Promise<void> {
           <dd>{health.version}</dd>
           <dt>Notes</dt>
           <dd>{`${notes.length}`}</dd>
+          <dt>Session</dt>
+          <dd>{isAuthed() ? `${role}` : "signed out"}</dd>
         </dl>
       </section>,
     );
   } catch (e) {
     showErr("home", e.message);
   }
+}
+
+async function showLogin(): Promise<void> {
+  const onLogin = async (ev: Event): Promise<void> => {
+    ev.preventDefault();
+    const input = document.getElementById("pw") as HTMLInputElement;
+    const pw = input.value;
+    if (!pw) return;
+    try {
+      await login(pw);
+      location.hash = "#/notes";
+    } catch (e) {
+      showErr("login", e.message);
+    }
+  };
+  mount(
+    "login",
+    <section className="view">
+      <h1>Sign in</h1>
+      <form className="loginform" onsubmit={onLogin}>
+        <input id="pw" type="password" placeholder="password" autocomplete="off" />
+        <button>Sign in</button>
+      </form>
+      <p className="hint">{"admin → changeme · user → user1234"}</p>
+    </section>,
+  );
 }
 
 async function showNotes(): Promise<void> {
@@ -151,14 +228,19 @@ async function showNotes(): Promise<void> {
     }
   };
 
+  // Adding a note needs an authenticated session; otherwise prompt to sign in.
+  const adder = isAuthed()
+    ? <form className="addform" onsubmit={onAdd}>
+        <input id="b" placeholder="write a note…" autocomplete="off" />
+        <button>Add</button>
+      </form>
+    : <p className="signin-hint"><a href="#/login">Sign in</a> to add notes</p>;
+
   mount(
     "notes",
     <section className="view">
       <h1>Notes</h1>
-      <form className="addform" onsubmit={onAdd}>
-        <input id="b" placeholder="write a note…" autocomplete="off" />
-        <button>Add</button>
-      </form>
+      {adder}
       <ul className="notes">{notes.map((note) => NoteRow({ note }))}</ul>
       <footer className="count">{`${notes.length} note(s)`}</footer>
     </section>,
@@ -196,18 +278,26 @@ async function showNote(id: number): Promise<void> {
     }
   };
 
+  // Editing needs a session (any role); deleting needs admin. Read stays public.
+  const editor = isAuthed()
+    ? <form className="editform" onsubmit={onSave}>
+        <input id="edit" value={note.body} autocomplete="off" />
+        <button>Save</button>
+      </form>
+    : <p className="signin-hint"><a href="#/login">Sign in</a> to edit</p>;
+  const del = isAdmin()
+    ? <button className="del" onclick={onDelete}>delete</button>
+    : null;
+
   mount(
     "notes",
     <section className="view">
       <h1>{`Note #${id}`}</h1>
-      <form className="editform" onsubmit={onSave}>
-        <input id="edit" value={note.body} autocomplete="off" />
-        <button>Save</button>
-      </form>
+      {editor}
       <p className="when">{`created ${fmtTime(note.created)}`}</p>
       <p className="actions">
         <a className="back" href="#/notes">← all notes</a>
-        <button className="del" onclick={onDelete}>delete</button>
+        {del}
       </p>
     </section>,
   );
@@ -220,6 +310,11 @@ function route(): void {
     if (Number.isNaN(id)) { showNotes(); } else { showNote(id); }
   } else if (h === "#/notes") {
     showNotes();
+  } else if (h === "#/login") {
+    showLogin();
+  } else if (h === "#/logout") {
+    logout();
+    location.hash = "#/";
   } else {
     showHome();
   }

@@ -85,60 +85,104 @@ try {
 
   const marker = "ui-" + Math.floor(Date.now() / 1000) + "-" + Math.floor(Math.random() * 1e6);
 
-  // 1. list view renders (add form present)
+  // 1. #/notes BEFORE sign-in: the list (a public read) renders, but WRITING is gated —
+  //    the add form is absent and a sign-in prompt shows instead (reads public / writes auth).
   locationShim.hash = "#/notes";
   await tick(100);
-  const addForm = byClass(appEl, "addform")[0];
-  (addForm ? ok : bad)("1. #/notes renders the add form (GET list)");
+  const preAdd = byClass(appEl, "addform")[0];
+  const preHint = byClass(appEl, "signin-hint")[0];
+  (!preAdd && preHint ? ok : bad)("1. #/notes public read renders; add form gated behind sign-in");
 
-  // 2. add a note through the form -> appears in the list (POST + re-render)
+  // 2. sign in as admin via the login FORM (POST /api/login → HS256 JWT; role via /api/me),
+  //    driving the real auth UI, not a seeded token.
+  locationShim.hash = "#/login";
+  await tick(60);
+  const pw = documentShim.getElementById("pw");
+  if (pw) pw.value = "changeme";
+  await fire(byClass(appEl, "loginform")[0], "submit");
+  await tick(150); // login() resolves then location.hash = #/notes -> re-render
+  const sessionLink = byClass(appEl, "session")[0];
+  (sessionLink && text(sessionLink).indexOf("admin") >= 0 ? ok : bad)("2. sign in (admin) via form -> session established (role shown)");
+
+  // 3. now the add form is present (the authenticated write surface appeared)
+  const addForm = byClass(appEl, "addform")[0];
+  (addForm ? ok : bad)("3. add form present once authenticated");
+
+  // 4. add a note through the form -> appears in the list (authenticated POST + re-render)
   const input = documentShim.getElementById("b");
   if (input) input.value = marker;
   await fire(byClass(appEl, "addform")[0], "submit");
   await tick(120);
   const rowA = byClass(appEl, "body").find((a) => text(a) === marker);
-  (rowA ? ok : bad)(`2. add note via form -> rendered in list (POST) [${marker}]`);
+  (rowA ? ok : bad)(`4. add note via form -> rendered in list (POST authed) [${marker}]`);
   const newId = rowA ? parseInt((rowA.attrs.href || "").slice(8), 10) : -1;
-  (newId > 0 ? ok : bad)(`3. rendered note links to #/notes/${newId} (id from POST echo)`);
+  (newId > 0 ? ok : bad)(`4b. rendered note links to #/notes/${newId} (id from POST echo)`);
 
-  // 4. open the detail route -> GET /api/notes/:id, edit form prefilled
+  // 5. open the detail route -> GET /api/notes/:id, edit form prefilled
   locationShim.hash = `#/notes/${newId}`;
   await tick(100);
   const editInput = documentShim.getElementById("edit");
-  (editInput && editInput.value === marker ? ok : bad)("4. #/notes/:id detail loads (GET by id), edit prefilled");
+  (editInput && editInput.value === marker ? ok : bad)("5. #/notes/:id detail loads (GET by id), edit prefilled");
   const title = byTag(appEl, "h1")[0];
-  (title && text(title) === `Note #${newId}` ? ok : bad)("4b. detail shows Note #id");
+  (title && text(title) === `Note #${newId}` ? ok : bad)("5b. detail shows Note #id");
 
-  // 5. edit via the detail form -> PUT, list shows the new body
+  // 6. edit via the detail form -> PUT, list shows the new body
   const edited = marker + "-edited";
   if (editInput) editInput.value = edited;
   await fire(byClass(appEl, "editform")[0], "submit");
   await tick(150); // onSave PUTs then sets location.hash=#/notes -> re-render
   const rowE = byClass(appEl, "body").find((a) => text(a) === edited);
-  (rowE ? ok : bad)("5. edit via detail form -> updated body in list (PUT)");
+  (rowE ? ok : bad)("6. edit via detail form -> updated body in list (PUT authed)");
   // cross-check the backend actually holds the edit
   const beNote = await (await fetch(`${BASE}/api/notes/${newId}`)).json();
-  (beNote.body === edited ? ok : bad)("5b. backend reflects the edit (UI<->patra agree)");
+  (beNote.body === edited ? ok : bad)("6b. backend reflects the edit (UI<->patra agree)");
 
-  // 6. delete via the row button -> DELETE, gone from list + backend
+  // 7. delete via the row button (admin control) -> DELETE, gone from list + backend
   const delRow = byClass(appEl, "note").find((li) => (byClass(li, "body")[0] && text(byClass(li, "body")[0]) === edited));
   await fire(byClass(delRow, "del")[0], "click");
   await tick(150);
   const stillThere = byClass(appEl, "body").some((a) => text(a) === edited);
-  (!stillThere ? ok : bad)("6. delete via row button -> gone from list (DELETE)");
+  (!stillThere ? ok : bad)("7. delete via row button (admin) -> gone from list (DELETE)");
   const beStatus = (await fetch(`${BASE}/api/notes/${newId}`)).status;
-  (beStatus === 404 ? ok : bad)(`6b. backend 404s the deleted note (UI<->patra agree, got ${beStatus})`);
+  (beStatus === 404 ? ok : bad)(`7b. backend 404s the deleted note (UI<->patra agree, got ${beStatus})`);
 
-  // 7. XSS-safety: a note body with HTML/script renders as a single TEXT node —
-  // the h() runtime appends String(x) (never innerHTML), so user content is never
-  // parsed as markup. (Backend storage injection-safety is covered by verify.py.)
+  // 8. RBAC-aware UI as a NON-ADMIN user: sign out, sign in as `user`, confirm the write
+  //    surface (add form) IS present (any authed role may create) but the admin-only
+  //    delete control is NOT rendered on rows. The backend also enforces this (403 on a
+  //    user DELETE — verify.py #19); the UI just mirrors the rule.
+  locationShim.hash = "#/logout";
+  await tick(60);
+  locationShim.hash = "#/login";
+  await tick(60);
+  const pw2 = documentShim.getElementById("pw");
+  if (pw2) pw2.value = "user1234";
+  await fire(byClass(appEl, "loginform")[0], "submit");
+  await tick(150);
+  const userSession = byClass(appEl, "session")[0];
+  const userAdd = byClass(appEl, "addform")[0];
+  const umark = marker + "-user";
+  const uinput = documentShim.getElementById("b");
+  if (uinput) uinput.value = umark;
+  await fire(byClass(appEl, "addform")[0], "submit");
+  await tick(120);
+  const urow = byClass(appEl, "note").find((li) => byClass(li, "body")[0] && text(byClass(li, "body")[0]) === umark);
+  const urowNoDel = !!urow && byClass(urow, "del").length === 0;
+  (userSession && text(userSession).indexOf("user") >= 0 && userAdd && urowNoDel ? ok : bad)(
+    "8. user role: add allowed (created), admin-only delete control hidden (RBAC-aware UI)");
+
+  // 9. XSS-safety: a note body with HTML/script renders as a single TEXT node — the h()
+  //    runtime appends String(x) (never innerHTML), so user content is never parsed as
+  //    markup. (Backend storage injection-safety is covered by verify.py.) The direct POST
+  //    bypasses the app session, so it carries its own admin token.
+  const _lr = await fetch(`${BASE}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "changeme" }) });
+  const uiTok = _lr.ok ? (await _lr.json()).token : "";
   const xss = `<img src=x onerror=alert(1)> & <b>${marker}</b>`;
-  await fetchShim("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: xss }) });
+  await fetchShim("/api/notes", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + uiTok }, body: JSON.stringify({ body: xss }) });
   locationShim.hash = "#/notes";
   await tick(120);
   const xrow = byClass(appEl, "body").find((a) => text(a) === xss);
   const oneTextChild = !!xrow && xrow.children.length === 1 && typeof xrow.children[0] === "string";
-  (oneTextChild ? ok : bad)("7. HTML/script note body renders as a single text node (XSS-safe by construction)");
+  (oneTextChild ? ok : bad)("9. HTML/script note body renders as a single text node (XSS-safe by construction)");
 
   code = fail.length ? 1 : 0;
 } catch (e) {

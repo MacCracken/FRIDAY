@@ -264,6 +264,24 @@ fn _bearer_token(buf, blen): i64 {
     return authz + 7;
 }
 
+# Request-guard used by protected resource handlers (e.g. note mutations in main.cyr):
+# verify the request's Bearer token and return its claims obj (sub/role/…), or 0 when
+# the token is absent, malformed, invalid, or expired. On 0 the caller replies 401.
+# (Guards the null token — auth_verify_claims walks the cstr and must not see 0.)
+fn auth_req_claims(buf, blen): i64 {
+    var tok = _bearer_token(buf, blen);
+    if (tok == 0) { return 0; }
+    return auth_verify_claims(tok);
+}
+
+# The verified `role` claim (str) for the request, or 0 if unauthenticated. Lets a
+# handler apply RBAC (e.g. `_role_is(auth_req_role(...), "admin")`) without re-parsing.
+fn auth_req_role(buf, blen): i64 {
+    var v = auth_req_claims(buf, blen);
+    if (v == 0) { return 0; }
+    return json_v_str(json_v_obj_get(v, "role"));
+}
+
 # GET /api/me — requires `Authorization: Bearer <token>`. Returns {sub, role,
 # authenticated} on a valid, unexpired token, else 401. The authentication demonstrator.
 fn handle_me(ctx, conn, buf, blen, params): i64 {

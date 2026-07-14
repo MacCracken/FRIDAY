@@ -34,9 +34,9 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   - `POST /api/login`       → issue an HS256 JWT for `{ "password": "…" }`
   - `GET  /api/me`          → Bearer-protected; returns the authenticated `{ sub, role }`
   - `GET  /api/admin`       → RBAC-gated (`role=admin`); 200 / 403 / 401
-  - `GET  /api/notes`       → list notes (JSON array)
-  - `POST /api/notes`       → create a note from `{ "body": "…" }`
-  - `GET|PUT|DELETE /api/notes/:id` → fetch / replace / delete one note
+  - `GET  /api/notes`       → list notes (JSON array) — **public**
+  - `POST /api/notes`       → create a note from `{ "body": "…" }` — **auth required**
+  - `GET|PUT|DELETE /api/notes/:id` → fetch (public) / replace (auth) / delete (**admin**) one note
 - **Storage** — [patra](https://github.com/MacCracken/patra), the sovereign
   Cyrius SQL database. Notes persist to `yeo.patra` (ids via patra
   `AUTOINCREMENT`) and survive restarts.
@@ -66,7 +66,14 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   independently decoded/validated in the tests. The HMAC secret and the Ed25519
   identity are **persisted at rest (0600)**, so tokens and the server identity survive
   a restart. (bote — the mapped JWT lib — is verify-only, so issuance is built from
-  primitives; see FINDINGS.)
+  primitives; see FINDINGS.) **The RBAC is now enforced on the note resource** (below),
+  not just the demo `/api/admin` route.
+- **RBAC-enforced writes** — the `auth` gate applied to `/api/notes`: **reads are
+  public**, but `POST`/`PUT` require an authenticated session and **`DELETE` requires
+  `role=admin`** (401 unauthenticated vs 403 wrong-role, on the real mutation). The
+  frontend gained a **sign-in flow** (`#/login`, in-memory JWT) and is **RBAC-aware**
+  (the add form shows only when signed in, the delete control only for admins) — with the
+  backend as the authority. Used only existing auth primitives, so **no new lib gap**.
 - **Key sealing** — [sigil](https://github.com/MacCracken/sigil) AES-256-GCM. **The
   fifth `sy-core` module ported** (sy-core's `tee`): the persisted key files are
   **AES-256-GCM sealed** at rest (60-byte `[IV|ct|tag]` blobs, not raw keys), under an
@@ -108,14 +115,16 @@ cyrius build src/main.cyr build/yeo-cy-test     # build the backend
 ```sh
 # API smoke test
 curl -s localhost:8080/api/health
-curl -s -X POST localhost:8080/api/notes -d '{"body":"hello cyrius"}'
-curl -s localhost:8080/api/notes
+curl -s localhost:8080/api/notes                                    # reads are public
+# writes are RBAC-gated — sign in for a JWT, then send it as a Bearer token:
+TOKEN=$(curl -s -X POST localhost:8080/api/login -d '{"password":"changeme"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+curl -s -X POST localhost:8080/api/notes -H "Authorization: Bearer $TOKEN" -d '{"body":"hello cyrius"}'
 ```
 
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 44 backend e2e + 10 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 46 backend e2e + 13 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -130,11 +139,11 @@ src/audit.cyr    — sy-core `audit` module → libro patrastore (persistent has
 src/hwprobe.cyr  — sy-core `hwprobe` module → ai-hwaccel (accelerator detection; GET /api/hwinfo)
 src/crypto.cyr   — sy-core `crypto` module → sigil (Ed25519 keypair/sign; GET /api/pubkey + audit head_sig)
 src/tee.cyr      — sy-core `tee` module → sigil AES-256-GCM key sealing (GET /api/tee; seals the *.key files)
-src/auth.cyr     — sy-core `auth` module → JWT sessions + RBAC (HS256 login; GET /api/me, GET /api/admin role-gated)
+src/auth.cyr     — sy-core `auth` module → JWT sessions + RBAC (HS256 login; /api/me, /api/admin; gates /api/notes writes)
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel, sigil crypto, auth JWT)
-tests/verify.py  — 44-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
-tests/ui_check.mjs — headless full-stack UI e2e (drives the emitted app.js vs the backend)
-tests/run.sh     — one command: build + unit + 44 backend + 10 UI
+tests/verify.py  — 46-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/ui_check.mjs — headless full-stack UI e2e (13 scenarios; drives the emitted app.js incl. sign-in vs the backend)
+tests/run.sh     — one command: build + unit + 46 backend + 13 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -175,12 +184,14 @@ detection at `GET /api/hwinfo`, no subprocess spawning), **`crypto` →
 **`auth`** (JWT sessions + RBAC — `POST /api/login` issues an HS256 JWT via sigil HMAC,
 `GET /api/me` is Bearer-protected, `GET /api/admin` is role-gated; standard RFC 7519
 token), and **`tee`** (AES-256-GCM sealing of the persisted key files — surfacing a
-sigil DX finding on inconsistent return conventions). Making audit durable
+sigil DX finding on inconsistent return conventions). **The `auth` RBAC is now enforced
+on the note resource** — reads public, `POST`/`PUT` require a session, `DELETE` requires
+admin — with a sign-in flow + RBAC-aware controls in the frontend. Making audit durable
 meant closing a real corruption the probe hit three times — a single quote in a value
 silently dropped the audit record — **fixed upstream and adopted here: patra 1.12.10**
 (standard `''` escaping + `patra_quote_str`) **and libro 2.8.1** (bound INSERT in
 `patrastore_append`), both driven by this probe. The suite is **green + stable** (8
-unit + **44 backend** + 10 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
+unit + **46 backend** + 13 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
 each finding is filed in its repo's `docs/development/issues/`.
 
 ## License
