@@ -29,9 +29,19 @@
 # `tls_dlsym` hatch, which would have broken sigil's "zero external crypto dependencies"
 # contract. sigil 3.12.0 (folded by cyrius 6.4.63) ships it natively instead.
 #
-# LIMITATIONS (future bites): PKCE / OIDC / WebAuthn. `/api/login` is NOT rate-limited —
-# each attempt costs ~244 ms + ~19 MiB, so an unbounded attacker can amplify memory; a
-# real deployment gates it (see FINDINGS).
+# LOGIN ABUSE CONTROL: Argon2id's ~244 ms makes `/api/login` a request-amplification lever
+# (measured: 8 concurrent attempts pushed `GET /api/health` 6 ms -> 942 ms; ~40 wedged the
+# 4-worker pool). Two layers now bound it: a **per-IP token bucket** (5/min default,
+# `SY_LOGIN_BURST` / `SY_LOGIN_REFILL_MS`) that stops one source grinding indefinitely, and
+# a **concurrency cap** (2 of 4 workers) that bounds the pool even across many sources.
+# Both shed with 429 BEFORE any Argon2 work, so a rejected attempt is ~free. The per-IP half
+# only became possible when sandhi **1.9.0** added `sandhi_server_conn_peer_ip` (folded in
+# cyrius 6.4.64) — a gap this probe filed.
+#
+# LIMITATIONS (future bites): PKCE / OIDC / WebAuthn; no lockout/backoff on repeated
+# failures for a given SUBJECT (the bucket is keyed by source address only); an unknown
+# peer (ip==0, e.g. AGNOS) is NOT rate-limited — it fails open by design, since keying every
+# unknown peer to one bucket would let a single client lock out all others (see FINDINGS).
 
 var g_jwt_secret     = 0;          # 32-byte HS256 HMAC secret (ephemeral)
 var g_jwt_secret_len = 32;
@@ -102,6 +112,7 @@ fn auth_init(): i64 {
     hex_decode_into(g_admin_hash_hex, strlen(g_admin_hash_hex), g_admin_hash);
     hex_decode_into(g_user_salt_hex,  strlen(g_user_salt_hex),  g_user_salt);
     hex_decode_into(g_user_hash_hex,  strlen(g_user_hash_hex),  g_user_hash);
+    _rl_init();
     return 1;
 }
 
@@ -280,7 +291,7 @@ fn auth_verify_sub(token): i64 {
 fn _auth_pw_ok(pw, salt, expected_tag): i64 {
     var tag = alloc(ARGON2_TAG);
     var rc = argon2id_into(_a2_mem(), str_data(pw), str_len(pw), salt, ARGON2_SALT,
-                           ARGON2_T, ARGON2_M, ARGON2_P, tag, ARGON2_TAG);
+    ARGON2_T, ARGON2_M, ARGON2_P, tag, ARGON2_TAG);
     if (rc != SIGIL_ERR_NONE) { return 0; }
     return ct_eq_bytes_lens(tag, ARGON2_TAG, expected_tag, ARGON2_TAG);
 }
@@ -309,16 +320,128 @@ fn _role_is(role, want): i64 {
 # attempt costs the server ~nothing (no amplification). With 2 of 4 workers, half the pool
 # is always free for real traffic no matter how hard login is hammered.
 #
-# NB this is a concurrency cap, not a full rate limiter: an attacker can still keep 2
-# workers busy indefinitely. Bounding sustained attempts (a per-IP token bucket, plus
-# lockout/backoff on repeated failures for the same subject) needs the client address,
-# which the handler does not currently get from sandhi — the next auth bite.
+# The concurrency cap alone is not enough: it bounds how much CPU login can hold at once,
+# but an attacker can still keep 2 workers saturated forever. Bounding SUSTAINED attempts
+# needs to attribute them to a source — which is why this probe filed the sandhi ask.
+# **sandhi 1.9.0** (`sandhi_server_conn_peer_ip`, folded in cyrius 6.4.64) delivered it, so
+# the second half is now a per-IP token bucket below.
 var LOGIN_MAX_INFLIGHT = 2;    # of the 4-worker pool
 var g_login_inflight = 0;
+
+# ── per-IP login rate limit (token bucket) ──
+#
+# 5 attempts per minute per IP, burst 5. Costly-to-crack passwords must not become a
+# cheap way to burn the server: the concurrency cap stops a burst from starving the pool,
+# and this stops one source from grinding it indefinitely.
+#
+# Fixed-size table, so the limiter itself can't be turned into a memory-exhaustion vector
+# by spraying source addresses (the classic own-goal in naive per-IP maps). On overflow the
+# least-recently-seen entry is evicted; a spraying attacker therefore evicts *itself*,
+# while a sustained single-source attacker (the case that matters) stays pinned in the
+# table and stays limited.
+#
+# Tokens are scaled by 1000 (milli-tokens) — integer math only, no floats.
+#
+# FAIL OPEN on an unknown peer: sandhi reports ip==0 when the address is unavailable
+# (AGNOS has no BSD getpeername — its contract says 0 means "unknown", never a real peer).
+# We do NOT rate-limit an unknown source, because keying every unknown peer to the same
+# bucket would let one client lock out all others. Unknown peers still face the
+# concurrency cap. That is a deliberate, documented trade — see FINDINGS.
+# Burst/refill are env-tunable (`SY_LOGIN_BURST`, `SY_LOGIN_REFILL_MS`) with
+# production-safe DEFAULTS. The defaults are what a real deployment wants; the knob exists
+# because the test suite drives ~50 logins from a single source (127.0.0.1) and would
+# otherwise rate-limit itself — the honest fix is a configurable limit, not a weak default.
+# Scenario 21 restarts the server with a deliberately tiny burst to prove the limiter.
+var LOGIN_RL_SLOTS     = 64;      # tracked source IPs (fixed — bounded memory)
+var LOGIN_RL_BURST     = 5;       # max tokens (SY_LOGIN_BURST)
+var LOGIN_RL_REFILL_MS = 12000;   # 1 token per 12s -> 5/min sustained (SY_LOGIN_REFILL_MS)
+var LOGIN_RL_ENTRY     = 24;      # ip(8) | milli_tokens(8) | last_ms(8)
+var g_rl_table = 0;
+var g_rl_lock  = 0;
+
+fn _rl_init(): i64 {
+    var b = getenv("SY_LOGIN_BURST");
+    if ((b != 0) && (strlen(b) > 0)) {
+        var bv = atoi(b);
+        if (bv > 0) { LOGIN_RL_BURST = bv; }
+    }
+    var r = getenv("SY_LOGIN_REFILL_MS");
+    if ((r != 0) && (strlen(r) > 0)) {
+        var rv = atoi(r);
+        if (rv > 0) { LOGIN_RL_REFILL_MS = rv; }
+    }
+    g_rl_table = alloc(LOGIN_RL_SLOTS * LOGIN_RL_ENTRY);
+    memset(g_rl_table, 0, LOGIN_RL_SLOTS * LOGIN_RL_ENTRY);
+    g_rl_lock = mutex_new();
+    return 0;
+}
+
+# Consume one token for `ip`. Returns 1 = allow, 0 = rate-limited.
+# Serialized by g_rl_lock: the table is shared across sandhi workers, and the critical
+# section is a few microseconds against Argon2id's ~244 ms — contention is irrelevant.
+fn _rl_allow(ip): i64 {
+    if (ip == 0) { return 1; }              # unknown peer -> fail open (see above)
+    mutex_lock(g_rl_lock);
+    var now = clock_now_ms();
+
+    # Find this ip, or the least-recently-seen slot to evict, or a free slot.
+    var slot = 0 - 1;
+    var victim = 0;
+    var oldest = now + 1;
+    var i = 0;
+    while (i < LOGIN_RL_SLOTS) {
+        var e = g_rl_table + i * LOGIN_RL_ENTRY;
+        var eip = load64(e);
+        if (eip == ip) { slot = i; i = LOGIN_RL_SLOTS; }
+        else {
+            if (eip == 0) {
+                if (oldest > 0) { victim = i; oldest = 0; }   # prefer a free slot
+            } else {
+                var last = load64(e + 16);
+                if (last < oldest) { oldest = last; victim = i; }
+            }
+            i = i + 1;
+        }
+    }
+
+    var e = 0;
+    if (slot < 0) {
+        # New source: claim the victim slot with a full bucket.
+        e = g_rl_table + victim * LOGIN_RL_ENTRY;
+        store64(e, ip);
+        store64(e + 8, LOGIN_RL_BURST * 1000);
+        store64(e + 16, now);
+    } else {
+        e = g_rl_table + slot * LOGIN_RL_ENTRY;
+        # Refill for elapsed time, capped at the burst ceiling.
+        var elapsed = now - load64(e + 16);
+        if (elapsed < 0) { elapsed = 0; }        # clock went backwards -> no free tokens
+        var toks = load64(e + 8) + (elapsed * 1000) / LOGIN_RL_REFILL_MS;
+        if (toks > (LOGIN_RL_BURST * 1000)) { toks = LOGIN_RL_BURST * 1000; }
+        store64(e + 8, toks);
+        store64(e + 16, now);
+    }
+
+    var have = load64(e + 8);
+    if (have < 1000) {
+        mutex_unlock(g_rl_lock);
+        return 0;                               # limited
+    }
+    store64(e + 8, have - 1000);
+    mutex_unlock(g_rl_lock);
+    return 1;
+}
 
 # POST /api/login {"password":"..."} → {token, token_type, expires_in}, 401, or 429.
 # Admission control wraps the real handler so there is exactly one decrement path.
 fn handle_login(ctx, conn, buf, blen, params): i64 {
+    # 1. Per-IP budget FIRST — cheapest check, and it sheds a sustained attacker before
+    #    they can occupy an in-flight slot at all. (sandhi 1.9.0 peer address.)
+    if (_rl_allow(sandhi_server_conn_peer_ip(conn)) == 0) {
+        return resp_json_err(conn, "429 Too Many Requests", "too many sign-in attempts from this address");
+    }
+    # 2. Global concurrency cap — bounds how much of the worker pool Argon2id can hold at
+    #    once, including across many distinct sources.
     var n = atomic_fetch_add(&g_login_inflight, 1);
     if (n >= LOGIN_MAX_INFLIGHT) {
         atomic_fetch_add(&g_login_inflight, 0 - 1);

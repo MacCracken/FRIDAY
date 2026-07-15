@@ -192,7 +192,7 @@ fn test_crypto(): i64 {
     if (crypto_verify("audit-heaD", 10, sig) != 0) { return 4; }   # tamper rejected
     # SHA-256("abc") = ba7816bf... (RFC 6234 / NIST vector) — independent correctness.
     if (_cstr_eq(sha256_hex("abc", 3),
-                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0) {
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0) {
         return 5;
     }
     return 0;

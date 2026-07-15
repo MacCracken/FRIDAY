@@ -67,6 +67,9 @@ where Cyrius needs work. **All findings are in [FINDINGS.md](FINDINGS.md).**
   identity are **persisted at rest (0600)**, so tokens and the server identity survive
   a restart. **Credentials are Argon2id-hashed** (sigil 3.12.0, at sy-core's
   m=19456/t=2/p=1) — no plaintext password in the source, ~244 ms per login by design.
+  `/api/login` is **per-IP rate limited** (token bucket, 5/min default) + concurrency-capped,
+  both shedding 429 before any Argon2 work — the per-IP half via **sandhi 1.9.0**'s peer
+  address, a gap this probe filed.
   (bote — the mapped JWT lib — is verify-only, so issuance is built from primitives; see
   FINDINGS.) **The RBAC is now enforced on the note resource** (below),
   not just the demo `/api/admin` route.
@@ -126,7 +129,7 @@ curl -s -X POST localhost:8080/api/notes -H "Authorization: Bearer $TOKEN" -d '{
 ## Test
 
 ```sh
-tests/run.sh        # build + unit invariants + 47 backend e2e + 13 full-stack UI e2e
+tests/run.sh        # build + unit invariants + 48 backend e2e + 13 full-stack UI e2e
 ```
 
 `tests/verify.py` (backend, HTTP+HTTPS) and `tests/ui_check.mjs` (drives the
@@ -143,9 +146,9 @@ src/crypto.cyr   — sy-core `crypto` module → sigil (Ed25519 keypair/sign; GE
 src/tee.cyr      — sy-core `tee` module → sigil AES-256-GCM key sealing (GET /api/tee; seals the *.key files)
 src/auth.cyr     — sy-core `auth` module → JWT sessions + RBAC (HS256 login; /api/me, /api/admin; gates /api/notes writes)
 src/test.cyr     — Cyrius unit invariants (patra bound-text, sandhi route_match, libro audit, ai-hwaccel, sigil crypto, auth JWT)
-tests/verify.py  — 47-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
+tests/verify.py  — 48-scenario backend e2e harness (HTTP + HTTPS; run vs a built binary)
 tests/ui_check.mjs — headless full-stack UI e2e (13 scenarios; drives the emitted app.js incl. sign-in vs the backend)
-tests/run.sh     — one command: build + unit + 47 backend + 13 UI
+tests/run.sh     — one command: build + unit + 48 backend + 13 UI
 gen-certs.sh     — mint the self-signed Ed25519 cert+key for HTTPS (gitignored)
 web/app.tsx      — typed frontend, single source of truth
 web/app.js       — served browser bundle (generated from app.tsx by cyrius)
@@ -157,7 +160,7 @@ FINDINGS.md      — Cyrius / patra / sandhi viability findings (the real delive
 ## Status
 
 Backend, storage, **and frontend build** are viable on Cyrius today (re-run on
-**cyrius 6.4.63 / patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile
+**cyrius 6.4.64 / patra 1.12.10 / libro 2.8.1 / sandhi 1.9.0 (thin `server` profile
 bundle) / sigil 3.12.0 / sakshi 2.4.6**; regenerate `lib/` with `cyrius lib sync
 --full` + `cyrius deps`). Both original blockers — TS/TSX→JS emit and patra SQL string safety — are
 closed, and the probe is a thin sandhi + patra composition (server-side TLS + ALPN,
@@ -176,7 +179,28 @@ collision → `g_dbpath` rename; the multi-worker-TLS slot-0 collision → `max_
 `str_builder`/array-local codegen; patra's table-cache race; both sandhi findings;
 sigil's concurrent-handshake crash.) No new findings this cycle.
 
-**Now growing into the real port. Five `sy-core` modules are ported in:** **`audit` →
+**Still a probe, not the port — read this before the module list below.** Measured
+2026-07-14 against the real target: the probe is **~879 LOC of module code against
+sy-core's 60,425** (243 `.rs` files) — **~1.5%**. Five module *names* are shared, but they
+are thin slices, not ports: **`tee` is ~0%** of sy-core's (which seals under
+`KeySource{Tpm,Sgx,Keyring}`; the probe has one HKDF KEK from an env var with an insecure
+dev fallback), **`auth`** is 541 LOC / 3 routes against 3,396 LOC / 40 routes with one
+hardcoded credential and no user store, and only **`audit`** is a fair 1:1 (~20%). **2 of
+the probe's 15 routes** map to real sy-core endpoints (15 of sy-core's 540 = 2.8%).
+**`notes` is invented scaffolding** — it appears in 2 of 243 `.rs` files as a
+`notes: Option<String>` *column* — yet it owns 5 routes and the entire frontend.
+**`brain`** (the actual product) has no Cyrius target at all: `mneme`/`hoosh`/`daimon`
+ship **0** dist bundles, so the `modules=["dist/*.cyr"]` pattern every ported module used
+does not exist for them. The first thing that breaks in a real port is the **schema**:
+zero `.sql` in `crates/`, while the authoritative **208-table / 7,845-LOC** migration set
+lives in `packages/core` — the package the roadmap deletes in the same clause as the
+Cyrius port. Roughly **88% of the remaining work is blocked on ecosystem construction**,
+not porting effort. What the probe HAS proven is the stack (HTTPS + SQL + crypto + a typed
+frontend) and, more importantly, the **feedback loop**: ~29 findings filed → shipped →
+adopted, gaps closing in one cycle. Treat the list below as *which seams have been
+exercised*, not as progress toward completion.
+
+**Seams exercised so far — five `sy-core` module names, as thin slices:** **`audit` →
 [libro](https://github.com/MacCracken/libro)** (a **persistent** hash-linked audit
 chain via libro's `patrastore` — survives a restart, holds under full concurrency),
 **`hwprobe` → [ai-hwaccel](https://github.com/MacCracken/ai-hwaccel)** (accelerator
@@ -193,7 +217,7 @@ meant closing a real corruption the probe hit three times — a single quote in 
 silently dropped the audit record — **fixed upstream and adopted here: patra 1.12.10**
 (standard `''` escaping + `patra_quote_str`) **and libro 2.8.1** (bound INSERT in
 `patrastore_append`), both driven by this probe. The suite is **green + stable** (8
-unit + **47 backend** + 13 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
+unit + **48 backend** + 13 UI, max_conns=4). Details in [FINDINGS.md](FINDINGS.md);
 each finding is filed in its repo's `docs/development/issues/`.
 
 ## License

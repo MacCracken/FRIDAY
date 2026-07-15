@@ -32,10 +32,24 @@ are ciphertext (a 60-byte `[12 IV | 32 key | 16 tag]` blob), not raw keys.
   `aes_gcm_decrypt(...) != 0`. The genuine, filable finding is the **API footgun**:
   sigil should make its AEAD/verify functions share one success convention (or return a
   bool), and document each return. *(To file — sigil, DX/consistency, not a defect.)*
-- 🔵 **GAP: no hardware-backed KEK.** sy-core's tee wants a TPM/SGX/SEV-sealed KEK;
-  there is no Cyrius TEE/TPM binding, so the KEK is `SY_SEAL_KEY`-derived (HKDF), with a
-  fixed **insecure dev key** fallback (warned) when unset (empty `SY_SEAL_KEY` also
-  falls back — hardened after review). Real hardware sealing needs a Cyrius TEE API. *(Gap.)*
+- 🔵 **GAP (CORRECTED 2026-07-14 — the original filing was too strong): hardware-backed
+  KEK.** *(Was: "there is no Cyrius TEE/TPM binding … real hardware sealing needs a Cyrius
+  TEE API." **That is false.**)* sigil **does** ship TPM + SGX sealing —
+  `tpm_seal_data`/`tpm_unseal_data` (`sigil/src/tpm.cyr:81,88`) and
+  `sgx_derive_seal_key` (`sigil/src/seal.cyr:122,170`) — verified by reading the source, not
+  inferred. The **accurate, narrower** gap: sigil's TPM path **shells out to tpm2-tools**
+  (`tpm2_pcrread` / `tpm2_create` / `tpm2_load` / `tpm2_unseal`, per `src/tpm_core.cyr`),
+  which is exactly the **exec surface this probe deliberately avoids** — `hwprobe` uses
+  `registry_detect_no_exec()` precisely to keep a per-request fork/exec and its
+  command-injection surface out of the server. So the probe's KEK stays `SY_SEAL_KEY`-derived
+  (HKDF) with a fixed **insecure dev key** fallback (warned; empty `SY_SEAL_KEY` also falls
+  back — hardened after review), and sy-core's `KeySource{Tpm,Sgx,Keyring}` remains ~0%
+  ported. **Ask (to file — sigil):** an in-process TPM 2.0 path (direct `/dev/tpmrm0`),
+  or a documented statement that tpm2-tools exec is the supported model so consumers can
+  decide knowingly. **This is the third finding I filed from the docs/design instead of the
+  source** (after "no Argon2" and "memory-amplifying DoS") — all three read worse than
+  reality. The pattern, not the individual entry, is the finding: verify against the source
+  before filing a gap. *(Gap — narrowed; ask not yet filed.)*
 - 🔵 **Env note:** the resolved `lib/sigil.cyr` read **3.9.8**, not the 3.9.9 the docs
   claimed. That discrepancy was NOT a stale label — it was a stale `lib/` shadowing the
   pinned snapshot, and it was hiding the 3.9.9 slot-0 fix (see the 🟠 finding above;
@@ -99,10 +113,26 @@ self-consistency.
   control in `handle_login`: at most `LOGIN_MAX_INFLIGHT`=2 concurrent derivations, excess
   shed **429 before any Argon2 work** (so a rejected attempt costs ~nothing). Re-measured:
   40 concurrent → `{429: 38, 401: 2}` settling in 0.5 s, `/api/health` **1 ms** during the
-  burst, legit login still 200. Regression guard = scenario 20. **Still open:** this is a
-  concurrency cap, not a rate limiter — an attacker can keep 2 workers busy indefinitely.
-  A per-IP token bucket + failure backoff needs the client address, which sandhi does not
-  hand the handler today (**next auth bite; possible sandhi ask**). *(RESOLVED end-to-end: filed →
+  burst, legit login still 200. Regression guard = scenario 20. **CLOSED (2026-07-14) — the ask shipped and is adopted.**
+  The concurrency cap was only half: one source could still grind 2 workers forever, and
+  bounding SUSTAINED attempts means attributing them to a source — which sandhi could not
+  expose. Filed → **sandhi 1.9.0** added `sandhi_server_conn_peer_ip` (+ `peer_port` /
+  `ip4_str`, over both the plaintext and TLS seams, via `getpeername(2)`) → folded in
+  **cyrius 6.4.64** → adopted here as a **per-IP token bucket** (5/min default, burst 5,
+  `SY_LOGIN_BURST` / `SY_LOGIN_REFILL_MS`), checked *before* the concurrency cap so a
+  limited attempt costs ~nothing. Fixed 64-slot table with LRU eviction, so the limiter
+  itself can't be turned into a memory-exhaustion vector by spraying source addresses (a
+  sprayer evicts itself; a sustained single source stays pinned and stays limited).
+  **Verified (scenario 21):** at burst=3, `127.0.0.1` × 6 → 3 allowed / 3× 429, while
+  **`127.0.0.2` × 3 → all allowed** — a genuinely different peer address with its own
+  bucket, which is the property that proves it is per-IP and not global; `/api/health`
+  unaffected. **Deliberate trade:** an unknown peer (ip==0 — sandhi's contract on AGNOS,
+  which has no BSD `getpeername`) is **NOT** limited; it fails open, because keying every
+  unknown peer to one bucket would let a single client lock out everyone. Unknown peers
+  still face the concurrency cap. **Still open:** no lockout/backoff per *subject* (the
+  bucket is keyed by address only), so a distributed attacker still gets 5/min *per source*
+  against a given account. *(Full arc: probe finding → sandhi 1.9.0 → cyrius 6.4.64 →
+  adopted.)* *(RESOLVED end-to-end: filed →
   fixed in sigil 3.12.0 → folded in cyrius 6.4.63 → adopted here.)*
 
 - 🟠 **A stale `lib/` silently shadowed the pinned snapshot — hiding a crypto fix for

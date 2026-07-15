@@ -4,6 +4,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — honest port-standing assessment; the probe's own overclaims retracted
+- **Measured the gap instead of narrating it** (2026-07-14). The probe is **~879 LOC of
+  module code against sy-core's 60,425** (243 `.rs`, 22 module dirs) — **~1.5% written**.
+  The five shared module *names* are thin slices at 16–23% fidelity, not ports: **`tee` ≈
+  0%** (sy-core seals under `KeySource{Tpm,Sgx,Keyring}`; the probe has one HKDF KEK from an
+  env var with an insecure dev fallback — which is how the tests run), **`auth`** is 541 LOC
+  / 3 routes vs 3,396 / 40 with one hardcoded credential and no user store, **`crypto`** is
+  ~4 of 13 public fns (no X25519/DH), and only **`audit`** is a fair 1:1 (~20%). **2 of the
+  probe's 15 routes** map to real sy-core endpoints (15 of 540 = 2.8%). **`notes` is invented
+  scaffolding** — 2 of 243 `.rs` files, as a `notes: Option<String>` column — yet it owns 5
+  routes and the whole frontend.
+- **Retracted README's "Now growing into the real port. Five `sy-core` modules are ported
+  in"** — the probe's own overclaim, and the register the module narratives were written in.
+  Replaced with the measured standing; the list is now framed as *seams exercised*.
+  `docs/development/state.md` gains a "Where the port actually stands" section (the numbers
+  supersede the narratives below it).
+- **What breaks first in a real port: the schema.** Zero `.sql` / `sqlx::migrate!` in
+  `crates/`; the authoritative **208-table / 7,845-LOC** migration set lives in
+  `packages/core` — the package the roadmap deletes in the same clause as the Cyrius port.
+  Behind it: patra has 3 column types, no `ON CONFLICT` (sy-core uses 14), no parsed
+  `RETURNING` (157). *(Checked and dismissed: "patra has no JOIN" — sy-core's db layer has
+  2 JOINs. Not a blocker.)* **`brain` has no target at all** — `mneme`/`hoosh`/`daimon` ship
+  0 dist bundles (applications, not libs). WebAuthn/OIDC/PKCE: zero ecosystem-wide.
+  ~**88% of remaining work is blocked on ecosystem construction, not porting**; ~6% mechanical.
+- **Corrected a third over-filed gap: "no Cyrius TEE/TPM API" is false.** sigil ships
+  `tpm_seal_data`/`tpm_unseal_data` (`src/tpm.cyr:81,88`) and `sgx_derive_seal_key`
+  (`src/seal.cyr:122,170`). The real, narrower gap is that its TPM path **shells out to
+  tpm2-tools** — the exec surface this probe deliberately avoids (`hwprobe` uses
+  `registry_detect_no_exec()` for exactly that reason). **Pattern, not incident:** three
+  filings this cycle ("no Argon2", "memory-amplifying DoS ~19 MiB/attempt", "no TEE/TPM API")
+  all read worse than reality because they were reasoned from docs/design rather than
+  measured against the source. Recorded in FINDINGS as the finding.
+- No code change; tests unaffected (**9 unit + 48 backend + 13 full-stack UI**, green).
+
+### Added — per-IP login rate limiting (closes the DoS this probe opened; the sandhi ask shipped)
+- **`/api/login` is now per-IP rate limited** — a token bucket (5/min, burst 5; tunable via
+  `SY_LOGIN_BURST` / `SY_LOGIN_REFILL_MS` with production-safe defaults), checked **before**
+  the concurrency cap so a limited attempt costs ~nothing. Argon2id made login cost ~244 ms
+  of CPU; scenario 20's concurrency cap stopped a burst from starving the 4-worker pool, but
+  one source could still grind 2 workers indefinitely. Bounding **sustained** attempts needs
+  the client address — which is exactly the gap this probe filed against sandhi.
+- **Full arc, one cycle:** probe finding → **sandhi 1.9.0** (`sandhi_server_conn_peer_ip`,
+  via `getpeername(2)`, over both the plaintext and TLS seams) → folded in **cyrius 6.4.64**
+  → adopted here. `[deps.sandhi]` 1.8.2 → **1.9.0**; cyrius pin 6.4.63 → **6.4.64**.
+- **The limiter can't be turned into a vector itself:** fixed 64-slot table with LRU
+  eviction, so spraying source addresses evicts the sprayer rather than growing memory,
+  while a sustained single source stays pinned and stays limited. Milli-token integer math
+  (no floats); serialized by a mutex whose critical section is microseconds against
+  Argon2id's 244 ms.
+- **Verified (scenario 21)** at burst=3: `127.0.0.1` × 6 → **3 allowed / 3× 429**, and
+  **`127.0.0.2` × 3 → all allowed** — 127.0.0.0/8 is all loopback, so that is a genuinely
+  different peer address with its own bucket, which is what proves the limit is **per-IP**
+  and not global. `/api/health` unaffected; `.1` still 429 after.
+- **Deliberate, documented trade:** an unknown peer (ip==0 — sandhi's contract on AGNOS, no
+  BSD `getpeername`) is **not** limited. It fails open, because keying every unknown peer to
+  one bucket would let one client lock out all others; unknown peers still face the
+  concurrency cap. **Still open:** no per-*subject* lockout/backoff (bucket is keyed by
+  address only). Suite: **9 unit + 48 backend + 13 full-stack UI**, green.
+- **Test-harness honesty:** the suite drives ~50 logins from one source and would
+  rate-limit *itself* at the production default, so `start_server()` sets a permissive burst
+  and scenario 21 restarts with a tiny one to prove the limiter actually limits. The fix was
+  a configurable limit, not a weak default.
+
 ### Added — credentials are Argon2id-hashed (the last plaintext gap, closed end-to-end)
 - **`_auth_pw_ok` now verifies with Argon2id** (sigil 3.12.0 via cyrius **6.4.63**) at
   sy-core's exact parameters — m=19456 KiB, t=2, p=1, 32-byte tag, 16-byte salt — and

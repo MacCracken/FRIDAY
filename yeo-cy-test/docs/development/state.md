@@ -5,13 +5,74 @@
 
 ## Version
 
-**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.4.63 /
-patra 1.12.10 / libro 2.8.1 / sandhi 1.8.2 (thin `server` profile bundle) / sigil
+**0.1.0** — full-stack slice working end to end. Re-run on **cyrius 6.4.64 /
+patra 1.12.10 / libro 2.8.1 / sandhi 1.9.0 (thin `server` profile bundle) / sigil
 3.12.0 (via cyrius) / sakshi 2.4.6** (2026-07-14; regenerate `lib/` with `cyrius lib sync
 --full` + `cyrius deps` — see Toolchain note). Serves **HTTP (:8080) and HTTPS
 (:8443, TLS 1.3 + Ed25519)** off one sandhi router + handler set over the patra
 backend, both at **`max_conns=4`**. Both original 🔴 blockers (TS/TSX→JS emit,
 patra string safety) stay closed.
+
+## Where the port actually stands (measured 2026-07-14)
+
+> Read this before the module narratives below. They describe *seams exercised*, not
+> progress toward a finished port, and the wording used to imply otherwise.
+
+| | measured |
+|---|---|
+| Probe module code | **879 LOC** (8 `.cyr`, incl. tests/demo) |
+| Real target — `sy-core` | **60,425 LOC**, 243 `.rs`, 22 module dirs |
+| **Port written** | **~1.5%** |
+| Routes mapping to real sy-core endpoints | **2 of the probe's 15**; 15 of sy-core's 540 = **2.8%** |
+| TypeScript still to be superseded | 745,584 LOC (dashboard stays React behind the API — roadmap Phase 8) |
+
+**The five "ported" modules are thin slices, not ports (16–23% fidelity).**
+- **`tee` ≈ 0%** — sy-core seals under `KeySource{Tpm,Sgx,Keyring}`; the probe has one HKDF
+  KEK from an env var, falling back to `INSECURE-DEV-KEY…`, which is how the tests run.
+- **`auth`** — 541 LOC / 3 routes vs **3,396 LOC / 40 routes**; RBAC is `_role_is()` string
+  equality against a 5-role wildcard matrix; one hardcoded credential, no user store.
+- **`crypto`** — ~4 of 13 public fns; X25519/DH absent entirely.
+- **`audit`** — the only fair 1:1, at ~20%.
+- **`notes` is invented scaffolding**: it appears in 2 of 243 `.rs` files as a
+  `notes: Option<String>` *column*, yet owns 5 routes and the whole frontend.
+
+**What breaks first in a real port — the schema.** Zero `.sql` and no `sqlx::migrate!` in
+`crates/`; the authoritative **208 `CREATE TABLE` / 7,845 LOC** migration set lives in
+`packages/core/src/storage/migrations/` — the package the roadmap deletes *in the same
+clause as the Cyrius port*. Day one you cannot create the database. Behind it, patra has
+**3 column types**, no `ON CONFLICT` (sy-core uses 14) and no parsed `RETURNING`
+(sy-core: 157). *(Non-issue, checked: "patra has no JOIN" — sy-core's db layer has 2 JOINs
+and 1 GROUP BY. Not a blocker.)*
+
+**`brain` — the actual product — has no target.** `mneme` / `hoosh` / `daimon` ship **0**
+dist bundles: they are applications, not libs, so the `modules=["dist/*.cyr"]` pattern every
+ported module relied on does not exist for them. WebAuthn / OIDC / PKCE have **zero**
+implementations ecosystem-wide (only roadmap comments).
+
+**Effort shape:** ~6% mechanical (sandbox→kavach, privacy, types, ecosystem, finishing the
+four in flight); **~88% blocked on ecosystem construction, not porting**; the rest out of
+scope. Blocked ≠ unsolved: `majra/src/postgres_backend.cyr` is a real Postgres wire client
+(300 LOC, ~5% of sqlx — cleartext auth, no bound params, no TLS, no pooling). Extending it
+is known-shape protocol work — engineering, not research.
+
+**What is genuinely proven** (and is what a probe is for): the stack carries a real HTTPS
+service with sealed keys at rest, Argon2id at sy-core's exact params, a hash-linked audit
+chain, 401/403 separation and per-IP rate limiting — 70 tests, zero residual workarounds.
+And the **feedback loop works**: ~29 findings filed → shipped → adopted (patra 1.12.10,
+libro 2.8.1, sigil 3.9.9/3.12.0, sandhi 1.9.0, cyrius 6.4.63/6.4.64), all three original
+🔴 blockers closed, gaps closing in one cycle.
+
+**Highest-leverage next moves** (not the auth thread this cycle followed):
+1. **Land the Postgres client** (SCRAM + extended query protocol + TLS + pooling in majra)
+   and give the 208-table schema a Rust home — unblocks ~69%.
+2. **`[lib]` surfaces on mneme/hoosh/daimon** — until then `brain`/`orchestration` have
+   nothing to port onto.
+3. Keep filing gaps **from the source, not the docs** — three filings this cycle
+   ("no Argon2", "memory-amplifying DoS", "no TEE/TPM API") all read worse than reality.
+
+**Caveat on this file's own history:** an earlier revision of README/state claimed the probe
+was "growing into the real port"; the module narratives below were written in that register.
+The numbers above supersede them.
 
 **Zero residual workarounds — the probe now runs lock-free:**
 
@@ -90,7 +151,8 @@ known-answer (RFC 6234) for impl-independent correctness. The identity key is no
 **persistent**: `crypto_init` loads a 32-byte Ed25519 **seed** from `yeo-identity.key`
 and re-derives the keypair, so the pubkey + signed audit head stay stable across
 restarts. The seed is **AES-256-GCM sealed** at rest (the `tee` module — see below);
-the remaining hardening is a hardware-backed KEK (no Cyrius TEE/TPM API yet).
+the remaining hardening is a hardware-backed KEK — sigil DOES ship TPM/SGX sealing, but
+via tpm2-tools exec, the surface this probe avoids (corrected filing; see FINDINGS).
 
 **Fourth module: `auth` → JWT sessions + RBAC.** sy-core's `auth` is the defining
 SecureYeoman capability (JWT + API keys + RBAC + OIDC/PKCE + WebAuthn). Landed so far:
@@ -113,13 +175,20 @@ the tag (~244 ms, ~19 MiB per login; per-thread arena via `argon2id_into`); and
 no-pad round-trip in-probe (worked around with an in-probe decoder — root cause
 unconfirmed, flagged). The HMAC secret is now **persistent** (`yeo-auth.key`, 0600) so
 tokens survive a restart. The RBAC is now **enforced on the note resource** (below).
-`/api/login` has **admission control**: Argon2id's ~244 ms made it a request-amplification
-lever (measured: `/api/health` 6 ms → 942 ms under 8 concurrent attempts; ~40 wedged the
-server), so at most 2 concurrent derivations run and the excess is shed **429 before any
-Argon2 work** — 40 concurrent now settle in 0.5 s with `/api/health` at 1 ms (scenario 20).
-Limitations (future bites): that is a concurrency cap, not a **rate limiter** (2 workers can
-be held indefinitely); a per-IP token bucket + failure backoff needs the client address,
-which sandhi does not hand the handler today. Plus PKCE/OIDC/WebAuthn.
+`/api/login` has **two layers of abuse control**, both shedding 429 *before* any Argon2
+work. (1) A **per-IP token bucket** (5/min, burst 5; `SY_LOGIN_BURST` /
+`SY_LOGIN_REFILL_MS`), on a fixed 64-slot LRU table so the limiter can't itself be turned
+into a memory vector by address spraying. (2) An **admission cap** of 2 concurrent
+derivations, bounding the 4-worker pool even across many sources. Argon2id's ~244 ms had
+made login a request-amplification lever (measured: `/api/health` 6 ms → 942 ms at 8
+concurrent; ~40 wedged the server); now 40 concurrent settle in 0.5 s with `/api/health` at
+1 ms (scenario 20), and one source is capped at its bucket (scenario 21: at burst=3,
+127.0.0.1 gets 3 then 429 while **127.0.0.2 keeps its own budget** — the per-IP proof). The
+per-IP half exists because the probe filed the gap: **sandhi 1.9.0**'s
+`sandhi_server_conn_peer_ip` (folded in cyrius 6.4.64). Unknown peers (ip==0, e.g. AGNOS)
+**fail open** by design — keying them all to one bucket would let one client lock out
+everyone — and still face the concurrency cap. Limitations (future bites): no per-*subject*
+lockout/backoff (keyed by address only); PKCE/OIDC/WebAuthn.
 
 **Persistent keys (both crypto + auth), SEALED at rest.** `crypto_key_load`/
 `crypto_key_save` (`src/crypto.cyr`) seal 32-byte key material with **AES-256-GCM**
@@ -142,7 +211,8 @@ Finding (DX): sigil's return conventions are inconsistent** — `aes_gcm_decrypt
 `SIGIL_ERR_NONE == 0` on **success**, but `ed25519_verify` returns `1` on success. That
 footgun briefly made me mis-record a "sigil bug" + build an unnecessary workaround; an
 adversarial review + re-measurement corrected it (no bug — `rc==0` is success). Gap: no
-hardware-backed KEK (no Cyrius TEE/TPM API). See FINDINGS.
+hardware-backed KEK (sigil has TPM/SGX sealing but shells out to tpm2-tools — an exec
+  surface the probe avoids; the original "no TEE API" filing was too strong). See FINDINGS.
 
 **RBAC enforcement on note writes.** The `auth` module's JWT/RBAC is now applied to the
 live `/api/notes` resource, not just the demo `/api/admin` route: `POST`/`PUT` require an
@@ -157,12 +227,12 @@ admins) — the backend stays the authority. Scenario 19 asserts the full write 
 scenario 0 bootstraps an admin token so `req`/`https_req` authenticate transparently. **No
 new lib gap** — used only existing auth primitives (the stack was already sufficient).
 
-**9 unit invariants** + **47 backend scenarios** + **13 UI** pass — **green + stable** at
+**9 unit invariants** + **48 backend scenarios** + **13 UI** pass — **green + stable** at
 `max_conns=4`. `tests/concurrency_repro.sh` is a 0/300 regression guard.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.4.63` (in `cyrius.cyml [package].cyrius`); folds sigil **3.12.0**
+- **Cyrius pin**: `6.4.64` (in `cyrius.cyml [package].cyrius`); folds sigil **3.12.0**
   (the native Argon2id this probe drove). NB `lib/` had silently drifted to sigil 3.9.8
   (pre the 3.9.9 slot-0 fix, colliding with patra's thread-local slot 0) until re-synced
   2026-07-14; 6.4.63's shadow-lib **warning** now names any such skew — see FINDINGS.
@@ -306,7 +376,7 @@ new lib gap** — used only existing auth primitives (the stack was already suff
   AES-256-GCM `tee_seal`→`tee_unseal` round-trips and a tampered ciphertext/tag is
   rejected. Passes via `cyrius run src/test.cyr` (idempotent).
   (`cyrius test` still does not discover the scaffolded `.tcyr` — see FINDINGS.md.)
-- `tests/verify.py` — **47-scenario** end-to-end harness (CRUD lifecycle,
+- `tests/verify.py` — **48-scenario** end-to-end harness (CRUD lifecycle,
   injection/unicode round-trip + restart persistence, 250-concurrent unique ids,
   slow-client isolation, request-smuggling rejects, SIGPIPE survival,
   rows_affected concurrency, **HTTPS: CRUD over TLS 1.3, real cert verification,
@@ -338,7 +408,7 @@ new lib gap** — used only existing auth primitives (the stack was already suff
   cross-checking the DOM vs the patra backend (**13 scenarios**: public read with the
   add form gated pre-login, admin CRUD, a user-role session that can add but whose
   admin-only delete control is hidden, XSS-safe text-node rendering).
-- `tests/run.sh` — one command: build + unit + 47 backend e2e + 13 UI e2e.
+- `tests/run.sh` — one command: build + unit + 48 backend e2e + 13 UI e2e.
 - `tests/concurrency_repro.sh` — standalone diagnostic for the upstream cyrius
   `str_builder` race: curl-hammers static `/api/health` and reports the ~3%
   corrupt-response rate. Exits 0 (documents a filed upstream bug, not a gate).

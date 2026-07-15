@@ -31,7 +31,7 @@ Note writes are RBAC-gated, so req()/https_req() auto-attach an admin Bearer tok
 scenario 0); pass token=None for the unauthenticated negative cases.
 Requires cert.pem/key.pem (./gen-certs.sh — build.sh mints them if absent).
 """
-import socket, subprocess, sys, time, json, os, threading, ssl, random, urllib.request, urllib.error
+import socket, subprocess, sys, time, json, os, threading, ssl, random, urllib.request, urllib.error, http.client
 
 HOST, PORT = "127.0.0.1", 8080
 HTTPS_HOST, HTTPS_PORT = "localhost", 8443   # cert SAN: DNS:localhost, IP:127.0.0.1
@@ -65,8 +65,14 @@ def wait_ready(timeout=10):
             time.sleep(0.05)
     return False
 
-def start_server():
-    p = subprocess.Popen([BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def start_server(login_burst=1000, refill_ms=None):
+    # /api/login is per-IP rate limited (scenario 21). The whole suite drives ~50 logins
+    # from one source (127.0.0.1), so it would rate-limit ITSELF at the production default
+    # (5/min). Start with a permissive burst; scenario 21 restarts with a tiny one to prove
+    # the limiter actually limits.
+    env = dict(os.environ, SY_LOGIN_BURST=str(login_burst))
+    if refill_ms is not None: env["SY_LOGIN_REFILL_MS"] = str(refill_ms)
+    p = subprocess.Popen([BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     if not wait_ready():
         p.kill(); raise SystemExit("server failed to become ready")
     return p
@@ -671,6 +677,44 @@ _c20 = (h20 == 200 and h20_ms < 500 and shed > 0 and worked <= 2 and st20_ok == 
     f"20. login admission control: {N20} concurrent -> {shed} shed 429 / {worked} hashed "
     f"(cap 2); /api/health {h20_ms:.0f}ms during burst (was 942ms, then wedged); "
     f"legit login after -> {st20_ok}")
+
+# 21. per-IP login rate limiting — the OTHER half of the DoS this probe introduced, and the
+#     payoff of a finding that went all the way around the ecosystem: the concurrency cap
+#     (scenario 20) stops a burst from starving the pool, but one source could still grind
+#     2 workers forever. Bounding SUSTAINED attempts needs to attribute them to a source,
+#     which sandhi could not expose — filed -> **sandhi 1.9.0** `sandhi_server_conn_peer_ip`
+#     -> folded in cyrius 6.4.64 -> adopted here as a per-IP token bucket.
+#     The decisive assertion is ISOLATION: a *different* source IP must have its own bucket.
+#     127.0.0.0/8 is all loopback, so 127.0.0.2 is a genuinely different peer address to the
+#     server while still being this machine.
+stop_server(srv)
+srv = start_server(login_burst=3, refill_ms=60000)   # 3 attempts, ~no refill during the test
+
+def _login_from(src, pw="wrong"):
+    kw = {"source_address": (src, 0)} if src else {}
+    try:
+        c = http.client.HTTPConnection(HOST, PORT, timeout=20, **kw)
+        c.request("POST", "/api/login", json.dumps({"password": pw}), {"Content-Type": "application/json"})
+        r = c.getresponse(); r.read(); c.close(); return r.status
+    except Exception as e:
+        return str(e)[:24]
+
+burst_codes = [_login_from(None) for _ in range(6)]
+allowed = burst_codes.count(401)
+limited = burst_codes.count(429)
+# A different source address gets its own budget (not starved by 127.0.0.1's).
+other_codes = [_login_from("127.0.0.2") for _ in range(3)]
+other_ok = all(c == 401 for c in other_codes)
+h21, _ = req("GET", "/api/health")                    # unrelated traffic unaffected
+still, _ = req("POST", "/api/login", json.dumps({"password": "wrong"}), token=None)
+
+_c21 = (allowed == 3 and limited == 3 and other_ok and h21 == 200 and still == 429)
+(ok if _c21 else bad)(
+    f"21. per-IP login rate limit (burst 3): 127.0.0.1 6 attempts -> {allowed} allowed/{limited} 429; "
+    f"127.0.0.2 -> {other_codes} (own bucket = per-IP isolation); /api/health {h21}; .1 still {still}")
+
+stop_server(srv)
+srv = start_server()                                   # back to the permissive suite default
 
 stop_server(srv)
 

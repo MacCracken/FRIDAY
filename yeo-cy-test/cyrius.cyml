@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "yeo-cy-test — Cyrius full-stack viability probe for the SecureYeoman port"
 license = "AGPL-3.0-only"
 language = "cyrius"
-cyrius = "6.4.63"
+cyrius = "6.4.64"
 
 [build]
 entry = "src/main.cyr"
@@ -30,7 +30,7 @@ stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert", "b
 # split" this probe filed, now dogfooded as sandhi's first profile-bundle consumer.
 [deps.sandhi]
 git = "https://github.com/MacCracken/sandhi.git"
-tag = "1.8.2"
+tag = "1.9.0"
 modules = ["dist/sandhi-server.cyr"]
 
 [deps.sakshi]
